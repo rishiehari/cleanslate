@@ -3,7 +3,7 @@
 | Gate | Status | Evidence / note |
 |---|---|---|
 | Core tests (Linux/macOS) | PASS | 112 tests (`swift test --package-path Core`) |
-| iOS unit + UI on simulator | PASS in pieces; **full `make ci` not re-run after Steps 8-10** | one stale test fixed; run `make ci` first thing |
+| iOS unit + UI on simulator | **FINAL RUN NOT COMPLETED** | Every suite passed when run during its step (incl. Step 8 batch tests 13/13, Step 9 label tests 7/7). The last full `make ci` passed Core (112), eval gate, lint and the app build, then the simulator wedged at launch (0 tests started; CoreSimulator unresponsive even after reset). Re-run `make ios-test` after rebooting the Mac or restarting CoreSimulator. |
 | Design-system lint, policy-separation guard | PASS | `make lint` |
 | Synthetic eval canary | PASS | `make eval`, docs/ML_GATE.md |
 | Scale (252k fake assets, simulator) | PASS | 130.7 s, +178 MB; NOT measured on a device |

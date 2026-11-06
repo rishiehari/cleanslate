@@ -276,3 +276,8 @@ Real-library **scan-only** run on a device (Instruments: time, memory, thermal);
 - `EvaluationExport` (Core) and **Label mode** (debug/TestFlight only): per-photo verdicts + best shot, export = salted hashes + numbers only. Leak tests assert no identifiers, filenames, dates or locations appear in the JSON and that only allow-listed fields exist. "This suggestion was wrong" button (all builds) keeps a local counter shown in the menu; nothing is transmitted.
 - `KeeperRanker.Weights` + `RankerFitter` (pairwise logistic regression): on synthetic data where humans pick the sharpest shot, learned weights beat v1 by > 5 points held-out. **v1 remains the shipped default** until real labels beat it by ≥ 5 points.
 - 🧑 **Gate PENDING:** label ≥ 200 real groups on a device, run the eval, review keeper mistakes. Until then the harmful-suggestion bound is uninformative and `docs/ML_GATE.md` says near pre-selection ships OFF.
+
+## Step 10 (partial) and final CI attempt — 2026-11-06
+Done: receipts persisted in the index + History screen + free space before/after on the receipt; privacy manifest (`CA92.1`, `85F4.1`: **unverified**, Apple page unreadable by the fetch tool); `ITSAppUsesNonExemptEncryption=false` (**unverified**); placeholder app icon; string catalog stub; `site/` privacy and support drafts; `fastlane/metadata/en-US`; `docs/RELEASE_CHECKLIST.md`.
+Not done: accessibility audits beyond Home/Review, localization beyond the stub, final panel review, hallway test, TestFlight, identity checks.
+Final `make ci`: core 112 PASS, `make eval` GATE PASS, lint PASS, app build PASS; **iOS tests did not run** (simulator wedged at launch; see the checklist). Treat the iOS suite as "passed per step, final regression run pending".
