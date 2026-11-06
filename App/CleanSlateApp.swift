@@ -75,7 +75,7 @@ enum AppEnvironment {
             suite.removePersistentDomain(forName: "org.cleanslate.uitest")
             let policy = NetworkPolicy(defaults: suite, pathCheck: { true })
             let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL), networkPolicy: policy)
-            if auth == .authorized { model.seedGroupsForUITesting(scenario.groups) }
+            if auth == .authorized { model.seedGroupsForUITesting(scenario.groups, standalone: scenario.standalone) }
             return (model, scenario.library)
         }
         #endif

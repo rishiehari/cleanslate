@@ -10,6 +10,7 @@ final class CleaningViewModel: ObservableObject {
     @Published private(set) var phase: ScanPhase = .idle
     @Published private(set) var progress: Double = 0
     @Published private(set) var groups: [PhotoReviewGroup] = []
+    @Published private(set) var standaloneItems: [StandaloneItem] = []
     @Published private(set) var statistics = ScanStatistics()
     @Published var statusMessage: String?
     @Published private(set) var isScanning = false
@@ -58,17 +59,50 @@ final class CleaningViewModel: ObservableObject {
 
     func groups(in category: ScanCategory) -> [PhotoReviewGroup] {
         guard let kind = category.groupKind else { return [] }
-        return groups.filter { $0.kind == kind }
+        return groups.filter { group in
+            guard group.kind == kind else { return false }
+            switch category {
+            case .exact: return !group.keeper.isVideo
+            case .videos: return group.keeper.isVideo
+            default: return true
+            }
+        }
+    }
+
+    func standalone(in category: ScanCategory) -> [StandaloneItem] {
+        guard let kind = category.standaloneKind else { return [] }
+        let inTray = Set(tray.standaloneEntries.flatMap { $0.items.map(\.id) })
+        // Members of an exact-copy group are handled there (one is always kept). Offering them here
+        // would let someone delete every copy of the same photo or video.
+        let inExactGroup = Set(groups.filter { $0.kind == .exact }.flatMap { $0.all.map(\.id) })
+        return StandaloneRules.items(for: kind, from: standaloneItems)
+            .filter { !inTray.contains($0.id) && !inExactGroup.contains($0.id) }
     }
 
     func verifiedBytes(in category: ScanCategory) -> Int64 {
-        groups(in: category).reduce(Int64(0)) { $0 + $1.estimatedVerifiedBytes }
+        if category.standaloneKind != nil {
+            return standalone(in: category).reduce(Int64(0)) { $0 + ($1.verifiedBytes ?? 0) }
+        }
+        return groups(in: category).reduce(Int64(0)) { $0 + $1.estimatedVerifiedBytes }
+    }
+
+    func count(in category: ScanCategory) -> Int {
+        category.standaloneKind != nil ? standalone(in: category).count : groups(in: category).count
+    }
+
+    /// Why this item can't be selected right now (e.g. it sits in one of the user's albums), or nil.
+    func selectionBlockReason(for item: StandaloneItem) -> String? {
+        guard let fresh = library.snapshot(id: item.id, inspectAlbums: true) else { return "No longer in your library" }
+        guard fresh.record.revision == item.snapshot.record.revision else { return "Changed since the scan. Scan again" }
+        if let flag = fresh.record.flags.sorted(by: { $0.rawValue < $1.rawValue }).first { return flag.userFacingReason }
+        return nil
     }
 
     #if DEBUG
     /// UI tests and screenshots only: show prepared groups without running a scan.
-    func seedGroupsForUITesting(_ seeded: [PhotoReviewGroup]) {
+    func seedGroupsForUITesting(_ seeded: [PhotoReviewGroup], standalone: [StandaloneItem] = []) {
         groups = seeded
+        standaloneItems = standalone
         phase = .finished
         progress = 1
     }
@@ -84,6 +118,7 @@ final class CleaningViewModel: ObservableObject {
 
     /// Upper bound of assets fully hashed in one scan (the rest are reported as skipped).
     static let maximumFullHashesPerScan = 4_000
+    static let maximumSizedItems = 5_000
 
     /// Rough size guess used only to budget iCloud downloads.
     static func estimatedOriginalBytes(_ photo: PhotoSnapshot?) -> Int64 {
@@ -137,6 +172,7 @@ final class CleaningViewModel: ObservableObject {
         let receipt = await tray.deleteAll(using: coordinator)
         let deleted = idsBefore.subtracting(tray.entries.map(\.id))
         groups.removeAll { deleted.contains($0.id) }
+        standaloneItems.removeAll { library.snapshot(id: $0.id, inspectAlbums: false) == nil }
         if receipt.verifiedRemoved > 0 { HapticsService.shared.fire(.batchDeleted) }
     }
 
@@ -144,6 +180,7 @@ final class CleaningViewModel: ObservableObject {
         phase = .inventory
         let listing = library.inventory(limit: scanLimit)
         let photos = listing.photos
+        let imagePhotos = photos.filter { !$0.isVideo }       // visual matching is for photos only
         statistics.photosEnumerated = photos.count
         statistics.truncated = listing.totalVisible > photos.count
         if photos.isEmpty { phase = .finished; progress = 1; return }
@@ -151,7 +188,7 @@ final class CleaningViewModel: ObservableObject {
         var hashes: [String: UInt64] = [:]
         hashes.reserveCapacity(photos.count)
         phase = .thumbnails
-        for (n, photo) in photos.enumerated() {
+        for (n, photo) in imagePhotos.enumerated() {
             if Task.isCancelled { phase = .cancelled; return }
             if let cached = featureStore.hash(for: photo.id, revision: photo.record.revision) {
                 hashes[photo.id] = cached
@@ -163,13 +200,13 @@ final class CleaningViewModel: ObservableObject {
                 statistics.cloudOnlyOrUnavailable += 1
             }
             statistics.thumbnailsAnalyzed = n + 1
-            if n % 20 == 0 { progress = 0.65 * Double(n + 1) / Double(photos.count); await Task.yield() }
+            if n % 20 == 0 { progress = 0.65 * Double(n + 1) / Double(max(1, imagePhotos.count)); await Task.yield() }
         }
 
         if Task.isCancelled { phase = .cancelled; return }
         phase = .candidates
         let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
-        let items = photos.map { photo in
+        let items = imagePhotos.map { photo in
             IndexedPhoto(id: photo.id,
                          capturedAtSeconds: photo.capturedAt.map { Int64($0.timeIntervalSince1970) },
                          burstIdentifier: photo.burstID,
@@ -262,6 +299,17 @@ final class CleaningViewModel: ObservableObject {
             groupsFound.append(group)
             claimedIDs.formUnion(snapshots.map(\.id))
         }
+
+        // Measure screenshots and videos for the keeper-less categories (local files only).
+        phase = .sizing
+        var measured: [StandaloneItem] = []
+        let sizable = photos.filter { ($0.isScreenshot || $0.isVideo) && $0.record.flags.isEmpty }.prefix(Self.maximumSizedItems)
+        for (n, photo) in sizable.enumerated() {
+            if Task.isCancelled { phase = .cancelled; return }
+            measured.append(StandaloneItem(snapshot: photo, verifiedBytes: await library.verifiedSize(id: photo.id)))
+            if n % 25 == 0 { await Task.yield() }
+        }
+        standaloneItems = measured
 
         phase = .vision
         // Similarity is uncalibrated, so it is strictly manual-review only. Pairwise

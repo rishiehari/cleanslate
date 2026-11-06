@@ -40,6 +40,7 @@ struct ScanStatusCard: View {
         case .thumbnails: "Getting to know your photos"
         case .candidates: "Spotting possible copies"
         case .fullResources: "Checking the original files"
+        case .sizing: "Measuring your videos and screenshots"
         case .vision: "Comparing similar shots"
         case .finished: "Scan finished"
         case .cancelled: "Scan paused"

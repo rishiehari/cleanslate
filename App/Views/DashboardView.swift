@@ -120,9 +120,10 @@ struct DashboardView: View {
             ForEach(visibleCategories) { category in
                 if category.isAvailable {
                     NavigationLink {
-                        CategoryGroupsView(category: category)
+                        if category.standaloneKind != nil { StandaloneListView(category: category) }
+                        else { CategoryGroupsView(category: category) }
                     } label: {
-                        CategoryCardView(category: category, groupCount: model.groups(in: category).count,
+                        CategoryCardView(category: category, groupCount: model.count(in: category),
                                          verifiedBytes: model.verifiedBytes(in: category))
                     }
                     .buttonStyle(.plain)
@@ -136,11 +137,7 @@ struct DashboardView: View {
     }
 
     private var visibleCategories: [ScanCategory] {
-        #if DEBUG
-        ScanCategory.allCases
-        #else
         ScanCategory.allCases.filter(\.isAvailable)
-        #endif
     }
 
     private var thingsToKnow: some View {

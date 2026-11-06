@@ -149,7 +149,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 /// Builds a review group out of fake-library assets.
 extension FakePhotoLibrary {
     /// Deterministic data for UI tests and screenshots (never used in release builds).
-    static func uiTestScenario(authorization: PHAuthorizationStatus = .authorized) -> (library: FakePhotoLibrary, groups: [PhotoReviewGroup]) {
+    static func uiTestScenario(authorization: PHAuthorizationStatus = .authorized) -> (library: FakePhotoLibrary, groups: [PhotoReviewGroup], standalone: [StandaloneItem]) {
         let lib = FakePhotoLibrary()
         lib.authorization = authorization
         var groups: [PhotoReviewGroup] = []
@@ -166,9 +166,28 @@ extension FakePhotoLibrary {
         lib.assets["ic-remote"]?.digests = nil
         lib.add("sim1-a", content: "sim1a"); lib.add("sim1-b", content: "sim1b"); lib.add("sim1-c", content: "sim1c")
         groups.append(lib.similarGroup(keeper: "sim1-a", copies: ["sim1-b", "sim1-c"]))
+        // Keeper-less categories.
+        let screenshotBit: UInt = 1 << 2, recordingBit: UInt = 1 << 19
+        let day: Int64 = 86_400
+        for n in 1...4 {
+            lib.add("ss\(n)", content: "ss\(n)", at: 1_700_000_000 - Int64(n) * 60 * day, subtypes: screenshotBit, size: Int64(n) * 400_000)
+        }
+        lib.add("ss-recent", content: "ssr", at: Int64(Date().timeIntervalSince1970) - 3_600, subtypes: screenshotBit, size: 300_000)
+        lib.add("ss-fav", content: "ssf", subtypes: screenshotBit, size: 500_000)
+        lib.update("ss-fav", flags: [.favorite])
+        lib.add("rec1", content: "rec", at: 1_690_000_000, subtypes: recordingBit, isVideo: true, duration: 95, size: 80_000_000)
+        lib.add("big1", content: "big1", at: 1_680_000_000, isVideo: true, duration: 420, size: 700_000_000)
+        lib.add("big2", content: "big2", at: 1_681_000_000, isVideo: true, duration: 120, size: 120_000_000)
+        lib.add("small1", content: "small1", at: 1_682_000_000, isVideo: true, duration: 20, size: 10_000_000)
+        lib.add("vex-a", content: "vexact", at: 1_683_000_000, isVideo: true, duration: 33, size: 55_000_000)
+        lib.add("vex-b", content: "vexact", at: 1_683_000_000, isVideo: true, duration: 33, size: 55_000_000)
+        groups.append(lib.exactGroup(keeper: "vex-a", copies: ["vex-b"], bytes: 55_000_000))
         lib.add("fav-keep", content: "fav"); lib.add("fav-copy", content: "fav"); lib.update("fav-copy", flags: [.favorite])
         groups.append(lib.exactGroup(keeper: "fav-keep", copies: ["fav-copy"], bytes: 900_000))
-        return (lib, groups)
+        let standalone = lib.assets.values.map(\.snapshot)
+            .filter { $0.isScreenshot || $0.isVideo }
+            .map { StandaloneItem(snapshot: $0, verifiedBytes: lib.sizes[$0.id]) }
+        return (lib, groups, standalone)
     }
 
     func exactGroup(keeper: String, copies: [String], bytes: Int64 = 1_000) -> PhotoReviewGroup {

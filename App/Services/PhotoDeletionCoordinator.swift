@@ -122,4 +122,44 @@ final class PhotoDeletionCoordinator {
             }
         }
     }
+
+    /// Keeper-less deletion (screenshots, recordings, large videos). Uses the separate
+    /// `validateStandalone` policy; `commit` (duplicates) can never be used for these items.
+    func commitStandalone(items: [StandaloneItem]) async throws -> DeletionResult {
+        guard !activeCommit else { throw DeletionError.busy }
+        guard !items.isEmpty else { throw DeletionError.noSelection }
+        guard hasAccess else { throw DeletionError.revoked }
+        activeCommit = true
+        defer { activeCommit = false }
+
+        let ids = Set(items.map(\.id))
+        var fresh: [String: AssetRecord] = [:]
+        for id in ids {
+            guard let snapshot = library.snapshot(id: id, inspectAlbums: true) else { throw DeletionError.vanished }
+            fresh[id] = snapshot.record
+        }
+        let expected = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.snapshot.record.revision) })
+        // The user selected each item in the list (or chose "select all" and saw the count); the tray holds only those.
+        let plan = StandaloneDeletionPlan(selectedIDs: ids, expectedRevisions: expected,
+                                          individuallyConfirmedIDs: ids, wasExplicitlyConfirmedByUser: true)
+        if let invalid = SafetyPolicy.validateStandalone(plan, currentByID: fresh) {
+            throw DeletionError.unsafe(invalid.rawValue)
+        }
+        guard hasAccess else { throw DeletionError.revoked }
+        do {
+            try await library.delete(ids: Array(ids), expectedRevisions: expected)
+        } catch LibraryResourceError.notAccessible {
+            throw DeletionError.vanished
+        } catch LibraryResourceError.changed {
+            throw DeletionError.changedResource
+        }
+        let access = library.authorization
+        var removed = 0
+        var bytes: Int64 = 0
+        for item in items where access == .authorized && library.snapshot(id: item.id, inspectAlbums: false) == nil {
+            removed += 1
+            bytes += item.verifiedBytes ?? 0
+        }
+        return DeletionResult(requested: ids.count, verifiedRemoved: removed, logicalBytesRemoved: bytes, uncertain: ids.count - removed)
+    }
 }

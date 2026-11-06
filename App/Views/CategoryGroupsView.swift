@@ -16,14 +16,14 @@ struct CategoryGroupsView: View {
 
     /// Exact groups whose copies the safety policy allows to pre-mark.
     private var approvable: [PhotoReviewGroup] {
-        guard category == .exact else { return [] }
+        guard category == .exact || category == .videos else { return [] }
         return pending.filter { !SafetyPolicy.evaluate($0.coreCluster).preselected.isEmpty }
     }
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: Spacing.s + Spacing.xs) {
-                if category == .exact { coverageLine }
+                if category == .exact || category == .videos { coverageLine }
                 if !approvable.isEmpty { approveAllButton }
                 if visible.isEmpty { emptyState }
                 ForEach(Array(visible.enumerated()), id: \.element.id) { position, group in

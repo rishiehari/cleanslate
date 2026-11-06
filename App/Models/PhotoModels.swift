@@ -51,6 +51,7 @@ enum ScanPhase: String {
     case candidates = "Finding possible matches"
     case fullResources = "Checking original file bytes"
     case vision = "Reviewing similar captures"
+    case sizing = "Measuring files"
     case finished = "Review ready"
     case cancelled = "Scan paused"
 }

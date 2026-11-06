@@ -27,7 +27,9 @@ final class DashboardUITests: XCTestCase {
         let app = launch(onboardingSeen: true)
         XCTAssertTrue(app.buttons["category.exact"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["category.similar"].exists)
-        XCTAssertTrue(app.staticTexts["Coming in a later build"].firstMatch.exists)
+        for id in ["videos", "screenshots", "largeFiles"] {
+            XCTAssertTrue(app.buttons["category.\(id)"].exists, "category.\(id) should be available now")
+        }
     }
 
     func testOpeningACategoryShowsItsGroups() {

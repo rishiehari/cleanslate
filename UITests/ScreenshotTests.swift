@@ -73,6 +73,22 @@ final class ScreenshotTests: XCTestCase {
         shot("08-receipt-\(suffix)", in: dir)
     }
 
+    func testCaptureStandalone() throws {
+        let dir = try captureDir()
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestingFakeLibrary", "-skipOnboarding"]
+        app.launch()
+        XCTAssertTrue(app.buttons["category.screenshots"].waitForExistence(timeout: 8))
+        app.buttons["category.screenshots"].tap()
+        _ = app.buttons["tile.ss1"].waitForExistence(timeout: 5)
+        app.buttons["tile.ss1"].tap(); app.buttons["tile.ss2"].tap()
+        shot("09-screenshots-selected", in: dir)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["category.largeFiles"].tap()
+        _ = app.buttons["item.big1"].waitForExistence(timeout: 5)
+        shot("10-large-files", in: dir)
+    }
+
     func testCaptureLight() throws { try run(appearance: .light, suffix: "light") }
     func testCaptureDark() throws { try run(appearance: .dark, suffix: "dark") }
     func testCaptureLargeText() throws {

@@ -29,17 +29,30 @@ enum ScanCategory: String, CaseIterable, Identifiable {
         switch self {
         case .exact: "Byte-identical copies. Quickest to clear."
         case .similar: "Near-identical shots. You choose what to remove."
-        case .videos: "Duplicate and similar videos."
-        case .screenshots: "Old screenshots and screen recordings."
-        case .largeFiles: "The biggest items on your iPhone."
+        case .videos: "Identical copies of the same video."
+        case .screenshots: "Old screenshots and screen recordings. You pick."
+        case .largeFiles: "The biggest videos on your iPhone. You pick."
         }
     }
 
-    var isAvailable: Bool { self == .exact || self == .similar }
+    var isAvailable: Bool { true }
+
+    /// Screenshots and large files have no "keep one" photo; the user picks items to delete.
+    var standaloneKind: StandaloneKind? {
+        switch self {
+        case .screenshots: .screenshotsAndRecordings
+        case .largeFiles: .largeFiles
+        default: nil
+        }
+    }
+
+    var itemNoun: (singular: String, plural: String) {
+        standaloneKind == nil ? ("group", "groups") : ("item", "items")
+    }
 
     var groupKind: GroupKind? {
         switch self {
-        case .exact: .exact
+        case .exact, .videos: .exact
         case .similar: .similar
         default: nil
         }

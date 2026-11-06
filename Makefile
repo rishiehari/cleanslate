@@ -18,6 +18,7 @@ fixtures-test:
 seed:
 	./scripts/seed_simulator.sh
 lint:
+	./scripts/check_policy_separation.sh
 	@if command -v swiftlint >/dev/null; then swiftlint lint --strict --quiet; else echo "warning: swiftlint not installed (brew install swiftlint); skipping design-system lint"; fi
 ci: core-test fixtures-test lint build ios-test
 verify:

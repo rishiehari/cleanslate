@@ -23,7 +23,7 @@ struct PrototypeHost: View {
 
     var body: some View {
         let similar = scenario.groups.first { $0.kind == .similar }!
-        let exact = scenario.groups.filter { $0.kind == .exact }
+        let exact = scenario.groups.filter { $0.kind == .exact && !$0.keeper.isVideo }
         NavigationStack {
             Group {
                 switch variant {

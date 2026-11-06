@@ -11,13 +11,14 @@ struct TrayView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if tray.entries.isEmpty {
+                if tray.isEmpty {
                     ContentUnavailableView("Your tray is empty", systemImage: "tray",
                         description: Text("Approve photos in a review and they'll wait here. Nothing is deleted until you confirm."))
                 } else {
                     List {
                         Section {
                             ForEach(tray.entries) { entry in row(entry) }
+                            ForEach(tray.standaloneEntries) { entry in standaloneRow(entry) }
                         } footer: {
                             Text("Swipe a group to take it out of the tray.")
                         }
@@ -29,7 +30,7 @@ struct TrayView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
-                if !tray.entries.isEmpty {
+                if !tray.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Clear", role: .destructive) { confirmClear = true }
                             .accessibilityIdentifier("tray.clear")
@@ -37,7 +38,7 @@ struct TrayView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if !tray.entries.isEmpty {
+                if !tray.isEmpty {
                     Button { confirming = true } label: {
                         Text("Delete \(tray.photoCount) \(tray.photoCount == 1 ? "photo" : "photos")")
                             .appText(.groupTitle).frame(maxWidth: .infinity, minHeight: 44)
@@ -69,6 +70,23 @@ struct TrayView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tray.screen")
+    }
+
+    private func standaloneRow(_ entry: StandaloneTrayEntry) -> some View {
+        HStack(spacing: Spacing.m) {
+            if let first = entry.items.first {
+                PhotoThumbnailView(assetID: first.id, target: 160)
+                    .frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: Radius.s))
+            }
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                Text("\(entry.items.count) \(entry.items.count == 1 ? "item" : "items") to delete").appText(.groupTitle)
+                Text(entry.verifiedBytes > 0 ? "\(entry.verifiedBytes.friendlyBytes) verified" : "Size not measured")
+                    .appText(.secondary).foregroundStyle(Color.textSecondary)
+            }
+        }
+        .swipeActions { Button("Remove", role: .destructive) { tray.remove(groupID: entry.id) } }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("tray.row.\(entry.id)")
     }
 
     private func row(_ entry: TrayEntry) -> some View {

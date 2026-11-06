@@ -4,6 +4,7 @@ struct PhotoThumbnailView: View {
     @Environment(\.photoLibrary) private var library
     let assetID: String
     var target: CGFloat = 280
+    var fill = false
     @State private var image: UIImage?
     @State private var finished = false
 
@@ -11,7 +12,7 @@ struct PhotoThumbnailView: View {
         ZStack {
             RoundedRectangle(cornerRadius: Radius.s).fill(Color.surfaceCard)
             if let image {
-                Image(uiImage: image).resizable().scaledToFit()
+                Image(uiImage: image).resizable().aspectRatio(contentMode: fill ? .fill : .fit)
             } else {
                 Image(systemName: finished ? "icloud.slash" : "photo")
                     .font(.title3).foregroundStyle(.secondary)

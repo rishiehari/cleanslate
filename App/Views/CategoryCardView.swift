@@ -29,10 +29,10 @@ struct CategoryCardView: View {
     }
 
     private var subtitle: String {
-        guard category.isAvailable else { return "Coming in a later build" }
         if groupCount == 0 { return category.summary }
-        let groups = groupCount == 1 ? "1 group" : "\(groupCount) groups"
-        return verifiedBytes > 0 ? "\(groups) · \(verifiedBytes.friendlyBytes) verified" : groups
+        let noun = groupCount == 1 ? category.itemNoun.singular : category.itemNoun.plural
+        let counted = "\(groupCount.formatted()) \(noun)"
+        return verifiedBytes > 0 ? "\(counted) · \(verifiedBytes.friendlyBytes) verified" : counted
     }
 }
 
