@@ -5,10 +5,12 @@ import CleanSlateCore
 @MainActor
 final class PhotoDeletionCoordinator {
     private let library: PhotoLibraryClient
+    private let networkPolicy: NetworkPolicy
     private var activeCommit = false
 
-    init(library: PhotoLibraryClient) {
+    init(library: PhotoLibraryClient, networkPolicy: NetworkPolicy? = nil) {
         self.library = library
+        self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
     }
 
     enum DeletionError: LocalizedError, Equatable {
@@ -74,12 +76,16 @@ final class PhotoDeletionCoordinator {
         }
 
         // Revalidate after asynchronous hashes, too: favorites/edits may have changed in between.
+        // The FULL policy runs again on fresh records (not just the hard flags), so a conditional
+        // flag appearing late (e.g. "edited") is judged against the keeper as well.
+        var freshAfterHash: [String: AssetRecord] = [:]
         for id in involved {
             guard let current = library.snapshot(id: id, inspectAlbums: true),
-                  current.record.revision == expected[id],
-                  current.record.flags.isEmpty || id == group.keeper.id else {
-                throw DeletionError.vanished
-            }
+                  current.record.revision == expected[id] else { throw DeletionError.vanished }
+            freshAfterHash[id] = current.record
+        }
+        if let invalid = SafetyPolicy.validateCommit(plan, currentByID: freshAfterHash) {
+            throw DeletionError.unsafe(invalid.rawValue)
         }
         guard hasAccess else { throw DeletionError.revoked }
 
@@ -108,7 +114,7 @@ final class PhotoDeletionCoordinator {
     /// Maps "can't read the original" failures to a safe, explicit abort. Cancellation passes through.
     private func verifiedDigests(_ id: String) async throws -> [ResourceDigest] {
         do {
-            return try await library.digests(id: id)
+            return try await DigestFetcher(library: library, policy: networkPolicy).fetch(id: id).digests
         } catch let error as LibraryResourceError {
             switch error {
             case .cancelled: throw CancellationError()

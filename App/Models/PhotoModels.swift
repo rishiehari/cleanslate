@@ -13,6 +13,10 @@ struct PhotoSnapshot: Identifiable, Codable, Equatable {
     let burstID: String?
     let width: Int
     let height: Int
+    /// Original filename of the primary resource (used only to find hash candidates).
+    var originalFilename: String? = nil
+    var isVideo: Bool = false
+    var durationSeconds: Double = 0
 
     var pixelCount: Int64 { Int64(width) * Int64(height) }
 }
@@ -54,6 +58,12 @@ struct ScanStatistics {
     var truncated = false
     /// Candidate pairs that could not be compared because Vision failed (e.g. simulator).
     var visionFailures = 0
+    /// Exact-copy coverage (Step 3.5).
+    var exactBucketsFound = 0
+    var exactAssetsHashed = 0
+    var exactAssetsUnverifiable = 0      // not local (iCloud), incomplete or failed
+    var originalsDownloaded = 0          // only with the opt-in iCloud verification
+    var bucketsOversized = 0
     var lastError: String?
 }
 

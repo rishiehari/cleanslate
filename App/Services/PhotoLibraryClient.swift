@@ -18,8 +18,9 @@ protocol PhotoLibraryClient: AnyObject {
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot?
     /// Local-only thumbnail; nil when no local rendition exists.
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage?
-    /// Digest of EVERY resource of the asset. Never touches the network.
-    func digests(id: String) async throws -> [ResourceDigest]
+    /// Digest of EVERY resource of the asset. Reads the network only when `allowNetwork` is true,
+    /// which only `NetworkPolicy` (via `DigestFetcher`) may request.
+    func digests(id: String, allowNetwork: Bool) async throws -> [ResourceDigest]
     /// Asks the system to delete the assets. The system presents its own confirmation.
     /// Immediately before the change request, the implementation re-reads the very objects
     /// it is about to delete and throws `.changed` if any revision differs from
@@ -39,7 +40,12 @@ final class ChangeSubscription {
     deinit { onCancel() }
 }
 
-enum LibraryResourceError: LocalizedError {
+extension PhotoLibraryClient {
+    /// Local-only convenience.
+    func digests(id: String) async throws -> [ResourceDigest] { try await digests(id: id, allowNetwork: false) }
+}
+
+enum LibraryResourceError: LocalizedError, Equatable {
     case notAccessible, changed, empty, cancelled
     var errorDescription: String? {
         switch self {

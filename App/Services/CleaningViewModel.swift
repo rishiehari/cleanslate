@@ -1,6 +1,7 @@
 import Foundation
 import Photos
 import Combine
+import CryptoKit
 import CleanSlateCore
 
 @MainActor
@@ -16,16 +17,19 @@ final class CleaningViewModel: ObservableObject {
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
     let tray: DeletionTray
+    let networkPolicy: NetworkPolicy
     private let featureStore = LocalFeatureIndex()
     private var scanTask: Task<Void, Never>?
     private var changeSubscription: ChangeSubscription?
     private var scanLimit = 1500
 
     init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared,
-         tray: DeletionTray? = nil) {
+         tray: DeletionTray? = nil,
+         networkPolicy: NetworkPolicy? = nil) {
         self.library = library
+        self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
-        self.coordinator = PhotoDeletionCoordinator(library: library)
+        self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: networkPolicy ?? NetworkPolicy.shared)
         self.authorization = library.authorization
         changeSubscription = library.observeChanges { [weak self] in
             self?.invalidateAfterLibraryChange()
@@ -76,6 +80,20 @@ final class CleaningViewModel: ObservableObject {
 
     func requestPermission() {
         Task { authorization = await library.requestAccess() }
+    }
+
+    /// Stable across launches (unlike `hashValue`), so reviewed groups and the tray survive relaunch.
+    static func stableToken(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Runs one scan to completion. `scan()` wraps this in a cancellable task; tests await it directly.
+    func runScan() async {
+        guard !isScanning, authorization == .authorized || authorization == .limited else { return }
+        isScanning = true
+        statistics = ScanStatistics(); statusMessage = nil; groups = []; progress = 0
+        await performScan()
+        isScanning = false
     }
 
     func scan() {
@@ -166,32 +184,49 @@ final class CleaningViewModel: ObservableObject {
         }
         let candidatePairs = Array(rankedPairs.prefix(240))
         statistics.candidatePairsConsidered = candidatePairs.count
+
+        // Exact stage. Candidates come from cheap metadata buckets plus the best visual pairs;
+        // only those are hashed in full. Every resource of every asset is hashed (Live Photos,
+        // edits and RAW included); anything that can't be read completely is NOT a match.
         phase = .fullResources
+        let buckets = ExactCandidates.buckets(photos.map { photo in
+            ExactKey(id: photo.id, mediaType: photo.isVideo ? 2 : 1, pixelWidth: photo.width, pixelHeight: photo.height,
+                     creationSecond: photo.capturedAt.map { Int64($0.timeIntervalSince1970) },
+                     durationMillis: Int64(photo.durationSeconds * 1000), originalFilename: photo.originalFilename)
+        })
+        statistics.exactBucketsFound = buckets.buckets.count
+        statistics.bucketsOversized = buckets.oversizedBuckets
         let candidateIDs = Set(candidatePairs.flatMap { [$0.first, $0.second] })
+            .union(buckets.buckets.flatMap { $0 })
         var allDigests: [String: [ResourceDigest]] = [:]
         let orderedIDs = candidateIDs.sorted()
-        for (n,id) in orderedIDs.enumerated() {
+        let fetcher = DigestFetcher(library: library, policy: networkPolicy)
+        for (n, id) in orderedIDs.enumerated() {
             if Task.isCancelled { phase = .cancelled; return }
-            // Restrict large-resource hashing to relatively simple photos. An asset with
-            // an unavailable original is NOT a verified exact duplicate.
-            guard let photo = byID[id], photo.record.flags.isDisjoint(with: [.livePhoto,.raw,.edited,.shared]) else { continue }
+            guard byID[id] != nil else { continue }
             do {
-                allDigests[id] = try await library.digests(id: id)
+                let result = try await fetcher.fetch(id: id)
+                allDigests[id] = result.digests
+                statistics.exactAssetsHashed += 1
                 statistics.exactAssetsVerified += 1
+                if result.downloaded { statistics.originalsDownloaded += 1 }
             } catch is CancellationError {
                 phase = .cancelled; return
             } catch LibraryResourceError.cancelled {
                 phase = .cancelled; return
-            } catch { /* Local-only asset or permission failure: do not claim a match. */ }
+            } catch {
+                // Not local (iCloud), incomplete or failed: cannot claim a match.
+                statistics.exactAssetsUnverifiable += 1
+            }
             if n % 5 == 0 { progress = 0.65 + 0.23 * Double(n + 1) / Double(max(1, orderedIDs.count)); await Task.yield() }
         }
         if Task.isCancelled { phase = .cancelled; return }
 
         var groupsFound: [PhotoReviewGroup] = []
         var claimedIDs: Set<String> = []
-        let identified = Dictionary(grouping: allDigests.compactMap { id,digests -> (String, String)? in
+        let identified = Dictionary(grouping: allDigests.compactMap { id, digests -> (String, String)? in
             guard let signature = ResourceSignatures.canonical(digests) else { return nil }
-            return (signature,id)
+            return (signature, id)
         }, by: { $0.0 })
         for (signature, members) in identified.sorted(by: { $0.key < $1.key }) where members.count > 1 {
             let snapshots = members.compactMap { byID[$0.1] }
@@ -206,7 +241,7 @@ final class CleaningViewModel: ObservableObject {
                 guard let digest = allDigests[photo.id], let size = ResourceSignatures.logicalBytes(digest) else { return nil }
                 return (photo.id, size)
             })
-            let group = PhotoReviewGroup(id: "exact-\(signature.hashValue)-\(keeper.id)", kind: .exact,
+            let group = PhotoReviewGroup(id: "exact-\(Self.stableToken(signature))-\(keeper.id)", kind: .exact,
                                          keeper: keeper, candidates: remaining, evidence: pairEvidence,
                                          verifiedCandidateBytes: bytes)
             groupsFound.append(group)

@@ -39,9 +39,9 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         fetchAsset(id).map { snapshot($0, inspectAlbums: inspectAlbums) }
     }
 
-    func digests(id: String) async throws -> [ResourceDigest] {
+    func digests(id: String, allowNetwork: Bool) async throws -> [ResourceDigest] {
         guard let asset = fetchAsset(id) else { throw LibraryResourceError.notAccessible }
-        return try await completeDigests(asset)
+        return try await completeDigests(asset, allowNetwork: allowNetwork)
     }
 
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
@@ -126,7 +126,8 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         let record = AssetRecord(id: asset.localIdentifier, revision: revision, flags: flags)
         return PhotoSnapshot(id: asset.localIdentifier, record: record,
                              capturedAt: asset.creationDate, burstID: asset.burstIdentifier,
-                             width: asset.pixelWidth, height: asset.pixelHeight)
+                             width: asset.pixelWidth, height: asset.pixelHeight,
+                             originalFilename: resources.first(where: { $0.type == .photo || $0.type == .video })?.originalFilename)
     }
 
     /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable.
@@ -150,23 +151,23 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     }
 
     /// Full resource hashes, network strictly disabled. No KVC private fileSize API.
-    private func completeDigests(_ asset: PHAsset) async throws -> [ResourceDigest] {
+    private func completeDigests(_ asset: PHAsset, allowNetwork: Bool) async throws -> [ResourceDigest] {
         let resources = PHAssetResource.assetResources(for: asset)
         guard !resources.isEmpty else { throw LibraryResourceError.empty }
         var digests: [ResourceDigest] = []
         for resource in resources {
             try Task.checkCancellation()
-            let digest = try await digest(resource)
+            let digest = try await digest(resource, allowNetwork: allowNetwork)
             digests.append(digest)
         }
         return digests
     }
 
-    private func digest(_ resource: PHAssetResource) async throws -> ResourceDigest {
+    private func digest(_ resource: PHAssetResource, allowNetwork: Bool) async throws -> ResourceDigest {
         let accumulator = LockedSHA256()
         let resourceType = "\(resource.type.rawValue):\(resource.uniformTypeIdentifier)"
         let options = PHAssetResourceRequestOptions()
-        options.isNetworkAccessAllowed = false
+        options.isNetworkAccessAllowed = allowNetwork
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ResourceDigest, Error>) in
             PHAssetResourceManager.default().requestData(for: resource, options: options,
                 dataReceivedHandler: { data in accumulator.update(data) },

@@ -122,10 +122,12 @@ final class DeletionCoordinatorTests: XCTestCase {
 
     func testProtectedFlagWithoutRevisionChangeStillAborts() async {
         let group = makeExactPair()
+        // A conditional flag appears after the first check, with no revision change. The full policy
+        // runs again after hashing and rejects it (the keeper isn't edited, so nothing may stand in).
         library.onDigests = { [library] id in
             if id == "c" { library?.update("c", flags: [.edited]) }
         }
-        await expectError(.vanished) {
+        await expectError(.unsafe(ReviewReason.protected.rawValue)) {
             _ = try await coordinator.commit(group: group, selected: ["c"], manuallyReviewed: [])
         }
         XCTAssertTrue(library.deleteCalls.isEmpty)

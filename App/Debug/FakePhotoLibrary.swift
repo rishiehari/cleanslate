@@ -15,6 +15,8 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         var snapshot: PhotoSnapshot
         /// nil = original not available locally (e.g. iCloud only).
         var digests: [ResourceDigest]?
+        /// What a download would yield (only returned when the caller allows network access).
+        var cloudDigests: [ResourceDigest]?
         /// Drives the deterministic thumbnail so copies look identical and similar shots differ slightly.
         var look: String = ""
     }
@@ -25,6 +27,9 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     var deleteOutcome: DeleteOutcome = .success
     private(set) var deleteCalls: [[String]] = []
     private(set) var digestCalls: [String] = []
+    /// Every digest request with its `allowNetwork` flag, in order.
+    private(set) var digestRequests: [(id: String, allowNetwork: Bool)] = []
+    private var nextTimestamp: Int64 = 1_700_000_000
     /// Called when hashing of an asset begins; lets a test mutate the library mid-flight.
     var onDigests: ((String) -> Void)?
     private var handlers: [UUID: @MainActor () -> Void] = [:]
@@ -38,12 +43,16 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         return ResourceDigest(type: type, byteCount: bytes, sha256: hex)
     }
 
+    /// `at` is the creation time (seconds). Assets that should look like copies of each other pass the
+    /// same `at`; by default every asset gets its own timestamp so nothing is bucketed by accident.
     func add(_ id: String, revision: String = "v1", flags: Set<PreservationFlag> = [],
-             content: String? = nil, bytes: Int64 = 1_000) {
+             content: String? = nil, bytes: Int64 = 1_000, at: Int64? = nil, resources: [ResourceDigest]? = nil) {
         let record = AssetRecord(id: id, revision: revision, flags: flags)
-        let snapshot = PhotoSnapshot(id: id, record: record, capturedAt: Date(timeIntervalSince1970: 1_700_000_000),
-                                     burstID: nil, width: 4032, height: 3024)
-        assets[id] = Asset(snapshot: snapshot, digests: [Self.digest(content ?? id, bytes: bytes)], look: content ?? id)
+        nextTimestamp += 1_000
+        let time = at ?? nextTimestamp
+        let snapshot = PhotoSnapshot(id: id, record: record, capturedAt: Date(timeIntervalSince1970: TimeInterval(time)),
+                                     burstID: nil, width: 4032, height: 3024, originalFilename: "IMG_\(id).HEIC")
+        assets[id] = Asset(snapshot: snapshot, digests: resources ?? [Self.digest(content ?? id, bytes: bytes)], look: content ?? id)
     }
 
     func update(_ id: String, revision: String? = nil, flags: Set<PreservationFlag>? = nil) {
@@ -52,7 +61,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         let record = AssetRecord(id: id, revision: revision ?? old.revision, flags: flags ?? old.flags)
         asset.snapshot = PhotoSnapshot(id: id, record: record, capturedAt: asset.snapshot.capturedAt,
                                        burstID: asset.snapshot.burstID, width: asset.snapshot.width,
-                                       height: asset.snapshot.height)
+                                       height: asset.snapshot.height, originalFilename: asset.snapshot.originalFilename)
         assets[id] = asset
     }
 
@@ -94,12 +103,15 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         }
     }
 
-    func digests(id: String) async throws -> [ResourceDigest] {
+    func digests(id: String, allowNetwork: Bool) async throws -> [ResourceDigest] {
         digestCalls.append(id)
+        digestRequests.append((id, allowNetwork))
         onDigests?(id)
         await Task.yield()
-        guard let asset = assets[id], let digests = asset.digests else { throw LibraryResourceError.notAccessible }
-        return digests
+        guard let asset = assets[id] else { throw LibraryResourceError.notAccessible }
+        if let local = asset.digests { return local }
+        if allowNetwork, let cloud = asset.cloudDigests { return cloud }
+        throw LibraryResourceError.notAccessible
     }
 
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
