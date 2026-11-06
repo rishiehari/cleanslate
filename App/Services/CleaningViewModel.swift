@@ -15,7 +15,7 @@ final class CleaningViewModel: ObservableObject {
     @Published private(set) var isScanning = false
     @Published var deletionReceipt: String?
 
-    private let library: PhotoLibraryClient
+    let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
     private let featureStore = LocalFeatureIndex()
     private var scanTask: Task<Void, Never>?
@@ -50,6 +50,24 @@ final class CleaningViewModel: ObservableObject {
             statusMessage = "The Photos library changed. Previous matches were invalidated. Scan again."
         }
     }
+
+    func groups(in category: ScanCategory) -> [PhotoReviewGroup] {
+        guard let kind = category.groupKind else { return [] }
+        return groups.filter { $0.kind == kind }
+    }
+
+    func verifiedBytes(in category: ScanCategory) -> Int64 {
+        groups(in: category).reduce(Int64(0)) { $0 + $1.estimatedVerifiedBytes }
+    }
+
+    #if DEBUG
+    /// UI tests and screenshots only: show prepared groups without running a scan.
+    func seedGroupsForUITesting(_ seeded: [PhotoReviewGroup]) {
+        groups = seeded
+        phase = .finished
+        progress = 1
+    }
+    #endif
 
     var potentialVerifiedBytes: Int64 {
         groups.reduce(Int64(0)) { $0 + $1.estimatedVerifiedBytes }

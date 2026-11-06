@@ -5,6 +5,7 @@ struct DashboardView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var showClearCache = false
+    @AppStorage("onboarding.seen.v1") private var onboardingSeen = false
 
     var body: some View {
         NavigationStack {
@@ -27,17 +28,21 @@ struct DashboardView: View {
                                 .padding(12)
                                 .background(.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
                         }
-                        results
+                        categories
                     }
                     privacyFooter
                 }
                 .padding(18)
             }
             .navigationTitle("CleanSlate")
+            .fullScreenCover(isPresented: Binding(get: { !onboardingSeen }, set: { if !$0 { onboardingSeen = true } })) {
+                OnboardingView { onboardingSeen = true }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Clear local feature cache", systemImage: "trash.slash") { showClearCache = true }
+                        Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
                         Button("Open Photos permissions", systemImage: "hand.raised") {
                             if let url = URL(string: UIApplication.openSettingsURLString) {
                                 UIApplication.shared.open(url)
@@ -74,6 +79,7 @@ struct DashboardView: View {
             Text("CleanSlate analyzes accessible photos on this iPhone. The system will ask you to confirm deletions; the app cannot silently remove pictures.")
                 .font(.subheadline)
             Button("Allow Photos access") { model.requestPermission() }
+                .accessibilityIdentifier("permission.allow")
                 .buttonStyle(.borderedProminent)
                 .disabled(model.authorization == .restricted)
             if model.authorization == .denied {
@@ -83,6 +89,8 @@ struct DashboardView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("permission.card")
     }
 
     private var storageCard: some View {
@@ -133,6 +141,7 @@ struct DashboardView: View {
             } else {
                 Button("Scan photos", systemImage: "sparkle.magnifyingglass") { model.scan() }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("dashboard.scan")
                 if model.statistics.photosEnumerated > 0 {
                     Button("Scan more", systemImage: "plus.magnifyingglass") { model.scanMore() }
                         .buttonStyle(.bordered)
@@ -141,42 +150,34 @@ struct DashboardView: View {
         }
     }
 
-    private var results: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Review groups").font(.title3.bold())
-                Spacer()
-                Text("\(model.groups.count)").foregroundStyle(.secondary)
-            }
-            if model.groups.isEmpty && model.phase == .finished {
-                ContentUnavailableView("No matches in this scan", systemImage: "checkmark.circle",
-                                       description: Text("No matching photos were confirmed within the current scanning coverage. This is not a guarantee that the entire library has no duplicates."))
-            }
-            ForEach(model.groups) { group in
-                NavigationLink {
-                    ReviewGroupView(group: group)
-                } label: {
-                    HStack(spacing: 12) {
-                        PhotoThumbnailView(assetID: group.keeper.id, target: 80)
-                            .frame(width: 75, height: 75)
-                            .clipShape(RoundedRectangle(cornerRadius: 9))
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(group.kind.rawValue).font(.subheadline.bold())
-                            Text("\(group.candidates.count + 1) photos · \(group.estimatedVerifiedBytes.friendlyBytes) verified candidate bytes")
-                                .font(.caption).foregroundStyle(.secondary)
-                            if group.kind == .similar {
-                                Text("Manual review only").font(.caption2).foregroundStyle(.orange)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+    private var categories: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("What to review").font(.title3.bold())
+            ForEach(visibleCategories) { category in
+                if category.isAvailable {
+                    NavigationLink {
+                        CategoryGroupsView(category: category)
+                    } label: {
+                        CategoryCardView(category: category,
+                                         groupCount: model.groups(in: category).count,
+                                         verifiedBytes: model.verifiedBytes(in: category))
                     }
-                    .padding(10)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 13))
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("category.\(category.rawValue)")
+                } else {
+                    CategoryCardView(category: category, groupCount: 0, verifiedBytes: 0)
+                        .accessibilityIdentifier("category.\(category.rawValue)")
                 }
-                .buttonStyle(.plain)
             }
         }
+    }
+
+    private var visibleCategories: [ScanCategory] {
+        #if DEBUG
+        ScanCategory.allCases
+        #else
+        ScanCategory.allCases.filter(\.isAvailable)
+        #endif
     }
 
     private var privacyFooter: some View {

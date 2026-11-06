@@ -60,3 +60,19 @@ Checklist for the owner (disposable library, iCloud Photos OFF, ~30 photos incl.
 Work on Steps 2+ continues on simulator/fake data in the meantime; nothing in Step 2-2B depends on the device run.
 
 Known gaps carried forward: GitHub Actions run unverified; device run pending; scan still on main actor; Swift 5 mode.
+
+## Step 2 — Positioning, iOS 26, category IA, onboarding, UI test infrastructure — 2026-11-05
+**make ci: PASS** — core 30, fixtures 2, iOS unit 20 (1 simulator skip), UI 4.
+
+- `docs/PRODUCT.md` written (positioning vs Apple's Duplicates album, categories, non-goals, metrics).
+- **iOS 26 minimum adopted** (`project.yml`). Core package keeps its lower platform floor (no iOS 26 APIs inside Core). *Default recommendation adopted by the agent while the owner is unavailable; **owner confirmation PENDING**; reversible.*
+- Home restructured into category cards (`ScanCategory`, `CategoryCardView`, `CategoryGroupsView`). Unbuilt categories show "Coming in a later build" and only in DEBUG.
+- 3-screen onboarding (privacy / how deletion works / Apple's Duplicates album tip). Stored in `UserDefaults` key `onboarding.seen.v1` (privacy manifest entry due in Step 10.2).
+- UI test target `CleanSlateUITests` with DEBUG-only launch modes: `-uiTestingFakeLibrary`, `-uiTestingAuth denied|limited|...`, `-resetOnboarding`, `-skipOnboarding`. `FakePhotoLibrary` moved to `App/Debug/` (compiled in DEBUG only; renders deterministic scene thumbnails).
+- UI tests: onboarding shown then dashboard, category cards render, a category opens its group list, denied permission shows the permission card.
+- Two test-infrastructure lessons recorded: (1) a container's `accessibilityIdentifier` overrides its children's unless `.accessibilityElement(children: .contain)`; (2) `-key value` launch args live in UserDefaults' argument domain and **cannot be overwritten by the app**, so onboarding reset/skip uses real writes.
+- Screenshots: `docs/screens/step2/` (onboarding, dashboard, permission-denied; default iPhone 17 Pro simulator).
+
+Review: no SafetyPolicy/Core change. Delete path unchanged (grep: single `deleteAssets`). UI is intentionally plain; visual design is Step 2B.
+Human gate: owner to confirm PRODUCT.md and the iOS 26 decision. **PENDING**.
+Known gaps carried forward: Home still shows engine-flavored text ("0 inventoried"), to be redesigned in 2B.

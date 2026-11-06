@@ -34,6 +34,7 @@ targets:
     scheme:
       testTargets:
         - CleanSlateTests
+        - CleanSlateUITests
   CleanSlateTests:
     type: bundle.unit-test
     platform: iOS
@@ -44,4 +45,15 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.cleanslate.free.tests
+        GENERATE_INFOPLIST_FILE: YES
+  CleanSlateUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: CleanSlate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.cleanslate.free.uitests
         GENERATE_INFOPLIST_FILE: YES
