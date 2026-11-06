@@ -196,7 +196,17 @@ group ids that include membership (an old review can't hide a changed group).
   reason), low memory (width 1), Low Power (narrower). Tests incl. a heat-stopped scan resuming with only the remainder.
 - **5.7 Background tasks** (`BGProcessingTask` overnight, iOS 26 `BGContinuedProcessingTask`): written and compiled,
   **cannot run in the simulator (documented by Apple); needs a device.**
-- **5.8 Scale harness** (`ScaleTests`; `CLEANSLATE_SCALE_N`): 42,400 assets in 10.4 s, +38 MB; see the 250k line below.
+- **5.8 Scale harness** (`ScaleTests`; `CLEANSLATE_SCALE_N`), fake library on the simulator, thumbnails disabled so the
+  engine (not pixel work) is measured:
+
+  | Library | Whole scan | Memory growth | Planted exact pairs found |
+  |---|---|---|---|
+  | 42,400 assets | 10.4 s | +38 MB | 100% |
+  | **252,400 assets** | **130.7 s** | **+178 MB** (budget 300 MB: met) | 100% (1,200/1,200) |
+
+  The plan's 60 s budget was for the *inventory* alone; this number is the whole scan (inventory, fingerprint bookkeeping,
+  candidates, exact verification), so it is not directly comparable. A relaunch on a 20k index is incremental and instant.
+  **Not measured on a real iPhone** (pixel decode, Vision, PhotoKit I/O, thermal behavior all differ).
 
 ### Defects found by the harness and tests (all fixed)
 1. **Hang:** with the pair cap removed, look-alike photos produced hundreds of Vision attempts; on the simulator each
@@ -225,3 +235,29 @@ SafetyPolicy/Core assertions changed: **none** in these steps. `deleteAssets`: s
 
 ### 🧑 Gates PENDING
 Real-library **scan-only** run on a device (Instruments: time, memory, thermal); background-task behavior on a device.
+
+## Step 7 — Bursts, similar shots, best-shot review — 2026-11-06
+**Core 94 tests.** iOS unit/UI re-run in the full `make ci` below.
+
+- **Review sets (7.2).** Core `SequenceGrouping`: native bursts (any time span) and quick runs of look-alike shots
+  (≤ 3 s apart, adjacent hash distance ≤ 12, first-to-last ≤ 24 so a slow pan can't chain into one group), capped at 30;
+  8 tests incl. anti-chaining, determinism, and "an asset is in at most one group" over random inputs. The engine builds
+  `similar` groups from these (exact-copy members are never included; ids are stable).
+- **Evidence for any choice (7.1).** Each review set carries "looks similar" evidence between EVERY pair, so whichever
+  photos the user chooses to keep are directly linked to each photo removed. Similar photos stay review-only: nothing
+  is preselected, and each removal needs the user's own tap (policy `reviewOnly` + `manuallyReviewedIDs`).
+- **Multi-keeper.** `TrayEntry.keeperIDs`, `commit(…, keeperIDs:)`: the user can keep several photos, even delete the
+  suggested keeper if they keep another. For exact groups every kept AND deleted photo is rehashed. 5 tests: keep two /
+  delete one; delete the suggested keeper; foreign keeper, keeper == selection, no keeper all refused; manual review
+  still required; a kept photo that no longer matches blocks an exact commit.
+- **Warnings (7.3).** Core `DifferenceAnalysis` (different face count, different text; unknown never warns); the app
+  asks Vision for faces/text (device only; returns "unknown" elsewhere). A warned photo cannot be marked until the user
+  taps through a sheet ("I've looked, mark it for deletion"). 6 Core tests + model/UI tests with a fake analyzer.
+- **Review UX (7.4).** "Mark the rest" helper (marks, never approves, skips warned photos), Undo (last 20 actions, blocked
+  taps don't pollute history), group grid scales with size (1/2/3 columns). Tray entries depend only on kept + deleted
+  photos, so a change to an undecided bystander doesn't flag the entry.
+- **Defect found by tests:** my first scan tests used identical bytes for "similar" photos; the scan (correctly) classified
+  them as exact copies. The fake now separates `content` (bytes) from `look` (picture).
+- **Not done / deferred:** per-face crop strip in Compare, shake-to-undo, per-photo quality thumbnails for the whole set in
+  one filmstrip (the grid is used instead), `QualitySignals.minFaceQuality/faceCount`, any Vision-based behavior can only be
+  exercised on a device. 🧑 **Gate PENDING:** cull 3 real bursts on a device and record time per group and any wrong keeper suggestion.
