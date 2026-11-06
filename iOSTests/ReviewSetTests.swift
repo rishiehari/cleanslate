@@ -23,8 +23,8 @@ final class ReviewSetTests: XCTestCase {
     // MARK: Review sets from a scan
 
     func testABurstBecomesOneReviewSetWithAllPairsLinked() async throws {
-        for n in 0..<4 { library.add("burst\(n)", content: "same-scene", at: 5_000 + Int64(n), burst: "B1") }
-        library.add("other", content: "different", at: 90_000)
+        for n in 0..<4 { library.add("burst\(n)", at: 5_000 + Int64(n), burst: "B1", look: "same-scene") }
+        library.add("other", at: 90_000, look: "different")
         let model = try makeModel(); await model.runScan()
         let sets = model.groups(in: .similar)
         XCTAssertEqual(sets.count, 1)
@@ -35,8 +35,8 @@ final class ReviewSetTests: XCTestCase {
     }
 
     func testQuickLookAlikeShotsFormASetButAFarAwayShotDoesNot() async throws {
-        library.add("q1", content: "scene", at: 8_000); library.add("q2", content: "scene", at: 8_001); library.add("q3", content: "scene", at: 8_002)
-        library.add("later", content: "scene", at: 80_000)
+        library.add("q1", at: 8_000, look: "scene"); library.add("q2", at: 8_001, look: "scene"); library.add("q3", at: 8_002, look: "scene")
+        library.add("later", at: 80_000, look: "scene")
         let model = try makeModel(); await model.runScan()
         let set = try XCTUnwrap(model.groups(in: .similar).first { $0.all.contains { $0.id == "q1" } })
         XCTAssertEqual(Set(set.all.map(\.id)), ["q1", "q2", "q3"])
@@ -50,7 +50,7 @@ final class ReviewSetTests: XCTestCase {
     }
 
     func testReviewSetNeverPreselectsAnything() async throws {
-        for n in 0..<3 { library.add("s\(n)", content: "scene", at: 5_000 + Int64(n)) }
+        for n in 0..<3 { library.add("s\(n)", at: 5_000 + Int64(n), look: "scene") }
         let model = try makeModel(); await model.runScan()
         let set = try XCTUnwrap(model.groups(in: .similar).first)
         XCTAssertTrue(SafetyPolicy.evaluate(set.coreCluster).preselected.isEmpty)
@@ -58,7 +58,7 @@ final class ReviewSetTests: XCTestCase {
     }
 
     func testReviewSetGroupIdIsStableAcrossScans() async throws {
-        for n in 0..<3 { library.add("s\(n)", content: "scene", at: 5_000 + Int64(n)) }
+        for n in 0..<3 { library.add("s\(n)", at: 5_000 + Int64(n), look: "scene") }
         let first = try makeModel(); await first.runScan()
         let second = try makeModel(); await second.runScan()
         XCTAssertEqual(first.groups(in: .similar).map(\.id), second.groups(in: .similar).map(\.id))
@@ -170,7 +170,7 @@ final class ReviewSetTests: XCTestCase {
 
     func testTrayEntryIgnoresChangesToUndecidedBystanders() async throws {
         let model = try makeModel()
-        for n in 0..<4 { library.add("g\(n)", content: "scene", at: 5_000 + Int64(n)) }
+        for n in 0..<4 { library.add("g\(n)", at: 5_000 + Int64(n), look: "scene") }
         await model.runScan()
         let group = try XCTUnwrap(model.groups(in: .similar).first)
         let ids = group.all.map(\.id)
