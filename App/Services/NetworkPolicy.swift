@@ -73,7 +73,8 @@ struct DigestFetcher {
                 policy.record(downloadedBytes: digests.reduce(Int64(0)) { $0 + $1.byteCount })
                 return Result(digests: digests, downloaded: true)
             } catch {
-                policy.record(downloadedBytes: estimatedBytes)
+                let cancelled = error is CancellationError || (error as? LibraryResourceError) == .cancelled
+                if !cancelled { policy.record(downloadedBytes: estimatedBytes) }   // a user's Stop isn't a failed download
                 throw error
             }
         }

@@ -9,8 +9,12 @@ final class CleaningViewModel: ObservableObject {
     @Published private(set) var authorization: PHAuthorizationStatus
     @Published private(set) var phase: ScanPhase = .idle
     @Published private(set) var progress: Double = 0
-    @Published private(set) var groups: [PhotoReviewGroup] = []
-    @Published private(set) var standaloneItems: [StandaloneItem] = []
+    @Published private(set) var groups: [PhotoReviewGroup] = [] { didSet { recomputeStandalone() } }
+    @Published private(set) var standaloneItems: [StandaloneItem] = [] { didSet { recomputeStandalone() } }
+    /// Cached per category: the lists are read many times per screen update.
+    private(set) var standaloneCache: [ScanCategory: [StandaloneItem]] = [:]
+    private var albumMembers: Set<String> = []
+    private var trayObserver: AnyCancellable?
     @Published private(set) var statistics = ScanStatistics()
     @Published var statusMessage: String?
     @Published private(set) var isScanning = false
@@ -30,8 +34,10 @@ final class CleaningViewModel: ObservableObject {
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
-        self.coordinator = PhotoDeletionCoordinator(library: library)
+        self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy)
         self.authorization = library.authorization
+        // @Published notifies before the value changes, so use the emitted value, not tray.standaloneEntries.
+        trayObserver = self.tray.$standaloneEntries.sink { [weak self] entries in self?.recomputeStandalone(trayEntries: entries) }
         changeSubscription = library.observeChanges { [weak self] in
             self?.invalidateAfterLibraryChange()
         }
@@ -42,6 +48,7 @@ final class CleaningViewModel: ObservableObject {
         if newStatus != authorization {
             scanTask?.cancel()
             groups = []
+            standaloneItems = []
             statusMessage = "Photos access changed. Please scan again."
         }
         authorization = newStatus
@@ -51,10 +58,10 @@ final class CleaningViewModel: ObservableObject {
         // Invalidation is conservative. A late notification can arrive after a completed
         // scan, so the user must rescan rather than trusting stale recommendations.
         if isScanning { scanTask?.cancel() }
-        if !groups.isEmpty {
-            groups = []
-            statusMessage = "The Photos library changed. Previous matches were invalidated. Scan again."
-        }
+        let hadResults = !groups.isEmpty || !standaloneItems.isEmpty
+        groups = []
+        standaloneItems = []
+        if hadResults { statusMessage = "The Photos library changed. Previous results were cleared. Scan again." }
     }
 
     func groups(in category: ScanCategory) -> [PhotoReviewGroup] {
@@ -69,14 +76,26 @@ final class CleaningViewModel: ObservableObject {
         }
     }
 
-    func standalone(in category: ScanCategory) -> [StandaloneItem] {
-        guard let kind = category.standaloneKind else { return [] }
-        let inTray = Set(tray.standaloneEntries.flatMap { $0.items.map(\.id) })
+    func standalone(in category: ScanCategory) -> [StandaloneItem] { standaloneCache[category] ?? [] }
+
+    private func recomputeStandalone(trayEntries: [StandaloneTrayEntry]? = nil) {
+        let inTray = Set((trayEntries ?? tray.standaloneEntries).flatMap { $0.items.map(\.id) })
         // Members of an exact-copy group are handled there (one is always kept). Offering them here
         // would let someone delete every copy of the same photo or video.
         let inExactGroup = Set(groups.filter { $0.kind == .exact }.flatMap { $0.all.map(\.id) })
-        return StandaloneRules.items(for: kind, from: standaloneItems)
-            .filter { !inTray.contains($0.id) && !inExactGroup.contains($0.id) }
+        let hidden = inTray.union(inExactGroup).union(albumMembers)
+        var cache: [ScanCategory: [StandaloneItem]] = [:]
+        for category in ScanCategory.allCases {
+            guard let kind = category.standaloneKind else { continue }
+            cache[category] = StandaloneRules.items(for: kind, from: standaloneItems).filter { !hidden.contains($0.id) }
+        }
+        standaloneCache = cache
+    }
+
+    /// Measures a screenshot's size when the user selects it (cheap for one file; avoids reading thousands up front).
+    func measureSize(of item: StandaloneItem) async {
+        guard item.verifiedBytes == nil, let bytes = await library.verifiedSize(id: item.id) else { return }
+        if let index = standaloneItems.firstIndex(where: { $0.id == item.id }) { standaloneItems[index].verifiedBytes = bytes }
     }
 
     func verifiedBytes(in category: ScanCategory) -> Int64 {
@@ -136,7 +155,7 @@ final class CleaningViewModel: ObservableObject {
     func runScan() async {
         guard !isScanning, authorization == .authorized || authorization == .limited else { return }
         isScanning = true
-        statistics = ScanStatistics(); statusMessage = nil; groups = []; progress = 0
+        statistics = ScanStatistics(); statusMessage = nil; groups = []; standaloneItems = []; progress = 0
         networkPolicy.resetSessionBudget()          // the iCloud download limit is per scan
         await performScan()
         isScanning = false
@@ -161,6 +180,7 @@ final class CleaningViewModel: ObservableObject {
         guard !isScanning else { return }
         featureStore.clear()
         groups = []
+        standaloneItems = []
         statistics = ScanStatistics()
         statusMessage = "The local feature cache was cleared. Photos were not modified."
     }
@@ -293,7 +313,7 @@ final class CleaningViewModel: ObservableObject {
                 guard let digest = allDigests[photo.id], let size = ResourceSignatures.logicalBytes(digest) else { return nil }
                 return (photo.id, size)
             })
-            let group = PhotoReviewGroup(id: "exact-\(Self.stableToken(signature))", kind: .exact,
+            let group = PhotoReviewGroup(id: "exact-\(Self.stableToken(signature))-\(Self.stableToken(snapshots.map(\.id).sorted().joined(separator: "|")))", kind: .exact,
                                          keeper: keeper, candidates: remaining, evidence: pairEvidence,
                                          verifiedCandidateBytes: bytes)
             groupsFound.append(group)
@@ -303,12 +323,14 @@ final class CleaningViewModel: ObservableObject {
         // Measure screenshots and videos for the keeper-less categories (local files only).
         phase = .sizing
         var measured: [StandaloneItem] = []
-        let sizable = photos.filter { ($0.isScreenshot || $0.isVideo) && $0.record.flags.isEmpty }.prefix(Self.maximumSizedItems)
+        // Videos are sized from their local file (no bytes read). Screenshots are measured when selected.
+        let sizable = Array(photos.filter { ($0.isScreenshot || $0.isVideo) && $0.record.flags.isEmpty }.prefix(Self.maximumSizedItems))
         for (n, photo) in sizable.enumerated() {
             if Task.isCancelled { phase = .cancelled; return }
-            measured.append(StandaloneItem(snapshot: photo, verifiedBytes: await library.verifiedSize(id: photo.id)))
-            if n % 25 == 0 { await Task.yield() }
+            measured.append(StandaloneItem(snapshot: photo, verifiedBytes: photo.isVideo ? await library.verifiedSize(id: photo.id) : nil))
+            if n % 25 == 0 { progress = 0.88 + 0.07 * Double(n + 1) / Double(max(1, sizable.count)); await Task.yield() }
         }
+        albumMembers = library.userAlbumAssetIDs()
         standaloneItems = measured
 
         phase = .vision

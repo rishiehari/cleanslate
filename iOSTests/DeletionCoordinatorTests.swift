@@ -10,7 +10,13 @@ final class DeletionCoordinatorTests: XCTestCase {
 
     override func setUp() async throws {
         library = FakePhotoLibrary()
-        coordinator = PhotoDeletionCoordinator(library: library)
+        coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: Self.policy(enabled: false))
+    }
+
+    private static func policy(enabled: Bool) -> NetworkPolicy {
+        let policy = NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { true })
+        policy.isEnabled = enabled
+        return policy
     }
 
     /// keeper "k" and copy "c" with byte-identical content.
@@ -79,11 +85,34 @@ final class DeletionCoordinatorTests: XCTestCase {
         XCTAssertTrue(library.deleteCalls.isEmpty)
     }
 
+    func testICloudVerifiedGroupStaysDeletableWhenTheUserOptedIn() async throws {
+        library.add("k", content: "same")
+        library.add("c", content: "same")
+        library.assets["c"]?.digests = nil                                  // only in iCloud right now
+        library.assets["c"]?.cloudDigests = [FakePhotoLibrary.digest("same")]
+        let group = library.exactGroup(keeper: "k", copies: ["c"], bytes: 100)
+        let optedIn = PhotoDeletionCoordinator(library: library, networkPolicy: Self.policy(enabled: true))
+        let result = try await optedIn.commit(group: group, selected: ["c"], manuallyReviewed: [])
+        XCTAssertEqual(result.verifiedRemoved, 1)
+        XCTAssertTrue(library.digestRequests.contains { $0.allowNetwork }, "the recheck read the iCloud original")
+    }
+
+    func testICloudOnlyCopyIsNotDeletableWithoutOptIn() async {
+        library.add("k", content: "same")
+        library.add("c", content: "same")
+        library.assets["c"]?.digests = nil
+        library.assets["c"]?.cloudDigests = [FakePhotoLibrary.digest("same")]
+        let group = library.exactGroup(keeper: "k", copies: ["c"], bytes: 100)
+        await expectError(.cannotVerify) { _ = try await coordinator.commit(group: group, selected: ["c"], manuallyReviewed: []) }
+        XCTAssertFalse(library.digestRequests.contains { $0.allowNetwork })
+        XCTAssertTrue(library.deleteCalls.isEmpty)
+    }
+
     func testCommitTimeRecheckNeverUsesTheNetwork() async throws {
         let group = makeExactPair()
         _ = try await coordinator.commit(group: group, selected: ["c"], manuallyReviewed: [])
         XCTAssertFalse(library.digestRequests.isEmpty)
-        XCTAssertFalse(library.digestRequests.contains { $0.allowNetwork }, "deleting must never trigger a download")
+        XCTAssertFalse(library.digestRequests.contains { $0.allowNetwork }, "without opt-in, deleting never downloads")
     }
 
     func testChangeAtTheLastMomentIsCaughtByTheDeleteCall() async {

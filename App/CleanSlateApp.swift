@@ -51,7 +51,7 @@ struct CleanSlateApp: App {
                 #endif
                 .environmentObject(model)
                 .environmentObject(model.tray)
-                .environment(\.photoLibrary, library)
+                .environment(\.photoLibraryOverride, library)
                 .tint(Color.actionPrimary)
         }
     }

@@ -41,6 +41,15 @@ final class ExactCandidatesTests: XCTestCase {
         let out = ExactCandidates.buckets(keys, maximumBucketSize: 64)
         XCTAssertTrue(out.buckets.contains(["copy", "p50"]), "\(out.buckets)")
     }
+    func testSplitDoesNotLoseCopiesAcrossAMinuteBoundary() {
+        // Copies at 12:00:59 and 12:01:00 must still land together after an oversized bucket is split.
+        var keys = (0..<100).map { key("p\($0)", t: Int64($0) * 100_000, file: "IMG_0002.HEIC") }
+        keys.append(key("c1", t: 43_200 + 59, file: "IMG_0002.HEIC"))
+        keys.append(key("c2", t: 43_200 + 60, file: "IMG_0002.HEIC"))
+        let out = ExactCandidates.buckets(keys, maximumBucketSize: 64)
+        XCTAssertTrue(out.buckets.contains(["c1", "c2"]), "\(out.buckets)")
+    }
+
     func testIdenticalMemberSetsAreNotDuplicatedAcrossPasses() {
         let out = ExactCandidates.buckets([key("a", file: "x.jpg"), key("b", file: "x.jpg")])
         XCTAssertEqual(out.buckets, [["a", "b"]])

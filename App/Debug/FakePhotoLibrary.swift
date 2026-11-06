@@ -123,6 +123,10 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 
     func verifiedSize(id: String) async -> Int64? { sizes[id] }
 
+    /// Assets placed in user albums (tests).
+    var albumMemberIDs: Set<String> = []
+    func userAlbumAssetIDs() -> Set<String> { albumMemberIDs }
+
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
         beforeDelete?()
         for id in ids {

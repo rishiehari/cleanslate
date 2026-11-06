@@ -53,9 +53,17 @@ public enum ExactCandidates {
             if ids.count > maximumBucketSize {
                 // Too many to hash blindly: split by creation minute first, so real copies stay reachable.
                 if allowSplit {
-                    let byMinute = Dictionary(grouping: ids.filter { creation[$0] != nil }, by: { (creation[$0] ?? 0) / 60 })
-                    let leftover = ids.filter { creation[$0] == nil }.count
-                    for sub in byMinute.values { consume(sub, allowSplit: false) }
+                    // Split where the creation times have a gap of more than a minute (no hard minute edges).
+                    let dated = ids.filter { creation[$0] != nil }.sorted { (creation[$0] ?? 0, $0) < (creation[$1] ?? 0, $1) }
+                    let leftover = ids.count - dated.count
+                    var cluster: [String] = []
+                    for id in dated {
+                        if let last = cluster.last, (creation[id] ?? 0) - (creation[last] ?? 0) > 60 {
+                            consume(cluster, allowSplit: false); cluster = []
+                        }
+                        cluster.append(id)
+                    }
+                    consume(cluster, allowSplit: false)
                     if leftover > 0 { oversized += 1; oversizedAssets += leftover }
                 } else {
                     oversized += 1; oversizedAssets += ids.count

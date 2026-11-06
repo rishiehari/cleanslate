@@ -5,10 +5,14 @@ import CleanSlateCore
 @MainActor
 final class PhotoDeletionCoordinator {
     private let library: PhotoLibraryClient
+    private let networkPolicy: NetworkPolicy
     private var activeCommit = false
 
-    init(library: PhotoLibraryClient) {
+    /// The commit-time recheck reads local files first. It downloads only if the user opted in to
+    /// iCloud checking (same budget), because a group that was verified through a download must stay deletable.
+    init(library: PhotoLibraryClient, networkPolicy: NetworkPolicy? = nil) {
         self.library = library
+        self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
     }
 
     enum DeletionError: LocalizedError, Equatable {
@@ -112,8 +116,7 @@ final class PhotoDeletionCoordinator {
     /// Maps "can't read the original" failures to a safe, explicit abort. Cancellation passes through.
     private func verifiedDigests(_ id: String) async throws -> [ResourceDigest] {
         do {
-            // Local-only on purpose: a deletion must never trigger a surprise multi-GB download.
-            return try await library.digests(id: id, allowNetwork: false)
+            return try await DigestFetcher(library: library, policy: networkPolicy).fetch(id: id).digests
         } catch let error as LibraryResourceError {
             switch error {
             case .cancelled: throw CancellationError()

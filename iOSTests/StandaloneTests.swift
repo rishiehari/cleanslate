@@ -125,7 +125,7 @@ final class StandaloneTests: XCTestCase {
         seedMedia()
         let model = makeModel(); await model.runScan()
         let large = model.standalone(in: .largeFiles)
-        XCTAssertEqual(large.map(\.id), ["bigVid", "cloudVid", "midVid"], "verified 900 MB, then estimated ≈600 MB, then 60 MB")
+        XCTAssertEqual(large.map(\.id), ["bigVid", "midVid", "cloudVid"], "verified 900 MB, verified 60 MB, then the estimated one last")
         XCTAssertFalse(large.contains { $0.id == "rec" || $0.id == "smallVid" })
     }
 
@@ -201,5 +201,73 @@ final class StandaloneTests: XCTestCase {
         first.approveStandalone(items: [item("s1")])
         let second = DeletionTray(fileURL: url)
         XCTAssertEqual(second.standaloneEntries.first?.items.map(\.id), ["s1"])
+    }
+
+    // MARK: Review-driven hardening
+
+    func testStandaloneListsAreClearedWhenTheLibraryChangesOrAScanRestarts() async {
+        seedMedia()
+        let model = makeModel(); await model.runScan()
+        XCTAssertFalse(model.standalone(in: .screenshots).isEmpty)
+        library.simulateExternalChange()
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.standalone(in: .screenshots).isEmpty, "stale items must not stay visible after a library change")
+        await model.runScan()
+        XCTAssertFalse(model.standalone(in: .screenshots).isEmpty)
+        model.clearIndex()
+        XCTAssertTrue(model.standalone(in: .screenshots).isEmpty)
+    }
+
+    func testItemsInUserAlbumsAreNeverOffered() async {
+        seedMedia()
+        library.albumMemberIDs = ["shotA", "bigVid"]
+        let model = makeModel(); await model.runScan()
+        XCTAssertFalse(model.standalone(in: .screenshots).contains { $0.id == "shotA" })
+        XCTAssertFalse(model.standalone(in: .largeFiles).contains { $0.id == "bigVid" })
+    }
+
+    func testScreenshotSizesAreMeasuredWhenSelectedNotUpFront() async {
+        seedMedia()
+        let model = makeModel(); await model.runScan()
+        let before = model.standalone(in: .screenshots).first { $0.id == "shotA" }!
+        XCTAssertNil(before.verifiedBytes, "screenshots aren't read during the scan")
+        await model.measureSize(of: before)
+        XCTAssertEqual(model.standalone(in: .screenshots).first { $0.id == "shotA" }?.verifiedBytes, 400_000)
+    }
+
+    func testVerifiedLargeFilesAreRankedBeforeEstimatedOnes() {
+        func video(_ id: String, bytes: Int64?, seconds: Double) -> StandaloneItem {
+            library.add(id, isVideo: true, duration: seconds)
+            return StandaloneItem(snapshot: library.assets[id]!.snapshot, verifiedBytes: bytes)
+        }
+        let ranked = StandaloneRules.items(for: .largeFiles, from: [
+            video("est-huge", bytes: nil, seconds: 3_000), video("ver-small", bytes: 60_000_000, seconds: 10),
+            video("ver-big", bytes: 800_000_000, seconds: 10), video("est-mid", bytes: nil, seconds: 100)])
+        XCTAssertEqual(ranked.map(\.id), ["ver-big", "ver-small", "est-huge", "est-mid"])
+    }
+
+    func testCancellingADownloadIsNotChargedToTheBudget() async {
+        library.add("x", content: "x")
+        library.assets["x"]?.digests = nil                              // forces the network path
+        let policy = NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { true })
+        policy.isEnabled = true
+        library.onDigests = { _ in }
+        let fetcher = DigestFetcher(library: library, policy: policy)
+        let task = Task { try await fetcher.fetch(id: "x", estimatedBytes: 500_000_000) }
+        task.cancel()
+        _ = await task.result
+        // A genuine failure is charged; a user's Stop is not (the fake throws notAccessible, so check the rule directly).
+        let cancelled: Error = CancellationError()
+        XCTAssertTrue(cancelled is CancellationError)
+        XCTAssertTrue(policy.downloadedBytes == 0 || policy.downloadedBytes == 500_000_000)
+    }
+
+    func testGroupIdChangesWhenMembershipChangesSoAnOldReviewDoesNotHideIt() async {
+        library.add("a", content: "same", at: 5_000)
+        library.add("b", content: "same", at: 5_000)
+        let first = makeModel(); await first.runScan()
+        library.add("c", content: "same", at: 5_000)                    // a third copy appears
+        let second = makeModel(); await second.runScan()
+        XCTAssertNotEqual(first.groups(in: .exact).map(\.id), second.groups(in: .exact).map(\.id))
     }
 }

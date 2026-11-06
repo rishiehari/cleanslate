@@ -33,7 +33,15 @@ enum StandaloneRules {
                 guard item.snapshot.isVideo, !item.snapshot.isScreenRecording else { return false }
                 return (item.verifiedBytes ?? item.estimatedBytes ?? 0) >= largeFileBytes
             }
-            .sorted { ($0.verifiedBytes ?? $0.estimatedBytes ?? 0) > ($1.verifiedBytes ?? $1.estimatedBytes ?? 0) }
+            // Verified sizes first (largest first), then estimated ones: the two are never ranked against each other.
+            .sorted { a, b in
+                switch (a.verifiedBytes, b.verifiedBytes) {
+                case let (x?, y?): return x > y
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return (a.estimatedBytes ?? 0) > (b.estimatedBytes ?? 0)
+                }
+            }
         }
     }
 }

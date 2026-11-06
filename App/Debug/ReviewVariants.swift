@@ -38,7 +38,7 @@ struct PrototypeHost: View {
             .navigationTitle(variant.name)
             .navigationBarTitleDisplayMode(.inline)
         }
-        .environment(\.photoLibrary, scenario.library)
+        .environment(\.photoLibraryOverride, scenario.library)
     }
 }
 

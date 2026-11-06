@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct PhotoThumbnailView: View {
-    @Environment(\.photoLibrary) private var library
+    @Environment(\.photoLibraryOverride) private var override
+    private var library: PhotoLibraryClient { override ?? PhotoKitLibraryClient.shared }
     let assetID: String
     var target: CGFloat = 280
     var fill = false

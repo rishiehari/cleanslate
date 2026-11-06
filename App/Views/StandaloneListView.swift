@@ -18,8 +18,16 @@ struct StandaloneListView: View {
         let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
         return all.filter { ($0.snapshot.capturedAt ?? .distantFuture) < cutoff }
     }
-    private var selectedItems: [StandaloneItem] { all.filter { selected.contains($0.id) } }
+    /// Only what's visible counts: switching the filter can't leave hidden items selected.
+    private var selectedItems: [StandaloneItem] { items.filter { selected.contains($0.id) } }
     private var selectedBytes: Int64 { selectedItems.reduce(Int64(0)) { $0 + ($1.verifiedBytes ?? 0) } }
+    private var selectedEstimatedBytes: Int64 { selectedItems.reduce(Int64(0)) { $0 + ($1.verifiedBytes == nil ? ($1.estimatedBytes ?? 0) : 0) } }
+    private var barSubtitle: String? {
+        var parts: [String] = []
+        if selectedBytes > 0 { parts.append(selectedBytes.friendlyBytes) }
+        if selectedEstimatedBytes > 0 { parts.append("≈ \(selectedEstimatedBytes.friendlyBytes) est.") }
+        return parts.isEmpty ? nil : parts.joined(separator: " + ")
+    }
     private var isLargeFiles: Bool { category == .largeFiles }
 
     var body: some View {
@@ -52,7 +60,7 @@ struct StandaloneListView: View {
             if !isLargeFiles || !selected.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(selected.isEmpty ? "Select all" : "Clear") {
-                        selected = selected.isEmpty ? Set(items.filter { model.selectionBlockReason(for: $0) == nil }.map(\.id)) : []
+                        selected = selected.isEmpty ? Set(items.map(\.id)) : []     // protected/album items are already excluded; commit re-checks each one
                     }
                     .accessibilityIdentifier("standalone.selectall")
                 }
@@ -60,7 +68,7 @@ struct StandaloneListView: View {
         }
         .safeAreaInset(edge: .bottom) {
             ApprovalBar(approveTitle: selected.isEmpty ? "Approve" : "Approve \(selected.count)",
-                        subtitle: selectedBytes > 0 ? selectedBytes.friendlyBytes : nil,
+                        subtitle: barSubtitle,
                         canApprove: !selected.isEmpty,
                         onSkip: { selected = [] },
                         onApprove: approve)
@@ -135,6 +143,7 @@ struct StandaloneListView: View {
             notice = reason; HapticsService.shared.fire(.blocked)
         } else {
             selected.insert(item.id); notice = nil; HapticsService.shared.fire(.toggle)
+            Task { await model.measureSize(of: item) }
         }
     }
 

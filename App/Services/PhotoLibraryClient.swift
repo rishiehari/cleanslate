@@ -24,6 +24,8 @@ protocol PhotoLibraryClient: AnyObject {
     /// Size in bytes of the asset's local file(s), or nil if not local. Never touches the network
     /// and never uses private API (videos: the local file's size; images: the streamed resource bytes).
     func verifiedSize(id: String) async -> Int64?
+    /// Identifiers of every asset that sits in one of the user's own albums (one pass, no per-asset lookups).
+    func userAlbumAssetIDs() -> Set<String>
     /// Asks the system to delete the assets. The system presents its own confirmation.
     /// Immediately before the change request, the implementation re-reads the very objects
     /// it is about to delete and throws `.changed` if any revision differs from
@@ -60,12 +62,13 @@ enum LibraryResourceError: LocalizedError, Equatable {
     }
 }
 
+/// Views get the library from the environment; nil means "use the real PhotoKit client".
 private struct PhotoLibraryKey: EnvironmentKey {
-    @MainActor static var defaultValue: PhotoLibraryClient { PhotoKitLibraryClient.shared }
+    static var defaultValue: PhotoLibraryClient? { nil }
 }
 
 extension EnvironmentValues {
-    var photoLibrary: PhotoLibraryClient {
+    var photoLibraryOverride: PhotoLibraryClient? {
         get { self[PhotoLibraryKey.self] }
         set { self[PhotoLibraryKey.self] = newValue }
     }

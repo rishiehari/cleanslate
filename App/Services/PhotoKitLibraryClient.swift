@@ -15,7 +15,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     private var handlers: [UUID: @MainActor () -> Void] = [:]
     private var registered = false
     private init() {
-        watcher.onChange = { [weak self] in
+        watcher.setHandler { [weak self] _ in
             Task { @MainActor in self?.handlers.values.forEach { $0() } }
         }
     }
@@ -48,21 +48,35 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     func verifiedSize(id: String) async -> Int64? {
         guard let asset = fetchAsset(id) else { return nil }
         if asset.mediaType == .video {
+            // The ORIGINAL file's size, read from its local URL (no bytes are read, no network).
+            // Slo-mo / edited videos come back as a composition: size unknown (nil), never guessed.
             let options = PHVideoRequestOptions()
             options.isNetworkAccessAllowed = false
-            options.deliveryMode = .fastFormat
+            options.version = .original
+            options.deliveryMode = .highQualityFormat
             return await withCheckedContinuation { (continuation: CheckedContinuation<Int64?, Never>) in
+                let once = OneShot(continuation)
                 PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                    // PhotoKit may call this more than once; only the first call may resume.
                     guard let url = (avAsset as? AVURLAsset)?.url,
                           let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
-                        continuation.resume(returning: nil); return
+                        once.resume(nil); return
                     }
-                    continuation.resume(returning: Int64(size))
+                    once.resume(Int64(size))
                 }
             }
         }
         guard let digests = try? await completeDigests(asset, allowNetwork: false) else { return nil }
         return ResourceSignatures.logicalBytes(digests)
+    }
+
+    func userAlbumAssetIDs() -> Set<String> {
+        var ids: Set<String> = []
+        let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumRegular, options: nil)
+        albums.enumerateObjects { collection, _, _ in
+            PHAsset.fetchAssets(in: collection, options: nil).enumerateObjects { asset, _, _ in ids.insert(asset.localIdentifier) }
+        }
+        return ids
     }
 
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
@@ -222,6 +236,17 @@ private final class LockedSHA256 {
         lock.lock(); defer { lock.unlock() }
         let digest = context.finalize().map { String(format: "%02x", $0) }.joined()
         return ResourceDigest(type: type, byteCount: bytes, sha256: digest)
+    }
+}
+
+/// Resumes a continuation at most once (PhotoKit handlers can fire repeatedly).
+private final class OneShot<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+    init(_ continuation: CheckedContinuation<Value, Never>) { self.continuation = continuation }
+    func resume(_ value: Value) {
+        lock.lock(); let current = continuation; continuation = nil; lock.unlock()
+        current?.resume(returning: value)
     }
 }
 
