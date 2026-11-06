@@ -145,10 +145,16 @@ extension FakePhotoLibrary {
         lib.authorization = authorization
         var groups: [PhotoReviewGroup] = []
         for n in 1...3 {
-            lib.add("ex\(n)-keep", content: "exact\(n)", bytes: Int64(n) * 2_400_000)
-            lib.add("ex\(n)-copy", content: "exact\(n)", bytes: Int64(n) * 2_400_000)
+            lib.add("ex\(n)-keep", content: "exact\(n)", bytes: Int64(n) * 2_400_000, at: Int64(1_000 * n))
+            lib.add("ex\(n)-copy", content: "exact\(n)", bytes: Int64(n) * 2_400_000, at: Int64(1_000 * n))
             groups.append(lib.exactGroup(keeper: "ex\(n)-keep", copies: ["ex\(n)-copy"], bytes: Int64(n) * 2_400_000))
         }
+        // A copy that only exists in iCloud: found only after the user opts in to iCloud checking.
+        lib.add("ic-local", content: "icloud", bytes: 3_000_000, at: 9_000)
+        lib.add("ic-remote", content: "icloud", bytes: 3_000_000, at: 9_000)
+        let remoteDigests = lib.assets["ic-remote"]?.digests
+        lib.assets["ic-remote"]?.cloudDigests = remoteDigests
+        lib.assets["ic-remote"]?.digests = nil
         lib.add("sim1-a", content: "sim1a"); lib.add("sim1-b", content: "sim1b"); lib.add("sim1-c", content: "sim1c")
         groups.append(lib.similarGroup(keeper: "sim1-a", copies: ["sim1-b", "sim1-c"]))
         lib.add("fav-keep", content: "fav"); lib.add("fav-copy", content: "fav"); lib.update("fav-copy", flags: [.favorite])

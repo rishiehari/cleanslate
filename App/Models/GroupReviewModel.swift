@@ -7,9 +7,9 @@ extension PreservationFlag {
         switch self {
         case .favorite: "Favorite — always kept"
         case .hidden: "Hidden — always kept"
-        case .edited: "Edited — kept"
-        case .raw: "RAW photo — kept"
-        case .livePhoto: "Live Photo — kept"
+        case .edited: "Edited — kept, since the other copy isn't an identical edit"
+        case .raw: "RAW photo — kept, since the other copy isn't identical"
+        case .livePhoto: "Live Photo — kept, since the other copy isn't identical"
         case .shared: "Shared — always kept"
         case .userBurstPick: "Your burst pick — always kept"
         case .curatedAlbum: "In one of your albums — kept"

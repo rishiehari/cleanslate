@@ -71,7 +71,10 @@ enum AppEnvironment {
             let scenario = FakePhotoLibrary.uiTestScenario(authorization: auth)
             let trayURL = DeletionTray.defaultURL(name: "tray-uitest.json")
             if !arguments.contains("-keepTray"), let trayURL { try? FileManager.default.removeItem(at: trayURL) }
-            let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL))
+            let suite = UserDefaults(suiteName: "org.cleanslate.uitest") ?? .standard
+            suite.removePersistentDomain(forName: "org.cleanslate.uitest")
+            let policy = NetworkPolicy(defaults: suite, pathCheck: { true })
+            let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL), networkPolicy: policy)
             if auth == .authorized { model.seedGroupsForUITesting(scenario.groups) }
             return (model, scenario.library)
         }

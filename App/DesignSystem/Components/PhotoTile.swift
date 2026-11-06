@@ -1,4 +1,5 @@
 import SwiftUI
+import CleanSlateCore
 
 /// A photo with a decision badge. Content layer: NO glass (U7).
 struct PhotoTile: View {
@@ -6,6 +7,8 @@ struct PhotoTile: View {
     var decision: Decision?
     var target: CGFloat = 600
     var caption: String?
+    /// Live / edited / RAW shown as small symbols so users can see why a photo is special.
+    var traits: Set<PreservationFlag> = []
 
     var body: some View {
         PhotoThumbnailView(assetID: assetID, target: target)
@@ -23,7 +26,26 @@ struct PhotoTile: View {
                         .padding(Spacing.s)
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                if !traitSymbols.isEmpty {
+                    HStack(spacing: Spacing.xs) {
+                        ForEach(traitSymbols, id: \.symbol) { item in
+                            Image(systemName: item.symbol).imageScale(.small).accessibilityLabel(item.label)
+                        }
+                    }
+                    .foregroundStyle(.white).padding(Spacing.xs + Spacing.xxs)
+                    .background(.black.opacity(0.78), in: Capsule()).padding(Spacing.s)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: Radius.photo))
+    }
+
+    private var traitSymbols: [(symbol: String, label: String)] {
+        var items: [(String, String)] = []
+        if traits.contains(.livePhoto) { items.append(("livephoto", "Live Photo")) }
+        if traits.contains(.edited) { items.append(("slider.horizontal.3", "Edited")) }
+        if traits.contains(.raw) { items.append(("camera.aperture", "RAW")) }
+        return items
     }
 
     private var borderWidth: CGFloat { decision == nil || decision == .undecided ? 0 : 3 }

@@ -106,7 +106,7 @@ final class ReviewFlowUITests: XCTestCase {
                       || app.buttons["receipt.done"].waitForExistence(timeout: 8))
         app.buttons["receipt.done"].tap()
         let state = probe(app)
-        XCTAssertTrue(state.contains("assets=8"), "11 assets minus 3 copies: \(state)")   // keepers + similar + favorite pair survive
+        XCTAssertTrue(state.contains("assets=10"), "13 assets minus 3 copies: \(state)")   // keepers + similar + favorite pair survive
         XCTAssertTrue(state.contains("tray=0"), state)
     }
 
@@ -122,7 +122,7 @@ final class ReviewFlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["tray.delete"].waitForExistence(timeout: 3))
         app.buttons["Close"].tap()
         let state = probe(app)
-        XCTAssertTrue(state.contains("deleteCalls=0") && state.contains("assets=11") && state.contains("tray=1"), state)
+        XCTAssertTrue(state.contains("deleteCalls=0") && state.contains("assets=13") && state.contains("tray=1"), state)
     }
 
     func testTrayPersistsAcrossRelaunch() {

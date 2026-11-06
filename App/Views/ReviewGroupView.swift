@@ -27,7 +27,8 @@ struct ReviewGroupView: View {
                 intro
                 chips
                 PhotoTile(assetID: review.group.keeper.id,
-                          decision: review.decision(for: review.group.keeper.id), target: 900)
+                          decision: review.decision(for: review.group.keeper.id), target: 900,
+                          traits: review.group.keeper.record.flags)
                     .onTapGesture { review.tap(review.group.keeper.id) }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Keep, suggested photo, photo 1 of \(review.group.all.count)")
@@ -106,7 +107,8 @@ struct ReviewGroupView: View {
     private func tile(_ photo: PhotoSnapshot, index: Int) -> some View {
         let decision = review.decision(for: photo.id)
         return PhotoTile(assetID: photo.id, decision: decision, target: 700,
-                         caption: review.group.verifiedCandidateBytes[photo.id]?.friendlyBytes)
+                         caption: review.group.verifiedCandidateBytes[photo.id]?.friendlyBytes,
+                         traits: photo.record.flags)
             .onTapGesture { review.tap(photo.id) }
             .contextMenu {
                 Button("Compare with the Keep photo", systemImage: "square.split.2x1") { comparing = photo }

@@ -9,6 +9,7 @@ struct DashboardView: View {
     @AppStorage(HapticsService.defaultsKey) private var hapticsOn = true
     @State private var showClearCache = false
     @State private var showTray = false
+    @State private var showVerifySheet = false
 
     var body: some View {
         NavigationStack {
@@ -41,6 +42,7 @@ struct DashboardView: View {
                 OnboardingView { onboardingSeen = true }
             }
             .sheet(isPresented: $showTray) { TrayView(tray: tray) }
+            .sheet(isPresented: $showVerifySheet) { VerifyICloudSheet(policy: model.networkPolicy) }
             .fullScreenCover(isPresented: Binding(get: { tray.receipt != nil }, set: { if !$0 { tray.receipt = nil } })) {
                 if let receipt = tray.receipt { ReceiptView(receipt: receipt) { tray.receipt = nil } }
             }
@@ -75,6 +77,7 @@ struct DashboardView: View {
     private var menu: some View {
         Menu {
             Toggle("Haptics", systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
+            Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }
             Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
             Button("Open Photos settings", systemImage: "hand.raised") {
                 if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }

@@ -8,6 +8,7 @@ struct CategoryGroupsView: View {
     let category: ScanCategory
     @State private var showReviewed = false
     @State private var showApproveAll = false
+    @State private var showVerifySheet = false
 
     private var all: [PhotoReviewGroup] { model.groups(in: category) }
     private var pending: [PhotoReviewGroup] { all.filter { !tray.reviewedGroupIDs.contains($0.id) } }
@@ -22,6 +23,7 @@ struct CategoryGroupsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: Spacing.s + Spacing.xs) {
+                if category == .exact { coverageLine }
                 if !approvable.isEmpty { approveAllButton }
                 if visible.isEmpty { emptyState }
                 ForEach(Array(visible.enumerated()), id: \.element.id) { position, group in
@@ -56,6 +58,7 @@ struct CategoryGroupsView: View {
                 HapticsService.shared.fire(.approve)
             }
         }
+        .sheet(isPresented: $showVerifySheet) { VerifyICloudSheet(policy: model.networkPolicy) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("inbox.\(category.rawValue)")
     }
@@ -76,6 +79,31 @@ struct CategoryGroupsView: View {
         }
         .buttonStyle(.glassProminent).tint(Color.actionPrimary)
         .accessibilityIdentifier("inbox.approveall")
+    }
+
+    /// What was and wasn't checked, so "no copies" never overclaims (U10).
+    @ViewBuilder private var coverageLine: some View {
+        let s = model.statistics
+        if s.exactAssetsHashed > 0 || s.exactAssetsUnverifiable > 0 {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("\(s.exactAssetsHashed.formatted()) photos checked in full")
+                    .appText(.secondary).foregroundStyle(Color.textSecondary)
+                if s.exactAssetsUnverifiable > 0 {
+                    Button { showVerifySheet = true } label: {
+                        Label("\(s.exactAssetsUnverifiable.formatted()) couldn't be checked — they're in iCloud. Turn on iCloud checking", systemImage: "icloud.and.arrow.down")
+                            .appText(.secondary).multilineTextAlignment(.leading)
+                    }
+                    .accessibilityIdentifier("inbox.verifyicloud")
+                }
+                if s.bucketsOversized > 0 {
+                    Text("\(s.bucketsOversized) very large sets of look-alike photos were skipped.")
+                        .appText(.caption).foregroundStyle(Color.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("inbox.coverage")
+        }
     }
 
     private func status(_ group: PhotoReviewGroup) -> String? {
