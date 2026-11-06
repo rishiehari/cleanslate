@@ -29,6 +29,8 @@ final class ScanEngine {
     /// Upper bound on similar-photo pairs examined with Vision in one pass (reported when reached).
     static let maximumVisionPairs = 30_000
     static let maximumCandidatePairs = 200_000
+    /// This many Vision failures in a row means it is unavailable on this device.
+    static let visionFailureLimit = 5
 
     private let library: PhotoLibraryClient
     private let store: LibraryStore
@@ -217,13 +219,18 @@ final class ScanEngine {
             guard let a = hashes[pair.first], let b = hashes[pair.second] else { return false }
             return CandidateIndex.hamming(a, b) <= 10
         }
-        let members = await store.snapshots(ids: Array(Set(close.flatMap { [$0.first, $0.second] })))
-        func rank(_ pair: CandidatePair) -> (Int, Int, String, String) {
-            let sameBurst = members[pair.first]?.burstID != nil && members[pair.first]?.burstID == members[pair.second]?.burstID
-            let distance = CandidateIndex.hamming(hashes[pair.first] ?? 0, hashes[pair.second] ?? 0)
-            return (sameBurst ? 0 : 1, distance, pair.first, pair.second)
+        let burstIDs = await store.snapshots(ids: Array(Set(close.flatMap { [$0.first, $0.second] }))).compactMapValues(\.burstID)
+        // Sorting up to 200k pairs is pure computation: keep it off the main thread.
+        return await Task.detached(priority: .utility) { Self.rank(close, hashes: hashes, burstIDs: burstIDs) }.value
+    }
+
+    /// Bursts first, then the closest hashes; ties broken by id so the order is deterministic.
+    nonisolated static func rank(_ pairs: [CandidatePair], hashes: [String: UInt64], burstIDs: [String: String]) -> [CandidatePair] {
+        func key(_ pair: CandidatePair) -> (Int, Int, String, String) {
+            let sameBurst = burstIDs[pair.first] != nil && burstIDs[pair.first] == burstIDs[pair.second]
+            return (sameBurst ? 0 : 1, CandidateIndex.hamming(hashes[pair.first] ?? 0, hashes[pair.second] ?? 0), pair.first, pair.second)
         }
-        return close.sorted { rank($0) < rank($1) }
+        return pairs.sorted { key($0) < key($1) }
     }
 
     // MARK: 4. Exact copies
@@ -307,6 +314,7 @@ final class ScanEngine {
         let limited = Array(pairs.prefix(Self.maximumVisionPairs))
         if pairs.count > limited.count { let skipped = pairs.count - limited.count; reporter?.scanUpdate { $0.visionPairsSkipped = skipped } }
         var pending: [PhotoReviewGroup] = []
+        var consecutiveFailures = 0
         for (n, pair) in limited.enumerated() {
             if Task.isCancelled { return .cancelled }
             if n % 10 == 0, case .stop(let reason) = await governor.checkpoint() { reporter?.scanFound(groups: pending); return .stopped(reason: reason) }
@@ -321,8 +329,17 @@ final class ScanEngine {
                 distance = try VisualFeatures.distance(firstPrint, secondPrint)
             } catch {
                 reporter?.scanUpdate { $0.visionFailures += 1 }
+                consecutiveFailures += 1
+                // Vision isn't working here (e.g. no inference hardware): stop wasting time and battery on the rest.
+                if consecutiveFailures >= Self.visionFailureLimit {
+                    let skipped = limited.count - (n + 1)
+                    reporter?.scanUpdate { $0.visionPairsSkipped += skipped; $0.visionUnavailable = true }
+                    reporter?.scanFound(groups: pending)
+                    return nil
+                }
                 continue
             }
+            consecutiveFailures = 0
             guard distance < 0.32 else { continue }
             let (sharpA, exposeA) = VisualFeatures.sharpnessAndExposure(firstImage)
             let (sharpB, exposeB) = VisualFeatures.sharpnessAndExposure(secondImage)

@@ -68,6 +68,7 @@ struct ScanStatistics {
     var changesApplied = 0
     var lshBucketsSkipped = 0
     var visionPairsSkipped = 0
+    var visionUnavailable = false
     /// Candidate pairs that could not be compared because Vision failed (e.g. simulator).
     var visionFailures = 0
     /// Exact-copy coverage (Step 3.5).

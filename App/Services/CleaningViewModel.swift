@@ -207,7 +207,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             phase = .finished; progress = 1
             var message = "Looked through \(statistics.photosEnumerated.formatted()) photos."
             if statistics.exactAssetsUnverifiable > 0 { message += " Some originals live only in iCloud, so matches there may be missed." }
-            if statistics.visionFailures > 0 { message += " Similar-photo comparison wasn't available for \(statistics.visionFailures) pair(s) on this device." }
+            if statistics.visionUnavailable { message += " Similar-photo comparison isn't available on this device, so only identical copies were checked." }
+            else if statistics.visionFailures > 0 { message += " Similar-photo comparison failed for \(statistics.visionFailures) pair(s)." }
             if statistics.exactSkippedByLimit > 0 { message += " \(statistics.exactSkippedByLimit.formatted()) candidates were left for the next scan." }
             statusMessage = message
         }

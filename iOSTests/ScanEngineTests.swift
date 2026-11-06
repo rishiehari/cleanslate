@@ -119,6 +119,32 @@ final class ScanEngineTests: XCTestCase {
         XCTAssertEqual(model.statistics.thumbnailsAnalyzed, 2)
     }
 
+    func testPairRankingPutsBurstsFirstThenClosestHashes() {
+        let pairs = [CandidatePair("a", "b"), CandidatePair("c", "d"), CandidatePair("e", "f")]
+        let hashes: [String: UInt64] = ["a": 0, "b": 0b1111, "c": 0, "d": 0b1, "e": 0, "f": 0b11]
+        let ranked = ScanEngine.rank(pairs, hashes: hashes, burstIDs: ["a": "B", "b": "B"])
+        XCTAssertEqual(ranked, [CandidatePair("a", "b"), CandidatePair("c", "d"), CandidatePair("e", "f")],
+                       "the burst pair first even though its hashes are farther apart, then 1 bit, then 2 bits")
+    }
+
+    // MARK: Vision circuit breaker
+
+    func testSimilarComparisonStopsAfterRepeatedFailuresInsteadOfGrindingThroughEveryPair() async {
+        // 30 look-alike photos = 435 candidate pairs. Vision can't run in the simulator.
+        seed(30)
+        let model = makeModel()
+        let start = Date()
+        await model.runScan()
+        #if targetEnvironment(simulator)
+        XCTAssertTrue(model.statistics.visionUnavailable)
+        XCTAssertEqual(model.statistics.visionFailures, ScanEngine.visionFailureLimit)
+        XCTAssertGreaterThan(model.statistics.visionPairsSkipped, 400)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 30, "must not try all 435 pairs")
+        XCTAssertTrue(model.statusMessage?.contains("isn't available on this device") == true)
+        #endif
+        XCTAssertEqual(model.phase, .finished)
+    }
+
     // MARK: Resource governor
 
     private func governor(thermal: @escaping @Sendable () -> ProcessInfo.ThermalState,
