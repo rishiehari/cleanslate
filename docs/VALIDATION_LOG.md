@@ -76,3 +76,30 @@ Known gaps carried forward: GitHub Actions run unverified; device run pending; s
 Review: no SafetyPolicy/Core change. Delete path unchanged (grep: single `deleteAssets`). UI is intentionally plain; visual design is Step 2B.
 Human gate: owner to confirm PRODUCT.md and the iOS 26 decision. **PENDING**.
 Known gaps carried forward: Home still shows engine-flavored text ("0 inventoried"), to be redesigned in 2B.
+
+## Step 2B — Design system and Review → Approve → Tray → Delete — 2026-11-06
+**make ci: PASS** — core 39, fixtures 2, lint (design-system rules, strict), iOS unit 20 (1 simulator skip), UI 14 (+3 screenshot captures skipped unless a capture dir is set).
+
+### Built
+- Tokens (`Spacing`, `Radius`, `IconSize`, role-named colors with light/dark in the asset catalog incl. `onAccent`), text styles (`appText`), SwiftLint design-system rules enforced in CI (`.swiftlint.yml`, only custom rules).
+- Components: `PhotoTile`, `DecisionBadge`, `EvidenceChip`, `StorageHero`, `CategoryCardView`, `ApprovalBar` (Liquid Glass, one `GlassEffectContainer`, stacks at accessibility sizes), `TrayButton`, `UndoToast`, `ContentStateView`, `ConfirmSheet`, `HapticsService` (semantic events, user toggle).
+- Core `ReviewDraft` (keep/delete marking rules U2–U4) with 9 tests including a 500-sequence property test.
+- Flow: Home (hero, scan status, category cards, tray button) → inbox (progressive, "Approve all" with a reviewable list, reviewed filter) → `ReviewSessionView` (Approve/Skip opens the next group) → tray → confirm sheet → deletion → receipt. Compare view with shared zoom/pan. Tray persisted (excluded from backup).
+- 5 prototype variants (DEBUG, `-prototype 1…5`), decision in `docs/design/PROTOTYPE.md`; word list; expert panel review `docs/design/PANEL_REVIEW_2B.md`.
+
+### Evidence
+- UI tests: approve moves to tray and never deletes (`deleteCalls=0`), similar opens with nothing marked, last Keep can't be removed, protected photo explains itself and blocks Approve, undo, approve-all then tray delete (keepers survive: 11 assets − 3 = 8), cancel in confirm sheet deletes nothing, tray survives relaunch, Approve opens next group, accessibility audit on Home and Review.
+- Screenshots (light, dark, AX3): `docs/screens/step2b-v7/` (dark verified via `-forceColorScheme dark`; the simulator's own appearance switch does not take effect headless: even Apple's Settings stays white).
+- Real defects found by looking at screenshots and fixed: identifier on a container hid child buttons; large text wrapped the approval bar over the photo (now stacks, clearance scales); contrast of badges/captions/buttons; confirm-sheet "Cancel" bleed-through (solid sheet background); toast wording ("Added N photos to your tray").
+- Accessibility audit exemption (documented in the test): the contrast sampler cannot measure the two Liquid Glass buttons of the approval bar; verified by eye on light/dark/AX3 screenshots. All other elements remain audited.
+
+### Self-review checklist
+- Existing SafetyPolicy assertions changed: **no** (Core only gained `ReviewDraft`).
+- `deleteAssets` call sites: still exactly one (`PhotoKitLibraryClient.delete`), reachable only through `PhotoDeletionCoordinator.commit`.
+- Network: unchanged (two `isNetworkAccessAllowed = false`).
+- **Interim behavior to fix in Step 8: the tray deletes group by group, so on a real device N groups = N Apple prompts. Do not run the tray against a real library with more than one group until Step 8 lands.**
+
+### Deferred / carried forward
+- Matched-geometry "fly into tray" animation (cross-fade + symbol bounce used instead; `ReceiptView` count-up is the only celebration).
+- Next-group image prefetch (U6), Reduce Motion UI test, snapshot-testing dependency (needs owner approval; screenshot capture used instead), permission priming screen (the Home permission card explains why before the system prompt).
+- **Human gates PENDING:** choose/confirm the review design (PROTOTYPE.md default adopted), 5-minute feel check on a real iPhone (fake-data mode `-uiTestingFakeLibrary` is DEBUG-only).

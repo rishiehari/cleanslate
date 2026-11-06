@@ -32,9 +32,9 @@ final class ScreenshotTests: XCTestCase {
 
     private func run(appearance: XCUIDevice.Appearance, suffix: String, size: String? = nil) throws {
         let dir = try captureDir()
-        XCUIDevice.shared.appearance = appearance
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestingFakeLibrary", "-skipOnboarding"]
+        if appearance == .dark { app.launchArguments += ["-forceColorScheme", "dark"] }
         if let size { app.launchArguments += ["-UIPreferredContentSizeCategoryName", size] }
         app.launch()
         XCTAssertTrue(app.buttons["category.exact"].waitForExistence(timeout: 8))

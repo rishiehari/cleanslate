@@ -39,6 +39,7 @@ struct ConfirmSheet: View {
         }
         .padding(Spacing.l)
         .presentationDetents([.medium])
+        .presentationBackground(Color.surfaceBackground)   // solid, so the tray behind never shows through "Cancel"
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("confirm.sheet")
     }

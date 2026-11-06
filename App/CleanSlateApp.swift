@@ -27,6 +27,15 @@ struct CleanSlateApp: App {
     }
 
     #if DEBUG
+    /// `-forceColorScheme dark|light` (design review; the simulator's own appearance switch is unreliable headless).
+    private static var forcedScheme: ColorScheme? {
+        switch UserDefaults.standard.string(forKey: "forceColorScheme") {
+        case "dark": .dark
+        case "light": .light
+        default: nil
+        }
+    }
+
     /// `-prototype 1...5` shows a review-screen prototype instead of the app.
     private static var prototypeVariant: ReviewVariant? {
         let value = UserDefaults.standard.integer(forKey: "prototype")
@@ -37,6 +46,9 @@ struct CleanSlateApp: App {
     private var root: some View {
         Group {
             DashboardView()
+                #if DEBUG
+                .preferredColorScheme(Self.forcedScheme)
+                #endif
                 .environmentObject(model)
                 .environmentObject(model.tray)
                 .environment(\.photoLibrary, library)

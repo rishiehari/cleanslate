@@ -5,6 +5,7 @@ import CleanSlateCore
 /// Approve moves the Delete-marked photos into the tray. It never deletes (U1).
 struct ReviewGroupView: View {
     @StateObject private var review: GroupReviewModel
+    @ScaledMetric(relativeTo: .body) private var barClearance = Spacing.barClearance
     @State private var explaining: Evidence?
     @State private var comparing: PhotoSnapshot?
 
@@ -48,7 +49,7 @@ struct ReviewGroupView: View {
                 }
             }
             .padding(Spacing.m)
-            .padding(.bottom, Spacing.barClearance)
+            .padding(.bottom, barClearance * 1.6)
         }
         .scrollEdgeEffectStyle(.soft, for: .bottom)   // separates the floating bar from scrolling photos
         .background(Color.surfaceBackground)

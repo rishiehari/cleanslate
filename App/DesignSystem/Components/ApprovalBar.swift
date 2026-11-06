@@ -8,26 +8,16 @@ struct ApprovalBar: View {
     let onSkip: () -> Void
     let onApprove: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var label: String { subtitle.map { "\(approveTitle) · \($0)" } ?? approveTitle }
+
     var body: some View {
         GlassEffectContainer(spacing: Spacing.m) {
-            HStack(spacing: Spacing.m) {
-                Button(action: onSkip) {
-                    Text("Skip").appText(.groupTitle).foregroundStyle(.primary).padding(.horizontal, Spacing.s)
-                        .frame(minHeight: 44)
-                }
-                .buttonStyle(.glass)
-                .accessibilityIdentifier("approval.skip")
-
-                Button(action: onApprove) {
-                    Text(subtitle.map { "\(approveTitle) · \($0)" } ?? approveTitle)
-                        .appText(.groupTitle)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.glassProminent)
-                .tint(Color.actionPrimary)
-                .disabled(!canApprove)
-                .accessibilityIdentifier("approval.approve")
+            // At accessibility text sizes the two buttons stack, so neither label is squeezed.
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: Spacing.s)) : AnyLayout(HStackLayout(spacing: Spacing.m))
+            layout {
+                if typeSize.isAccessibilitySize { approveButton; skipButton } else { skipButton; approveButton }
             }
         }
         .padding(.horizontal, Spacing.m)
@@ -42,6 +32,29 @@ struct ApprovalBar: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
         }
+    }
+
+    private var skipButton: some View {
+        Button(action: onSkip) {
+            Text("Skip").appText(.groupTitle).foregroundStyle(.primary).padding(.horizontal, Spacing.s)
+                .frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : nil, minHeight: 44)
+        }
+        .buttonStyle(.glass)
+        .accessibilityIdentifier("approval.skip")
+    }
+
+    private var approveButton: some View {
+        Button(action: onApprove) {
+            Text(label)
+                .appText(.groupTitle)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.glassProminent)
+        .tint(Color.actionPrimary)
+        .disabled(!canApprove)
+        .accessibilityIdentifier("approval.approve")
     }
 }
 
