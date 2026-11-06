@@ -213,19 +213,19 @@ final class CleaningViewModel: ObservableObject {
                   CandidateIndex.hamming(ah, bh) <= 10 else { continue }
             guard let firstImage = await catalog.thumbnail(a.id, target: 512),
                   let secondImage = await catalog.thumbnail(b.id, target: 512),
-                  let firstPrint = VisualFeatures.printFeature(firstImage),
-                  let secondPrint = VisualFeatures.printFeature(secondImage),
-                  let distance = VisualFeatures.distance(firstPrint, secondPrint),
+                  let firstPrint = try? await VisualFeatures.printFeature(firstImage),
+                  let secondPrint = try? await VisualFeatures.printFeature(secondImage),
+                  let distance = try? VisualFeatures.distance(firstPrint, secondPrint),
                   distance < 0.32 else { continue }
             let (sharpA, exposeA) = VisualFeatures.sharpnessAndExposure(firstImage)
             let (sharpB, exposeB) = VisualFeatures.sharpnessAndExposure(secondImage)
             let qa = QualitySignals(id: a.id, sharpness: sharpA,
-                                    faceQuality: VisualFeatures.faceQuality(firstImage),
-                                    aesthetics: VisualFeatures.aesthetics(firstImage), exposure: exposeA,
+                                    faceQuality: (try? await VisualFeatures.faceQuality(firstImage)) ?? nil,
+                                    aesthetics: try? await VisualFeatures.aesthetics(firstImage), exposure: exposeA,
                                     pixelCount: a.pixelCount, isFavorite: a.record.flags.contains(.favorite))
             let qb = QualitySignals(id: b.id, sharpness: sharpB,
-                                    faceQuality: VisualFeatures.faceQuality(secondImage),
-                                    aesthetics: VisualFeatures.aesthetics(secondImage), exposure: exposeB,
+                                    faceQuality: (try? await VisualFeatures.faceQuality(secondImage)) ?? nil,
+                                    aesthetics: try? await VisualFeatures.aesthetics(secondImage), exposure: exposeB,
                                     pixelCount: b.pixelCount, isFavorite: b.record.flags.contains(.favorite))
             let bestID = KeeperRanker.sorted([qa,qb]).first?.id ?? a.id
             let keeper = bestID == a.id ? a : b

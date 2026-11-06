@@ -38,31 +38,34 @@ enum VisualFeatures {
         return hash
     }
 
-    static func printFeature(_ image: UIImage) -> VNFeaturePrintObservation? {
-        guard let cg = image.cgImage else { return nil }
-        let request = VNGenerateImageFeaturePrintRequest()
-        request.imageCropAndScaleOption = .scaleFit
-        do {
-            try VNImageRequestHandler(cgImage: cg, orientation: CGImagePropertyOrientation(image.imageOrientation), options: [:]).perform([request])
-            return request.results?.first
-        } catch { return nil }
+    /// Vision feature print (Swift Vision API, iOS 18+). Throws so callers can tell
+    /// "unavailable on this device" from "no result".
+    static func printFeature(_ image: UIImage) async throws -> FeaturePrintObservation {
+        guard let cg = image.cgImage else { throw VisualFeatureError.noBitmap }
+        return try await GenerateImageFeaturePrintRequest()
+            .perform(on: cg, orientation: CGImagePropertyOrientation(image.imageOrientation))
     }
 
-    static func distance(_ first: VNFeaturePrintObservation, _ second: VNFeaturePrintObservation) -> Float? {
-        guard first.requestRevision == second.requestRevision else { return nil }
-        var d: Float = 0
-        do { try first.computeDistance(&d, to: second); return d } catch { return nil }
+    static func distance(_ first: FeaturePrintObservation, _ second: FeaturePrintObservation) throws -> Double {
+        try first.distance(to: second)
     }
 
-    static func aesthetics(_ image: UIImage) -> Double? {
-        guard let cg = image.cgImage else { return nil }
-        let request = VNCalculateImageAestheticsScoresRequest()
-        do {
-            try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
-            guard let value = request.results?.first?.overallScore else { return nil }
-            // Apple's aesthetics score is in [-1,1], while QualitySignals expects [0,1].
-            return min(1, max(0, (Double(value) + 1) / 2))
-        } catch { return nil }
+    /// Apple's aesthetics score is in [-1,1]; `QualitySignals` expects [0,1].
+    static func aesthetics(_ image: UIImage) async throws -> Double {
+        guard let cg = image.cgImage else { throw VisualFeatureError.noBitmap }
+        let result = try await CalculateImageAestheticsScoresRequest()
+            .perform(on: cg, orientation: CGImagePropertyOrientation(image.imageOrientation))
+        return min(1, max(0, (Double(result.overallScore) + 1) / 2))
+    }
+
+    /// Worst visible face matters for family photos. nil when no face has a score.
+    static func faceQuality(_ image: UIImage) async throws -> Double? {
+        guard let cg = image.cgImage else { throw VisualFeatureError.noBitmap }
+        let faces = try await DetectFaceCaptureQualityRequest()
+            .perform(on: cg, orientation: CGImagePropertyOrientation(image.imageOrientation))
+        let scores = faces.compactMap { $0.captureQuality?.score }
+        guard !scores.isEmpty else { return nil }
+        return Double(scores.min() ?? 0.5)
     }
 
     static func sharpnessAndExposure(_ image: UIImage) -> (sharpness: Double?, exposure: Double?) {
@@ -94,20 +97,9 @@ enum VisualFeatures {
         return (min(1, gradient / Double(count) / 45.0),
                 max(0, 1 - abs(avg - 0.5) * 1.3 - clippedFraction * 0.4))
     }
-
-    static func faceQuality(_ image: UIImage) -> Double? {
-        guard let cg = image.cgImage else { return nil }
-        let request = VNDetectFaceCaptureQualityRequest()
-        do {
-            try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
-            let scores = request.results?.compactMap(\.faceCaptureQuality) ?? []
-            guard !scores.isEmpty else { return nil }
-            // Worst visible face matters for family photos. Never assume one smiling face
-            // makes the whole group redundant.
-            return Double(scores.min() ?? 0.5)
-        } catch { return nil }
-    }
 }
+
+enum VisualFeatureError: Error { case noBitmap }
 
 private extension CGImagePropertyOrientation {
     init(_ source: UIImage.Orientation) {
