@@ -4,11 +4,14 @@ import CleanSlateCore
 
 @MainActor
 final class PhotoDeletionCoordinator {
-    static let shared = PhotoDeletionCoordinator()
-    private let catalog = PhotoCatalog.shared
+    private let library: PhotoLibraryClient
     private var activeCommit = false
 
-    enum DeletionError: LocalizedError {
+    init(library: PhotoLibraryClient) {
+        self.library = library
+    }
+
+    enum DeletionError: LocalizedError, Equatable {
         case busy, revoked, vanished, unsafe(String), changedResource, noSelection, confirmationFailed
         var errorDescription: String? {
             switch self {
@@ -23,12 +26,14 @@ final class PhotoDeletionCoordinator {
         }
     }
 
-    struct DeletionResult {
+    struct DeletionResult: Equatable {
         let requested: Int
         let verifiedRemoved: Int
         let logicalBytesRemoved: Int64
         let uncertain: Int
     }
+
+    private var hasAccess: Bool { [.authorized, .limited].contains(library.authorization) }
 
     /// Only invoked after the user reviews the image pair(s) and confirms an additional
     /// SwiftUI alert. PhotoKit presents its OWN OS confirmation as the final authority.
@@ -36,18 +41,15 @@ final class PhotoDeletionCoordinator {
     func commit(group: PhotoReviewGroup, selected: Set<String>, manuallyReviewed: Set<String>) async throws -> DeletionResult {
         guard !activeCommit else { throw DeletionError.busy }
         guard !selected.isEmpty else { throw DeletionError.noSelection }
-        guard [.authorized, .limited].contains(catalog.authorization) else { throw DeletionError.revoked }
+        guard hasAccess else { throw DeletionError.revoked }
         activeCommit = true
         defer { activeCommit = false }
 
         let involved = selected.union([group.keeper.id])
         var fresh: [String: AssetRecord] = [:]
-        var phAssets: [String: PHAsset] = [:]
         for id in involved {
-            guard let asset = catalog.fetchAsset(id) else { throw DeletionError.vanished }
-            let snapshot = catalog.snapshot(asset, inspectAlbums: true)
+            guard let snapshot = library.snapshot(id: id, inspectAlbums: true) else { throw DeletionError.vanished }
             fresh[id] = snapshot.record
-            phAssets[id] = asset
         }
         let expected = Dictionary(uniqueKeysWithValues: group.all.map { ($0.id, $0.record.revision) })
         let plan = ApprovedDeletionPlan(selectedIDs: selected, keeperIDs: [group.keeper.id],
@@ -62,38 +64,36 @@ final class PhotoDeletionCoordinator {
         // For exact duplicates, rehash all ORIGINAL resources immediately before mutation,
         // not merely their cached fingerprints or metadata revisions.
         if group.kind == .exact {
-            guard let keeper = phAssets[group.keeper.id] else { throw DeletionError.vanished }
-            let keeperSignature = ResourceSignatures.canonical(try await catalog.completeDigests(keeper))
+            let keeperSignature = ResourceSignatures.canonical(try await library.digests(id: group.keeper.id))
             guard let keeperSignature else { throw DeletionError.changedResource }
-            for id in selected {
-                guard let asset = phAssets[id],
-                      let signature = ResourceSignatures.canonical(try await catalog.completeDigests(asset)),
+            for id in selected.sorted() {
+                guard let signature = ResourceSignatures.canonical(try await library.digests(id: id)),
                       signature == keeperSignature else { throw DeletionError.changedResource }
             }
         }
 
         // Revalidate after asynchronous hashes, too: favorites/edits may have changed in between.
         for id in involved {
-            guard let current = catalog.fetchAsset(id),
-                  catalog.snapshot(current, inspectAlbums: true).record.revision == expected[id],
-                  catalog.snapshot(current, inspectAlbums: true).record.flags.isEmpty || id == group.keeper.id else {
+            guard let current = library.snapshot(id: id, inspectAlbums: true),
+                  current.record.revision == expected[id],
+                  current.record.flags.isEmpty || id == group.keeper.id else {
                 throw DeletionError.vanished
             }
         }
-        guard [.authorized, .limited].contains(catalog.authorization) else { throw DeletionError.revoked }
-        let deletables = selected.sorted().compactMap { catalog.fetchAsset($0) }
-        guard deletables.count == selected.count else { throw DeletionError.vanished }
+        guard hasAccess else { throw DeletionError.revoked }
 
-        try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.deleteAssets(deletables as NSArray)
+        do {
+            try await library.delete(ids: Array(selected))
+        } catch LibraryResourceError.notAccessible {
+            throw DeletionError.vanished
         }
 
-        let access = catalog.authorization
+        let access = library.authorization
         var removed = 0
         var bytes: Int64 = 0
         for id in selected {
             // Absence with restricted/limited permissions cannot conclusively establish deletion.
-            if access == .authorized && catalog.fetchAsset(id) == nil {
+            if access == .authorized && library.snapshot(id: id, inspectAlbums: false) == nil {
                 removed += 1
                 bytes += group.verifiedCandidateBytes[id] ?? 0
             }

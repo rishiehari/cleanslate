@@ -5,7 +5,7 @@ import CleanSlateCore
 
 @MainActor
 final class CleaningViewModel: ObservableObject {
-    @Published private(set) var authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    @Published private(set) var authorization: PHAuthorizationStatus
     @Published private(set) var phase: ScanPhase = .idle
     @Published private(set) var progress: Double = 0
     @Published private(set) var groups: [PhotoReviewGroup] = []
@@ -15,27 +15,28 @@ final class CleaningViewModel: ObservableObject {
     @Published private(set) var isScanning = false
     @Published var deletionReceipt: String?
 
-    private let catalog = PhotoCatalog.shared
+    private let library: PhotoLibraryClient
+    private let coordinator: PhotoDeletionCoordinator
     private let featureStore = LocalFeatureIndex()
-    private let libraryWatcher = PhotoLibraryWatcher()
     private var scanTask: Task<Void, Never>?
     private var scanLimit = 1500
 
-    init() {
-        libraryWatcher.onChange = { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.invalidateAfterLibraryChange()
-            }
+    init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared) {
+        self.library = library
+        self.coordinator = PhotoDeletionCoordinator(library: library)
+        self.authorization = library.authorization
+        library.startObservingChanges { [weak self] in
+            self?.invalidateAfterLibraryChange()
         }
-        PHPhotoLibrary.shared().register(libraryWatcher)
     }
 
     deinit {
-        PHPhotoLibrary.shared().unregisterChangeObserver(libraryWatcher)
+        // The observer holds only a weak reference to self; PhotoKit registration is
+        // released when the client is torn down or replaced.
     }
 
     func refreshPermissions() {
-        let newStatus = catalog.authorization
+        let newStatus = library.authorization
         if newStatus != authorization {
             scanTask?.cancel()
             groups = []
@@ -59,7 +60,7 @@ final class CleaningViewModel: ObservableObject {
     }
 
     func requestPermission() {
-        Task { authorization = await catalog.requestAccess() }
+        Task { authorization = await library.requestAccess() }
     }
 
     func scan() {
@@ -93,7 +94,7 @@ final class CleaningViewModel: ObservableObject {
         isDeleting = true
         defer { isDeleting = false }
         do {
-            let receipt = try await PhotoDeletionCoordinator.shared.commit(
+            let receipt = try await coordinator.commit(
                 group: group, selected: selected, manuallyReviewed: manuallyReviewed)
             deletionReceipt = "Requested \(receipt.requested) deletion(s). Verified removed: \(receipt.verifiedRemoved). "
                 + "Verified logical bytes: \(receipt.logicalBytesRemoved.friendlyBytes). "
@@ -108,7 +109,7 @@ final class CleaningViewModel: ObservableObject {
 
     private func performScan() async {
         phase = .inventory
-        let listing = catalog.inventory(limit: scanLimit)
+        let listing = library.inventory(limit: scanLimit)
         let photos = listing.photos
         statistics.photosEnumerated = photos.count
         statistics.truncated = listing.totalVisible > photos.count
@@ -121,7 +122,7 @@ final class CleaningViewModel: ObservableObject {
             if Task.isCancelled { phase = .cancelled; return }
             if let cached = featureStore.hash(for: photo.id, revision: photo.record.revision) {
                 hashes[photo.id] = cached
-            } else if let thumbnail = await catalog.thumbnail(photo.id),
+            } else if let thumbnail = await library.thumbnail(photo.id, target: 280),
                       let hash = VisualFeatures.differenceHash(thumbnail) {
                 hashes[photo.id] = hash
                 featureStore.put(hash, for: photo.id, revision: photo.record.revision)
@@ -166,10 +167,9 @@ final class CleaningViewModel: ObservableObject {
             if Task.isCancelled { phase = .cancelled; return }
             // Restrict large-resource hashing to relatively simple photos. An asset with
             // an unavailable original is NOT a verified exact duplicate.
-            guard let photo = byID[id], photo.record.flags.isDisjoint(with: [.livePhoto,.raw,.edited,.shared]),
-                  let asset = catalog.fetchAsset(id) else { continue }
+            guard let photo = byID[id], photo.record.flags.isDisjoint(with: [.livePhoto,.raw,.edited,.shared]) else { continue }
             do {
-                allDigests[id] = try await catalog.completeDigests(asset)
+                allDigests[id] = try await library.digests(id: id)
                 statistics.exactAssetsVerified += 1
             } catch { /* Local-only asset or permission failure: do not claim a match. */ }
             if n % 5 == 0 { progress = 0.65 + 0.23 * Double(n + 1) / Double(max(1, orderedIDs.count)); await Task.yield() }
@@ -211,8 +211,8 @@ final class CleaningViewModel: ObservableObject {
             guard let a = byID[pair.first], let b = byID[pair.second],
                   let ah = hashes[a.id], let bh = hashes[b.id],
                   CandidateIndex.hamming(ah, bh) <= 10 else { continue }
-            guard let firstImage = await catalog.thumbnail(a.id, target: 512),
-                  let secondImage = await catalog.thumbnail(b.id, target: 512),
+            guard let firstImage = await library.thumbnail(a.id, target: 512),
+                  let secondImage = await library.thumbnail(b.id, target: 512),
                   let firstPrint = try? await VisualFeatures.printFeature(firstImage),
                   let secondPrint = try? await VisualFeatures.printFeature(secondImage),
                   let distance = try? VisualFeatures.distance(firstPrint, secondPrint),
@@ -241,11 +241,9 @@ final class CleaningViewModel: ObservableObject {
         }
         // Review snapshots include the more expensive curated-album protection check.
         groups = groupsFound.compactMap { group -> PhotoReviewGroup? in
-            guard let asset = catalog.fetchAsset(group.keeper.id) else { return nil }
-            let keeper = catalog.snapshot(asset, inspectAlbums: true)
-            let candidates = group.candidates.compactMap { item -> PhotoSnapshot? in
-                guard let asset = catalog.fetchAsset(item.id) else { return nil }
-                return catalog.snapshot(asset, inspectAlbums: true)
+            guard let keeper = library.snapshot(id: group.keeper.id, inspectAlbums: true) else { return nil }
+            let candidates = group.candidates.compactMap { item in
+                library.snapshot(id: item.id, inspectAlbums: true)
             }
             guard candidates.count == group.candidates.count else { return nil }
             return PhotoReviewGroup(id: group.id, kind: group.kind, keeper: keeper,

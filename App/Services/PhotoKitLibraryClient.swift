@@ -7,10 +7,38 @@ import CleanSlateCore
 /// All PhotoKit-facing work is isolated on the main actor. Inference and byte streaming use
 /// asynchronous callbacks; the app does not call PhotoKit from an uncontrolled background task.
 @MainActor
-final class PhotoCatalog {
-    static let shared = PhotoCatalog()
+final class PhotoKitLibraryClient: PhotoLibraryClient {
+    static let shared = PhotoKitLibraryClient()
     private let imageManager = PHCachingImageManager()
+    private let watcher = PhotoLibraryWatcher()
+    private var observing = false
     private init() {}
+
+    func startObservingChanges(_ onChange: @escaping @MainActor () -> Void) {
+        watcher.onChange = { Task { @MainActor in onChange() } }
+        if !observing { PHPhotoLibrary.shared().register(watcher); observing = true }
+    }
+
+    func stopObservingChanges() {
+        if observing { PHPhotoLibrary.shared().unregisterChangeObserver(watcher); observing = false }
+    }
+
+    func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? {
+        fetchAsset(id).map { snapshot($0, inspectAlbums: inspectAlbums) }
+    }
+
+    func digests(id: String) async throws -> [ResourceDigest] {
+        guard let asset = fetchAsset(id) else { throw LibraryResourceError.notAccessible }
+        return try await completeDigests(asset)
+    }
+
+    func delete(ids: [String]) async throws {
+        let assets = ids.sorted().compactMap { fetchAsset($0) }
+        guard assets.count == ids.count else { throw LibraryResourceError.notAccessible }
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest.deleteAssets(assets as NSArray)
+        }
+    }
 
     var authorization: PHAuthorizationStatus { PHPhotoLibrary.authorizationStatus(for: .readWrite) }
 
@@ -38,12 +66,12 @@ final class PhotoCatalog {
         return (photos, result.count)
     }
 
-    func fetchAsset(_ id: String) -> PHAsset? {
+    private func fetchAsset(_ id: String) -> PHAsset? {
         let result = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
         return result.firstObject
     }
 
-    func snapshot(_ asset: PHAsset, inspectAlbums: Bool = false) -> PhotoSnapshot {
+    private func snapshot(_ asset: PHAsset, inspectAlbums: Bool = false) -> PhotoSnapshot {
         var flags: Set<PreservationFlag> = []
         if asset.isFavorite { flags.insert(.favorite) }
         if asset.isHidden { flags.insert(.hidden) }
@@ -104,22 +132,10 @@ final class PhotoCatalog {
         }
     }
 
-    enum ResourceFailure: LocalizedError {
-        case notAccessible, changed, empty, cancelled
-        var errorDescription: String? {
-            switch self {
-            case .notAccessible: "Original not available locally. No bytes were verified."
-            case .changed: "Photo changed during verification."
-            case .empty: "Photo has no accessible resources."
-            case .cancelled: "Resource scan was cancelled."
-            }
-        }
-    }
-
     /// Full resource hashes, network strictly disabled. No KVC private fileSize API.
-    func completeDigests(_ asset: PHAsset) async throws -> [ResourceDigest] {
+    private func completeDigests(_ asset: PHAsset) async throws -> [ResourceDigest] {
         let resources = PHAssetResource.assetResources(for: asset)
-        guard !resources.isEmpty else { throw ResourceFailure.empty }
+        guard !resources.isEmpty else { throw LibraryResourceError.empty }
         var digests: [ResourceDigest] = []
         for resource in resources {
             try Task.checkCancellation()

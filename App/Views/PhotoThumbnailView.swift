@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct PhotoThumbnailView: View {
+    @Environment(\.photoLibrary) private var library
     let assetID: String
     var target: CGFloat = 280
     @State private var image: UIImage?
@@ -19,7 +20,7 @@ struct PhotoThumbnailView: View {
         .clipped()
         .task(id: assetID) {
             finished = false
-            image = await PhotoCatalog.shared.thumbnail(assetID, target: target)
+            image = await library.thumbnail(assetID, target: target)
             finished = true
         }
         .accessibilityLabel(image == nil ? "Photo thumbnail unavailable" : "Photo preview")
