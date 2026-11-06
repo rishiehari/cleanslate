@@ -92,10 +92,10 @@ final class ScanEngineTests: XCTestCase {
         seed(25)
         let model = makeModel(); await model.runScan()
         XCTAssertEqual(model.statistics.thumbnailsAnalyzed, 25)
-        let callsAfterFirst = library.thumbnailCalls
+        let callsAfterFirst = library.fingerprintThumbnailCalls
         await model.runScan()
         XCTAssertEqual(model.statistics.thumbnailsAnalyzed, 0, "nothing to recompute")
-        XCTAssertEqual(library.thumbnailCalls, callsAfterFirst, "no thumbnails were requested again")
+        XCTAssertEqual(library.fingerprintThumbnailCalls, callsAfterFirst, "no fingerprint thumbnails were requested again")
     }
 
     func testEditedPhotoIsFingerprintedAgainAndOthersAreNot() async {
@@ -138,7 +138,9 @@ final class ScanEngineTests: XCTestCase {
         #if targetEnvironment(simulator)
         XCTAssertTrue(model.statistics.visionUnavailable)
         XCTAssertEqual(model.statistics.visionFailures, ScanEngine.visionFailureLimit)
-        XCTAssertGreaterThan(model.statistics.visionPairsSkipped, 400)
+        XCTAssertGreaterThan(model.statistics.visionPairsSkipped, 100)
+        XCTAssertEqual(model.statistics.visionPairsSkipped + model.statistics.visionFailures, model.statistics.candidatePairsConsidered,
+                       "every candidate pair is either attempted or reported as skipped")
         XCTAssertLessThan(Date().timeIntervalSince(start), 30, "must not try all 435 pairs")
         XCTAssertTrue(model.statusMessage?.contains("isn't available on this device") == true)
         #endif
@@ -184,15 +186,14 @@ final class ScanEngineTests: XCTestCase {
     func testScanStoppedByHeatKeepsItsProgressAndTheNextScanContinues() async {
         seed(450)
         let state = Counter()
-        // Cool for the first batches, then critical.
-        let hot = governor(thermal: { state.next() > 3 ? .critical : .nominal })
+        // Cool for the first batch (200 photos), then critical.
+        let hot = governor(thermal: { state.next() > 1 ? .critical : .nominal })
         let model = makeModel(governor: hot)
         await model.runScan()
         XCTAssertEqual(model.phase, .cancelled)
         XCTAssertTrue(model.statusMessage?.contains("very warm") == true, model.statusMessage ?? "")
         let saved = await store.featureCount()
-        XCTAssertGreaterThan(saved, 0, "fingerprints done before the stop are kept")
-        XCTAssertLessThan(saved, 450)
+        XCTAssertEqual(saved, 200, "the first batch was kept; the stop happened before the second")
         let cool = makeModel(governor: governor(thermal: { .nominal }))
         await cool.runScan()
         XCTAssertEqual(cool.statistics.thumbnailsAnalyzed, 450 - saved, "only the remaining photos are processed")

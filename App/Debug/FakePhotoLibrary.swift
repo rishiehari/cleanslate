@@ -146,12 +146,15 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? { assets[id]?.snapshot }
 
     private(set) var thumbnailCalls = 0
+    /// Fingerprint-size requests only (the Vision stage asks for larger thumbnails).
+    private(set) var fingerprintThumbnailCalls = 0
     /// Called with the offset of every inventory page request (lets a test interrupt a scan mid-inventory).
     var onInventoryPage: ((Int) -> Void)?
     var unavailableThumbnailIDs: Set<String> = []
 
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage? {
         thumbnailCalls += 1
+        if target <= 300 { fingerprintThumbnailCalls += 1 }
         guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
         return Self.renderScene(look: asset.look)
     }
