@@ -1,0 +1,60 @@
+import Foundation
+
+/// Cheap metadata that byte-identical copies share. Used ONLY to decide which assets are worth
+/// hashing in full; a bucket is never evidence that two assets are identical.
+public struct ExactKey: Sendable, Equatable {
+    public let id: String
+    public let mediaType: Int            // 1 image, 2 video (PHAssetMediaType raw values)
+    public let pixelWidth: Int
+    public let pixelHeight: Int
+    public let creationSecond: Int64?
+    public let durationMillis: Int64?
+    public let originalFilename: String?
+    public init(id: String, mediaType: Int, pixelWidth: Int, pixelHeight: Int,
+                creationSecond: Int64?, durationMillis: Int64? = nil, originalFilename: String? = nil) {
+        self.id = id; self.mediaType = mediaType; self.pixelWidth = pixelWidth; self.pixelHeight = pixelHeight
+        self.creationSecond = creationSecond; self.durationMillis = durationMillis
+        self.originalFilename = originalFilename
+    }
+}
+
+public struct ExactBuckets: Sendable, Equatable {
+    /// Each bucket has 2...maximumBucketSize ids, sorted. Buckets are sorted for determinism.
+    public let buckets: [[String]]
+    /// Buckets skipped because they were too large to hash exhaustively (reported, never silently dropped).
+    public let oversizedBuckets: Int
+    public let oversizedAssets: Int
+}
+
+public enum ExactCandidates {
+    /// Pass 1: same type, size, creation second (and duration second for video).
+    /// Pass 2: same type, size and original filename (covers copies whose dates differ).
+    public static func buckets(_ keys: [ExactKey], maximumBucketSize: Int = 64) -> ExactBuckets {
+        struct Pass1: Hashable { let t: Int, w: Int, h: Int, c: Int64, d: Int64 }
+        struct Pass2: Hashable { let t: Int, w: Int, h: Int, f: String }
+        var first: [Pass1: [String]] = [:]
+        var second: [Pass2: [String]] = [:]
+        for key in keys {
+            if let c = key.creationSecond {
+                first[Pass1(t: key.mediaType, w: key.pixelWidth, h: key.pixelHeight, c: c,
+                            d: (key.durationMillis ?? 0) / 1000), default: []].append(key.id)
+            }
+            if let f = key.originalFilename, !f.isEmpty {
+                second[Pass2(t: key.mediaType, w: key.pixelWidth, h: key.pixelHeight, f: f.lowercased()), default: []].append(key.id)
+            }
+        }
+        var seen: Set<[String]> = []
+        var result: [[String]] = []
+        var oversized = 0, oversizedAssets = 0
+        func consume(_ members: [String]) {
+            let ids = Array(Set(members)).sorted()
+            guard ids.count >= 2 else { return }
+            guard ids.count <= maximumBucketSize else { oversized += 1; oversizedAssets += ids.count; return }
+            if seen.insert(ids).inserted { result.append(ids) }
+        }
+        first.values.forEach(consume)
+        second.values.forEach(consume)
+        result.sort { $0.lexicographicallyPrecedes($1) }
+        return ExactBuckets(buckets: result, oversizedBuckets: oversized, oversizedAssets: oversizedAssets)
+    }
+}

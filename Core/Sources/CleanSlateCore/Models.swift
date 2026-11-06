@@ -6,6 +6,16 @@ public enum PreservationFlag: String, Codable, CaseIterable, Hashable, Sendable 
     case curatedAlbum, incompleteResources, unknownOwnership, uncertainMetadata
 }
 
+extension PreservationFlag {
+    /// Always blocks deletion of the target, whatever the evidence.
+    public static let hard: Set<PreservationFlag> = [
+        .favorite, .hidden, .userBurstPick, .shared, .curatedAlbum,
+        .incompleteResources, .unknownOwnership, .uncertainMetadata]
+    /// Allowed on a deletion target ONLY when its full resource set is byte-identical to a keeper
+    /// that carries at least the same conditional flags. Never allowed for near-duplicates.
+    public static let conditional: Set<PreservationFlag> = [.livePhoto, .edited, .raw]
+}
+
 public struct AssetRecord: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     /// Deterministic fingerprint of the *latest* PhotoKit/asset-resource state, not an app scan ID.

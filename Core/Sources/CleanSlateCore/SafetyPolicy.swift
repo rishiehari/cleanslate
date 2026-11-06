@@ -17,7 +17,7 @@ public enum SafetyPolicy {
                 blocked[targetID] = .missingAsset; continue
             }
             guard !target.revision.isEmpty else { blocked[targetID] = .staleRevision; continue }
-            guard target.flags.isEmpty else { blocked[targetID] = .protected; continue }
+            guard target.flags.isDisjoint(with: PreservationFlag.hard) else { blocked[targetID] = .protected; continue }
             guard !cluster.keeperIDs.isEmpty else { blocked[targetID] = .missingKeeper; continue }
             guard cluster.keeperIDs.isDisjoint(with: cluster.suggestedRemovalIDs) else {
                 blocked[targetID] = .keeperAlsoRemoved; continue
@@ -35,6 +35,16 @@ public enum SafetyPolicy {
             }
             if links.contains(where: { $0.calibratedRedundancyProbability.map { !$0.isFinite || $0 < 0 || $0 > 1 } ?? false }) {
                 blocked[targetID] = .invalidConfidence; continue
+            }
+            // Live / edited / RAW targets: only a byte-identical keeper with the same flags may stand in.
+            let conditionalFlags = target.flags.intersection(PreservationFlag.conditional)
+            if !conditionalFlags.isEmpty {
+                let covered = cluster.keeperIDs.contains { keeperID in
+                    guard let keeper = cluster.assets.first(where: { $0.id == keeperID }),
+                          conditionalFlags.isSubset(of: keeper.flags) else { return false }
+                    return links.contains { $0.joins(targetID, keeperID) && $0.relation == .exactResources && $0.completeResourceEquality }
+                }
+                guard covered else { blocked[targetID] = .protected; continue }
             }
             if links.contains(where: { $0.relation == .exactResources && $0.completeResourceEquality }) {
                 preselected.insert(targetID)
@@ -55,6 +65,12 @@ public enum SafetyPolicy {
         return ReviewDecision(preselected: preselected, reviewOnly: reviewOnly, blocked: blocked)
     }
 
+    /// True if the record carries a flag that always blocks deletion. Single source of truth for
+    /// the app's post-hash revalidation as well.
+    public static func hardBlocked(_ record: AssetRecord) -> Bool {
+        !record.flags.isDisjoint(with: PreservationFlag.hard)
+    }
+
     /// Just-in-time defense before invoking a PhotoKit change request.
     /// Caller MUST freshly fetch all records at commit time, then pass them here.
     public static func validateCommit(_ plan: ApprovedDeletionPlan,
@@ -72,8 +88,9 @@ public enum SafetyPolicy {
                   current.revision == expected, !expected.isEmpty else { return .staleRevision }
         }
         // Recommended removals cannot bypass preservation even when an old UI state was confirmed.
+        // (Conditional flags are judged against the keeper by `evaluate` below.)
         for id in plan.selectedIDs {
-            guard let record = currentByID[id], record.flags.isEmpty else { return .protected }
+            guard let record = currentByID[id], !hardBlocked(record) else { return .protected }
         }
         let freshCluster = ReviewCluster(
             id: "commit-validation", assets: involved.compactMap { currentByID[$0] },
