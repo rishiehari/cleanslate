@@ -170,3 +170,58 @@ Core: 10 standalone policy. iOS: 19 `StandaloneTests` (commit refuses on favorit
 - **4.3 Similar videos** (3 sampled frames + feature prints): needs Vision, which cannot run in the simulator, and real video fixtures; not built. Exact video duplicates are covered. Revisit with the device runs.
 - `scripts/make_video_fixtures.sh` (ffmpeg real videos for the simulator) not written; video behavior is verified through the fake library only.
 - 🧑 Human gate (device): take 5 real screenshots + 1 screen recording; confirm they're categorized (simulator imports don't carry the screenshot subtype); delete 2; confirm outcome. **PENDING**. Owner must also review `validateStandalone` (Core/StandalonePolicy.swift) per the plan's 4.5 gate. **PENDING**.
+
+## Step 4 review + Step 5 + Step 6 — scale engine and targeted invalidation — 2026-11-06
+Commits: `df1971d`…current ("Step 5…", "Step 6…"). **Core 80 tests; iOS unit 113+; UI 26.**
+
+### Step 4 review (second pass, 10 findings → all addressed)
+Opt-in iCloud commit recheck (a group verified by download was undeletable), stale standalone lists reset on every
+invalidation path, video size by original file URL with a one-shot continuation (PhotoKit can call twice), albums as one
+set per scan instead of per-asset lookups, cached category lists, `@Published` read-before-update bug, ranking verified
+before estimated, cancellation not charged to the download budget, bucket splitting by time gaps (no minute edges),
+group ids that include membership (an old review can't hide a changed group).
+
+### Step 5 — scale engine
+- **5.1 Swift 6 strict concurrency** for the whole app (`SWIFT_VERSION 6.0`, `complete`); only 3 diagnostics to fix.
+- **5.2 `LibraryStore`** (SQLite WAL actor): versioned migrations (`PRAGMA user_version`, transactional, idempotent),
+  `assets` / `features` / `digests` / `groups` / `group_members` / `reviews` / `receipts` / `meta`, file protection,
+  excluded from backup. 15 tests (round-trips, revision invalidation, paging, LSH pairs and the oversized-bucket count,
+  reopen persistence, backup exclusion, keyset cursor).
+- **5.3 Paged, resumable inventory** (pages of 1,000, one transaction per page, offset persisted; resume tested).
+- **5.4 Incremental sync** with `fetchPersistentChanges(since:)` (SDK-verified); expired/unsupported token → full
+  re-inventory, unseen assets marked deleted. Tests: second scan reads no pages, expired token, unsupported tracking.
+- **5.5 No artificial caps.** The 1,500/25,000 inventory limit, 240-pair and 150-group caps are gone. Bounded where it
+  matters and always reported: 4,000 full hashes per scan, 30,000 Vision pairs, 200,000 candidate pairs, bucket sizes.
+- **5.6 `ResourceGovernor`**: thermal (critical stops with progress saved; serious pauses up to 10 min with a visible
+  reason), low memory (width 1), Low Power (narrower). Tests incl. a heat-stopped scan resuming with only the remainder.
+- **5.7 Background tasks** (`BGProcessingTask` overnight, iOS 26 `BGContinuedProcessingTask`): written and compiled,
+  **cannot run in the simulator (documented by Apple); needs a device.**
+- **5.8 Scale harness** (`ScaleTests`; `CLEANSLATE_SCALE_N`): 42,400 assets in 10.4 s, +38 MB; see the 250k line below.
+
+### Defects found by the harness and tests (all fixed)
+1. **Hang:** with the pair cap removed, look-alike photos produced hundreds of Vision attempts; on the simulator each
+   failure costs ~0.4 s (a test run exceeded 15 minutes). → circuit breaker (5 consecutive failures ⇒ Vision
+   unavailable, remaining pairs reported as skipped).
+2. **Quadratic fingerprint query** (re-scanning done rows each batch) — invisible at 42k, minutes at 250k. → keyset cursor.
+3. Tests/fake mode shared the persistent on-disk index across runs → in-memory stores everywhere in tests and fake mode.
+4. Pair ranking on the main thread → detached, pure `nonisolated` function with a test.
+
+### Step 6 — targeted invalidation
+- Core `GroupMembershipIndex` (changed assets → affected groups) with a brute-force property test (1,000 random op sequences).
+- `processLibraryChange`: catch the index up from persistent changes, then recheck ONLY groups containing a changed asset:
+  deleted keeper ⇒ dissolve; deleted copy ⇒ shrink; favorited copy ⇒ becomes the keeper (never deletable); content
+  changed or original unavailable ⇒ dissolve; similar groups ⇒ dissolve on any change. Unrelated changes touch nothing (test asserts no rehash).
+- UI: "Rechecking…" status, Approve disabled while rechecking, "This group changed" state, the review screen always shows the latest group.
+- **Tray:** entries revalidated on change and at launch → "Needs another look" section with plain-words reasons
+  (favorited / changed / already deleted / now protected), never deleted until reviewed again, excluded from the Delete
+  count, "Review again" returns them to the inbox. Tests incl. relaunch and standalone entries.
+- **Invariant property test:** over 12 rounds × 10 random change batches (delete, edit, favorite, content change), no group
+  on screen ever holds a photo whose current revision differs from the group's.
+- `scripts/check_policy_separation.sh` made precise (each policy callable only from its own commit function and its own advisory recheck); a deliberate mix-up is detected.
+
+### Self-review
+SafetyPolicy/Core assertions changed: **none** in these steps. `deleteAssets`: still one call. Network: unchanged
+(`allowNetwork: true` only inside `NetworkPolicy.swift`). Commit still re-fetches, rehashes (exact) and re-runs the full policy.
+
+### 🧑 Gates PENDING
+Real-library **scan-only** run on a device (Instruments: time, memory, thermal); background-task behavior on a device.
