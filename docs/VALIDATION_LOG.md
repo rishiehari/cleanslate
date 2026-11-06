@@ -103,3 +103,32 @@ Known gaps carried forward: Home still shows engine-flavored text ("0 inventorie
 - Matched-geometry "fly into tray" animation (cross-fade + symbol bounce used instead; `ReceiptView` count-up is the only celebration).
 - Next-group image prefetch (U6), Reduce Motion UI test, snapshot-testing dependency (needs owner approval; screenshot capture used instead), permission priming screen (the Home permission card explains why before the system prompt).
 - **Human gates PENDING:** choose/confirm the review design (PROTOTYPE.md default adopted), 5-minute feel check on a real iPhone (fake-data mode `-uiTestingFakeLibrary` is DEBUG-only).
+
+## Step 3 — Exact matching that works on real libraries — 2026-11-06
+Start commit: 158d904  End commit: see `git log` ("Step 3" commits)
+**make ci: PASS** — core 55 tests, iOS unit 32 (1 simulator skip), UI 16 (+3 screenshot captures skipped), lint strict.
+
+### What changed
+- **3.1** `ExactCandidates` (Core): metadata buckets (type, size, creation second [+ duration], or filename). Dropped singletons; oversized buckets are *counted*, never silently dropped. Test: 250k assets with 500 planted pairs, all found, well under the 5 s budget.
+- **3.2** Scan hashes **every resource set** for bucket members and the best visual pairs. The old filter that skipped Live/RAW/edited/shared photos is gone. An asset that can't be read completely is counted as unverifiable, never as a match.
+- **3.3 (safety change; owner review PENDING)** `PreservationFlag.hard` vs `.conditional` (`livePhoto`, `edited`, `raw`). A conditional-flag target is removable only with a direct, complete byte-equal link to a keeper that carries at least the same conditional flags; never for near-duplicates. The old `testProtectionFlagsFailClosed` (loop over *all* flags) was split into 8 precise tests, including `testAllFlagsAreClassifiedExactlyOnce` (a new flag can't go unclassified) and a **10,000-cluster fuzz test** (no hard flag ever leaks; conditional targets always have an equal keeper). Mutation check: removing the keeper-flag requirement makes a test fail.
+- **3.4** Opt-in iCloud checking. `NetworkPolicy` is the only code that may allow a download (`allowNetwork: true` occurs only in `DigestFetcher` inside `NetworkPolicy.swift`): off by default, not on cellular/expensive/constrained connections, with a per-scan budget (1/2/5/10 GB). Local read first; download only on failure. The commit-time rehash uses the same policy. Checked per asset (the plan said per resource; an asset's resources are read back-to-back).
+- **3.5** Coverage in plain words in the Exact inbox ("N photos checked in full", "M couldn't be checked, they're in iCloud. Turn on iCloud checking", skipped oversized sets).
+- Live / edited / RAW shown as symbols on photo tiles; protected-reason copy explains conditional flags.
+
+### Defects found by testing, fixed
+- **Group IDs used `String.hashValue`** (randomized per launch). That would have broken the "reviewed" memory and the persisted tray across relaunches. Now a SHA-256 token; tested.
+- **Post-hash recheck only looked at hard flags.** A conditional flag (e.g. "edited") appearing late with no revision change would have slipped through. The coordinator now re-runs the *full* `validateCommit` on fresh records after hashing. Test: `testProtectedFlagWithoutRevisionChangeStillAborts` now expects `unsafe(protected)`.
+- My own test expectation about favorites was wrong: the favorite becomes the *keeper* (so the plain copy is removable); added a test that two favorites are never offered.
+
+### Tests added
+Core: 9 ExactCandidates, 9 flag-split/fuzz. iOS: 11 `ExactMatchingTests` (Live pair exact + preselected; different paired video not exact; paired video not local counted, not matched; edited and RAW copies findable; favorite is keeper; network never used when off; never used on an expensive connection; opt-in downloads and counts budget; budget stops downloads; stable group ids). UI: iCloud flow end to end (scan → "couldn't be checked" → opt in → rescan → the iCloud-only copy becomes a group) and menu sheet.
+
+### Self-review
+- Existing SafetyPolicy assertions changed: **one, as authorized** (`testProtectionFlagsFailClosed` → split; semantics for hard flags unchanged). **Owner must review `SafetyPolicy.swift` + that test.** The change is isolated in commit `1eb00cb` and can be reverted independently of the rest of Step 3.
+- `deleteAssets`: still exactly one call site.
+- Network: `isNetworkAccessAllowed = false` (thumbnails) and `= allowNetwork` (digests); `allowNetwork: true` only in `NetworkPolicy.swift`.
+- Question for the owner's review: *"Is there any input where a conditional-flag asset can be preselected without complete resource equality to a keeper with the same flags?"* The fuzz test says no across 10,000 random clusters.
+
+### 🧑 Human gate (PENDING): device check (disposable library)
+Use Photos' "Duplicate" on a Live Photo, an edited photo and a normal photo; scan; expect 3 exact groups; delete one in the app (with only ONE group in the tray, see the Step 8 note); confirm Recently Deleted and the keeper. Then with iCloud Photos + Optimize Storage on: toggle iCloud checking off then on and note the coverage numbers.
