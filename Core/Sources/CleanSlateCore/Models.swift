@@ -4,6 +4,7 @@ import Foundation
 public enum PreservationFlag: String, Codable, CaseIterable, Hashable, Sendable {
     case favorite, hidden, edited, raw, livePhoto, shared, userBurstPick
     case curatedAlbum, incompleteResources, unknownOwnership, uncertainMetadata
+    case cinematicVideo, spatialMedia
 }
 
 extension PreservationFlag {
@@ -13,7 +14,7 @@ extension PreservationFlag {
         .incompleteResources, .unknownOwnership, .uncertainMetadata]
     /// Allowed on a deletion target ONLY when its full resource set is byte-identical to a keeper
     /// that carries at least the same conditional flags. Never allowed for near-duplicates.
-    public static let conditional: Set<PreservationFlag> = [.livePhoto, .edited, .raw]
+    public static let conditional: Set<PreservationFlag> = [.livePhoto, .edited, .raw, .cinematicVideo, .spatialMedia]
 }
 
 public struct AssetRecord: Codable, Equatable, Sendable, Identifiable {
