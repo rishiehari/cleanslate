@@ -24,6 +24,14 @@ targets:
     platform: iOS
     sources:
       - path: App
+    info:
+      path: App/Info.plist
+      properties:
+        BGTaskSchedulerPermittedIdentifiers:
+          - org.cleanslate.free.scan
+          - org.cleanslate.free.continued.*
+        UIBackgroundModes:
+          - processing
     dependencies:
       - package: CleanSlateCore
         product: CleanSlateCore

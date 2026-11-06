@@ -19,9 +19,12 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         var cloudDigests: [ResourceDigest]?
         /// Drives the deterministic thumbnail so copies look identical and similar shots differ slightly.
         var look: String = ""
+        /// Bulk (scale test) assets compute their digest on demand instead of storing millions of them.
+        var lazyContent: String?
     }
 
-    var assets: [String: Asset] = [:]
+    var assets: [String: Asset] = [:] { didSet { sortedCache = nil } }
+    private var sortedCache: [PhotoSnapshot]?
     var authorization: PHAuthorizationStatus = .authorized
     var authorizationAfterDelete: PHAuthorizationStatus?
     var deleteOutcome: DeleteOutcome = .success
@@ -74,6 +77,28 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         recordChange(changed: [id])
     }
 
+    /// Fast bulk population for scale tests: `count` unique assets plus `plantedExactPairs` byte-identical pairs
+    /// (same time, size and content). No change-log entries, no per-asset hashing up front.
+    func addBulk(count: Int, plantedExactPairs: Int) {
+        var table = assets
+        table.reserveCapacity(count + plantedExactPairs)
+        func make(_ id: String, at: Int64, content: String) -> Asset {
+            let record = AssetRecord(id: id, revision: "v1", flags: [])
+            let snap = PhotoSnapshot(id: id, record: record, capturedAt: Date(timeIntervalSince1970: TimeInterval(at)), burstID: nil,
+                                     width: 4000 + Int(at % 5), height: 3000 + Int(at % 7), originalFilename: "IMG_\(id).HEIC")
+            var asset = Asset(snapshot: snap, digests: nil, look: content)
+            asset.lazyContent = content
+            return asset
+        }
+        for i in 0..<count { table["bulk\(i)"] = make("bulk\(i)", at: 1_000_000 + Int64(i) * 7, content: "u\(i)") }
+        for n in 0..<plantedExactPairs {
+            let at = 900_000_000 + Int64(n) * 11
+            table["pairA\(n)"] = make("pairA\(n)", at: at, content: "pair\(n)")
+            table["pairB\(n)"] = make("pairB\(n)", at: at, content: "pair\(n)")
+        }
+        assets = table
+    }
+
     func simulateExternalChange() { handlers.values.forEach { $0() } }
 
     // MARK: PhotoLibraryClient
@@ -82,8 +107,13 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 
     func inventoryPage(offset: Int, limit: Int) -> (photos: [PhotoSnapshot], total: Int) {
         pageRequests.append(offset)
-        let all = assets.values.map(\.snapshot).sorted {
-            ($0.capturedAt ?? .distantPast, $1.id) > ($1.capturedAt ?? .distantPast, $0.id)
+        onInventoryPage?(offset)
+        let all: [PhotoSnapshot]
+        if let cached = sortedCache { all = cached } else {
+            all = assets.values.map(\.snapshot).sorted {
+                ($0.capturedAt ?? .distantPast, $1.id) > ($1.capturedAt ?? .distantPast, $0.id)
+            }
+            sortedCache = all
         }
         guard offset < all.count else { return ([], all.count) }
         return (Array(all[offset..<min(all.count, offset + limit)]), all.count)
@@ -115,8 +145,14 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? { assets[id]?.snapshot }
 
+    private(set) var thumbnailCalls = 0
+    /// Called with the offset of every inventory page request (lets a test interrupt a scan mid-inventory).
+    var onInventoryPage: ((Int) -> Void)?
+    var unavailableThumbnailIDs: Set<String> = []
+
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage? {
-        guard !disableThumbnails, let asset = assets[id] else { return nil }
+        thumbnailCalls += 1
+        guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
         return Self.renderScene(look: asset.look)
     }
 
@@ -147,6 +183,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         await Task.yield()
         guard let asset = assets[id] else { throw LibraryResourceError.notAccessible }
         if let local = asset.digests { return local }
+        if let lazy = asset.lazyContent { return [Self.digest(lazy)] }
         if allowNetwork, let cloud = asset.cloudDigests { return cloud }
         throw LibraryResourceError.notAccessible
     }
