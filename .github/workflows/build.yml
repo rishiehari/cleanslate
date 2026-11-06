@@ -18,17 +18,24 @@ jobs:
       - run: python -m pip install Pillow
       - run: python -m unittest discover -s fixtures -p 'test_*.py'
   ios:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Select newest Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Using $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
-      - name: Compile unsigned simulator application
-        run: xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
-      - name: Run iOS unit tests
+      - name: Build, then test on an iPhone simulator
         run: |
-          SIMULATOR_ID=$(xcrun simctl list devices available | awk -F'[()]' '/iPhone/{print $2; exit}')
-          if [[ -z "$SIMULATOR_ID" ]]; then echo 'No iPhone simulator on runner'; exit 2; fi
-          xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -destination "platform=iOS Simulator,id=$SIMULATOR_ID" CODE_SIGNING_ALLOWED=NO test
+          make build
+          make ios-test
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: derived-data-logs
+          path: build/DerivedData/Logs
