@@ -410,6 +410,19 @@ actor LibraryStore {
         return pairs.sorted()
     }
 
+    // MARK: Receipts (history of what was deleted)
+
+    func addReceipt(id: String, createdAt: Date, json: String) throws {
+        try run("INSERT OR REPLACE INTO receipts(id,created_at,payload_json) VALUES(?,?,?)") { s in
+            text(s, 1, id); sqlite3_bind_double(s, 2, createdAt.timeIntervalSince1970); text(s, 3, json)
+        }
+    }
+
+    func receiptJSONs(limit: Int = 200) -> [String] {
+        (try? rows("SELECT payload_json FROM receipts ORDER BY created_at DESC LIMIT ?", bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
+                   map: { String(cString: sqlite3_column_text($0, 0)) })) ?? []
+    }
+
     // MARK: Maintenance
 
     func clearFeatures() throws { try run("DELETE FROM features") }

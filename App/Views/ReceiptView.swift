@@ -22,6 +22,10 @@ struct ReceiptView: View {
                     .accessibilityIdentifier("receipt.bytes")
                 Text("Verified file sizes removed from your library.").appText(.secondary).foregroundStyle(Color.textSecondary)
             }
+            if let before = receipt.freeBytesBefore, let after = receipt.freeBytesAfter {
+                Text("Free space on this iPhone right now: \(before.friendlyBytes) → \(after.friendlyBytes)")
+                    .appText(.caption).foregroundStyle(Color.textSecondary).accessibilityIdentifier("receipt.freespace")
+            }
             VStack(alignment: .leading, spacing: Spacing.s) {
                 Label("They're in Recently Deleted for 30 days. Empty it in Photos to free the space right away.", systemImage: "clock.arrow.circlepath")
                 if receipt.uncertain > 0 {

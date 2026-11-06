@@ -27,6 +27,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         BGTaskSchedulerPermittedIdentifiers:
           - org.cleanslate.free.scan
           - org.cleanslate.free.continued.*

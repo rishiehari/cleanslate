@@ -31,7 +31,8 @@ struct StandaloneTrayEntry: Codable, Identifiable, Equatable {
     var verifiedBytes: Int64 { items.reduce(Int64(0)) { $0 + ($1.verifiedBytes ?? 0) } }
 }
 
-struct DeletionReceipt: Equatable {
+struct DeletionReceipt: Equatable, Codable, Identifiable {
+    var id = UUID()
     var requested = 0
     var verifiedRemoved = 0
     var uncertain = 0
@@ -39,6 +40,18 @@ struct DeletionReceipt: Equatable {
     /// Groups that could not be deleted (changed, vanished...), with a plain-words reason.
     var setAside: [String: String] = [:]
     var date = Date()
+    /// Free space on the iPhone just before and just after. Deleted photos stay in Recently Deleted for 30 days,
+    /// so the real gain only shows after that is emptied; these two numbers are measurements, not promises.
+    var freeBytesBefore: Int64?
+    var freeBytesAfter: Int64?
+}
+
+enum FreeSpace {
+    /// Space the system says is available for important use, or nil if it can't be read.
+    static func available() -> Int64? {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+        return (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+    }
 }
 
 struct ToastState: Equatable, Identifiable {
@@ -208,6 +221,7 @@ final class DeletionTray: ObservableObject {
         checkProgress = nil
         defer { isDeleting = false; checkProgress = nil }
         var total = DeletionReceipt()
+        total.freeBytesBefore = FreeSpace.available()
         var anyCompleted = false
         let chunks = Self.chunks(groups: readyEntries, standalone: readyStandaloneEntries, limit: SafetyPolicy.maximumBatchTargets)
         guard !chunks.isEmpty else { return nil }            // nothing ready to delete
@@ -247,8 +261,11 @@ final class DeletionTray: ObservableObject {
     }
 
     private func finish(_ total: DeletionReceipt) -> DeletionReceipt {
-        receipt = total
-        return total
+        var done = total
+        done.freeBytesAfter = FreeSpace.available()
+        done.date = Date()
+        receipt = done
+        return done
     }
 
     /// Apple's single prompt is limited to `limit` photos here (a safety bound), so a bigger tray is split into batches.

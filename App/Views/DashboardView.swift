@@ -11,6 +11,7 @@ struct DashboardView: View {
     @State private var showClearCache = false
     @State private var showTray = false
     @State private var showVerifySheet = false
+    @State private var showHistory = false
 
     var body: some View {
         NavigationStack {
@@ -44,6 +45,7 @@ struct DashboardView: View {
             }
             .sheet(isPresented: $showTray) { TrayView(tray: tray) }
             .sheet(isPresented: $showVerifySheet) { VerifyICloudSheet(policy: model.networkPolicy) }
+            .sheet(isPresented: $showHistory) { NavigationStack { HistoryView().toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { showHistory = false } } } } }
             .fullScreenCover(isPresented: Binding(get: { tray.receipt != nil }, set: { if !$0 { tray.receipt = nil } })) {
                 if let receipt = tray.receipt { ReceiptView(receipt: receipt) { tray.receipt = nil } }
             }
@@ -78,6 +80,7 @@ struct DashboardView: View {
     private var menu: some View {
         Menu {
             Toggle("Haptics", systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
+            Button("History", systemImage: "clock.arrow.circlepath") { showHistory = true }
             Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }
             Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
             if labels.corrections > 0 {

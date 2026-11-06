@@ -236,6 +236,11 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         Task { authorization = await library.requestAccess() }
     }
 
+    /// Past deletions, newest first.
+    func loadHistory() async -> [DeletionReceipt] {
+        await store.receiptJSONs().compactMap { $0.data(using: .utf8).flatMap { try? JSONDecoder().decode(DeletionReceipt.self, from: $0) } }
+    }
+
     // MARK: Scanning
 
     /// Runs one scan to completion. `scan()` wraps this in a cancellable task; tests await it directly.
@@ -287,6 +292,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         let removed = candidateAssets.filter { library.snapshot(id: $0, inspectAlbums: false) == nil }
         if !removed.isEmpty { try? await store.markDeleted(Array(removed)) }
         if receipt.verifiedRemoved > 0 { HapticsService.shared.fire(.batchDeleted) }
+        if let data = try? JSONEncoder().encode(receipt), let json = String(data: data, encoding: .utf8) {
+            try? await store.addReceipt(id: receipt.id.uuidString, createdAt: receipt.date, json: json)
+        }
         return true
     }
 
