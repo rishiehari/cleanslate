@@ -1,11 +1,10 @@
 import Foundation
 import Photos
 import Combine
-import CryptoKit
 import CleanSlateCore
 
 @MainActor
-final class CleaningViewModel: ObservableObject {
+final class CleaningViewModel: ObservableObject, ScanReporting {
     @Published private(set) var authorization: PHAuthorizationStatus
     @Published private(set) var phase: ScanPhase = .idle
     @Published private(set) var progress: Double = 0
@@ -15,29 +14,42 @@ final class CleaningViewModel: ObservableObject {
     private(set) var standaloneCache: [ScanCategory: [StandaloneItem]] = [:]
     private var albumMembers: Set<String> = []
     private var trayObserver: AnyCancellable?
+    private var governorObserver: AnyCancellable?
     @Published private(set) var statistics = ScanStatistics()
     @Published var statusMessage: String?
     @Published private(set) var isScanning = false
+    /// Why the scan is paused right now (e.g. "Paused — your iPhone is warm"), if it is.
+    @Published private(set) var pauseReason: String?
 
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
     let tray: DeletionTray
     let networkPolicy: NetworkPolicy
-    private let featureStore = LocalFeatureIndex()
+    let store: LibraryStore
+    let governor: ResourceGovernor
+    private lazy var engine: ScanEngine = {
+        let engine = ScanEngine(library: library, store: store, networkPolicy: networkPolicy, governor: governor)
+        engine.reporter = self
+        return engine
+    }()
     private var scanTask: Task<Void, Never>?
     private var changeSubscription: ChangeSubscription?
-    private var scanLimit = 1500
 
     init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared,
          tray: DeletionTray? = nil,
-         networkPolicy: NetworkPolicy? = nil) {
+         networkPolicy: NetworkPolicy? = nil,
+         store: LibraryStore? = nil,
+         governor: ResourceGovernor? = nil) {
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
+        self.store = store ?? ((try? LibraryStore(path: LibraryStore.defaultPath())) ?? (try! LibraryStore(path: nil)))
+        self.governor = governor ?? ResourceGovernor()
         self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy)
         self.authorization = library.authorization
         // @Published notifies before the value changes, so use the emitted value, not tray.standaloneEntries.
         trayObserver = self.tray.$standaloneEntries.sink { [weak self] entries in self?.recomputeStandalone(trayEntries: entries) }
+        governorObserver = self.governor.$pauseReason.sink { [weak self] reason in self?.pauseReason = reason }
         changeSubscription = library.observeChanges { [weak self] in
             self?.invalidateAfterLibraryChange()
         }
@@ -54,9 +66,8 @@ final class CleaningViewModel: ObservableObject {
         authorization = newStatus
     }
 
+    /// A library change makes shown results untrustworthy. (Step 6 narrows this to only the affected groups.)
     private func invalidateAfterLibraryChange() {
-        // Invalidation is conservative. A late notification can arrive after a completed
-        // scan, so the user must rescan rather than trusting stale recommendations.
         if isScanning { scanTask?.cancel() }
         let hadResults = !groups.isEmpty || !standaloneItems.isEmpty
         groups = []
@@ -135,21 +146,7 @@ final class CleaningViewModel: ObservableObject {
         Task { authorization = await library.requestAccess() }
     }
 
-    /// Upper bound of assets fully hashed in one scan (the rest are reported as skipped).
-    static let maximumFullHashesPerScan = 4_000
-    static let maximumSizedItems = 5_000
-
-    /// Rough size guess used only to budget iCloud downloads.
-    static func estimatedOriginalBytes(_ photo: PhotoSnapshot?) -> Int64 {
-        guard let photo else { return 0 }
-        if photo.isVideo { return Int64(photo.durationSeconds * 2_000_000) }
-        return max(2_000_000, photo.pixelCount / 4)
-    }
-
-    /// Stable across launches (unlike `hashValue`), so reviewed groups and the tray survive relaunch.
-    static func stableToken(_ text: String) -> String {
-        SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-    }
+    // MARK: Scanning
 
     /// Runs one scan to completion. `scan()` wraps this in a cancellable task; tests await it directly.
     func runScan() async {
@@ -157,7 +154,8 @@ final class CleaningViewModel: ObservableObject {
         isScanning = true
         statistics = ScanStatistics(); statusMessage = nil; groups = []; standaloneItems = []; progress = 0
         networkPolicy.resetSessionBudget()          // the iCloud download limit is per scan
-        await performScan()
+        let outcome = await engine.run()
+        finishScan(outcome)
         isScanning = false
     }
 
@@ -169,245 +167,64 @@ final class CleaningViewModel: ObservableObject {
         }
     }
 
-    func scanMore() {
-        scanLimit = min(25_000, scanLimit * 2)
-        scan()
-    }
-
     func stop() { scanTask?.cancel() }
 
     func clearIndex() {
         guard !isScanning else { return }
-        featureStore.clear()
+        let store = self.store
+        Task { try? await store.reset() }
         groups = []
         standaloneItems = []
         statistics = ScanStatistics()
-        statusMessage = "The local feature cache was cleared. Photos were not modified."
+        statusMessage = "Saved scan data was cleared. Your photos weren't touched."
     }
 
     /// Deletes everything in the tray (after the user confirmed in the summary sheet).
     /// Each group is still fully revalidated by the coordinator, and Apple shows its own prompt.
     func deleteTray() async {
         let idsBefore = Set(tray.entries.map(\.id))
+        let candidateAssets = Set(tray.entries.flatMap(\.selectedIDs) + tray.standaloneEntries.flatMap { $0.items.map(\.id) })
         let receipt = await tray.deleteAll(using: coordinator)
         let deleted = idsBefore.subtracting(tray.entries.map(\.id))
         groups.removeAll { deleted.contains($0.id) }
         standaloneItems.removeAll { library.snapshot(id: $0.id, inspectAlbums: false) == nil }
+        // Keep the index honest about what is gone (only assets that really disappeared).
+        let removed = candidateAssets.filter { library.snapshot(id: $0, inspectAlbums: false) == nil }
+        if !removed.isEmpty { try? await store.markDeleted(Array(removed)) }
         if receipt.verifiedRemoved > 0 { HapticsService.shared.fire(.batchDeleted) }
     }
 
-    private func performScan() async {
-        phase = .inventory
-        let listing = library.inventory(limit: scanLimit)
-        let photos = listing.photos
-        let imagePhotos = photos.filter { !$0.isVideo }       // visual matching is for photos only
-        statistics.photosEnumerated = photos.count
-        statistics.truncated = listing.totalVisible > photos.count
-        if photos.isEmpty { phase = .finished; progress = 1; return }
-
-        var hashes: [String: UInt64] = [:]
-        hashes.reserveCapacity(photos.count)
-        phase = .thumbnails
-        for (n, photo) in imagePhotos.enumerated() {
-            if Task.isCancelled { phase = .cancelled; return }
-            if let cached = featureStore.hash(for: photo.id, revision: photo.record.revision) {
-                hashes[photo.id] = cached
-            } else if let thumbnail = await library.thumbnail(photo.id, target: 280),
-                      let hash = VisualFeatures.differenceHash(thumbnail) {
-                hashes[photo.id] = hash
-                featureStore.put(hash, for: photo.id, revision: photo.record.revision)
-            } else {
-                statistics.cloudOnlyOrUnavailable += 1
-            }
-            statistics.thumbnailsAnalyzed = n + 1
-            if n % 20 == 0 { progress = 0.65 * Double(n + 1) / Double(max(1, imagePhotos.count)); await Task.yield() }
-        }
-
-        if Task.isCancelled { phase = .cancelled; return }
-        phase = .candidates
-        let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
-        let items = imagePhotos.map { photo in
-            IndexedPhoto(id: photo.id,
-                         capturedAtSeconds: photo.capturedAt.map { Int64($0.timeIntervalSince1970) },
-                         burstIdentifier: photo.burstID,
-                         differenceHash: hashes[photo.id])
-        }
-        let allPairs = CandidateIndex.propose(items, maximumPairs: 75_000)
-        // A bounded preview pass. The UI explicitly discloses this is not an exhaustive
-        // proof of no duplicates, especially for photos with no local thumbnail.
-        let rankedPairs = allPairs.sorted { a,b in
-            func rank(_ p: CandidatePair) -> (Int, Int, String) {
-                let left = byID[p.first], right = byID[p.second]
-                let sameBurst = left?.burstID != nil && left?.burstID == right?.burstID
-                let hamming = hashes[p.first].flatMap { x in hashes[p.second].map { CandidateIndex.hamming(x, $0) } } ?? 64
-                return (sameBurst ? 0 : 1, hamming, p.first + p.second)
-            }
-            let x = rank(a), y = rank(b)
-            if x.0 != y.0 { return x.0 < y.0 }
-            if x.1 != y.1 { return x.1 < y.1 }
-            return x.2 < y.2
-        }
-        let candidatePairs = Array(rankedPairs.prefix(240))
-        statistics.candidatePairsConsidered = candidatePairs.count
-
-        // Exact stage. Candidates come from cheap metadata buckets plus the best visual pairs;
-        // only those are hashed in full. Every resource of every asset is hashed (Live Photos,
-        // edits and RAW included); anything that can't be read completely is NOT a match.
-        phase = .fullResources
-        let buckets = ExactCandidates.buckets(photos.map { photo in
-            ExactKey(id: photo.id, mediaType: photo.isVideo ? 2 : 1, pixelWidth: photo.width, pixelHeight: photo.height,
-                     creationSecond: photo.capturedAt.map { Int64($0.timeIntervalSince1970) },
-                     durationMillis: Int64(photo.durationSeconds * 1000), originalFilename: photo.originalFilename)
-        })
-        statistics.exactBucketsFound = buckets.buckets.count
-        statistics.bucketsOversized = buckets.oversizedBuckets
-        // Smaller buckets first (most likely real copies), then the best visual pairs. A cap keeps one
-        // scan bounded; anything past it is reported, not silently skipped.
-        var orderedIDs: [String] = []
-        var queued: Set<String> = []
-        func enqueue(_ id: String) { if queued.insert(id).inserted { orderedIDs.append(id) } }
-        buckets.buckets.sorted { $0.count < $1.count }.forEach { $0.forEach(enqueue) }
-        candidatePairs.forEach { enqueue($0.first); enqueue($0.second) }
-        if orderedIDs.count > Self.maximumFullHashesPerScan {
-            statistics.exactSkippedByLimit = orderedIDs.count - Self.maximumFullHashesPerScan
-            orderedIDs = Array(orderedIDs.prefix(Self.maximumFullHashesPerScan))
-        }
-        var allDigests: [String: [ResourceDigest]] = [:]
-        let fetcher = DigestFetcher(library: library, policy: networkPolicy)
-        for (n, id) in orderedIDs.enumerated() {
-            if Task.isCancelled { phase = .cancelled; return }
-            guard byID[id] != nil else { continue }
-            do {
-                let result = try await fetcher.fetch(id: id, estimatedBytes: Self.estimatedOriginalBytes(byID[id]))
-                allDigests[id] = result.digests
-                statistics.exactAssetsHashed += 1
-                if result.downloaded { statistics.originalsDownloaded += 1 }
-            } catch is CancellationError {
-                phase = .cancelled; return
-            } catch LibraryResourceError.cancelled {
-                phase = .cancelled; return
-            } catch {
-                // Not local (iCloud), incomplete or failed: cannot claim a match.
-                statistics.exactAssetsUnverifiable += 1
-            }
-            if n % 5 == 0 { progress = 0.65 + 0.23 * Double(n + 1) / Double(max(1, orderedIDs.count)); await Task.yield() }
-        }
-        if Task.isCancelled { phase = .cancelled; return }
-
-        var groupsFound: [PhotoReviewGroup] = []
-        var claimedIDs: Set<String> = []
-        let identified = Dictionary(grouping: allDigests.compactMap { id, digests -> (String, String)? in
-            guard let signature = ResourceSignatures.canonical(digests) else { return nil }
-            return (signature, id)
-        }, by: { $0.0 })
-        for (signature, members) in identified.sorted(by: { $0.key < $1.key }) where members.count > 1 {
-            let snapshots = members.compactMap { byID[$0.1] }
-            let keeper = preferredKeeper(snapshots)
-            let remaining = snapshots.filter { $0.id != keeper.id }
-            guard !remaining.isEmpty else { continue }
-            let pairEvidence = remaining.map {
-                PairEvidence(first: keeper.id, second: $0.id,
-                             relation: .exactResources, completeResourceEquality: true)
-            }
-            let bytes = Dictionary(uniqueKeysWithValues: remaining.compactMap { photo -> (String, Int64)? in
-                guard let digest = allDigests[photo.id], let size = ResourceSignatures.logicalBytes(digest) else { return nil }
-                return (photo.id, size)
-            })
-            let group = PhotoReviewGroup(id: "exact-\(Self.stableToken(signature))-\(Self.stableToken(snapshots.map(\.id).sorted().joined(separator: "|")))", kind: .exact,
-                                         keeper: keeper, candidates: remaining, evidence: pairEvidence,
-                                         verifiedCandidateBytes: bytes)
-            groupsFound.append(group)
-            claimedIDs.formUnion(snapshots.map(\.id))
-        }
-
-        // Measure screenshots and videos for the keeper-less categories (local files only).
-        phase = .sizing
-        var measured: [StandaloneItem] = []
-        // Videos are sized from their local file (no bytes read). Screenshots are measured when selected.
-        let sizable = Array(photos.filter { ($0.isScreenshot || $0.isVideo) && $0.record.flags.isEmpty }.prefix(Self.maximumSizedItems))
-        for (n, photo) in sizable.enumerated() {
-            if Task.isCancelled { phase = .cancelled; return }
-            measured.append(StandaloneItem(snapshot: photo, verifiedBytes: photo.isVideo ? await library.verifiedSize(id: photo.id) : nil))
-            if n % 25 == 0 { progress = 0.88 + 0.07 * Double(n + 1) / Double(max(1, sizable.count)); await Task.yield() }
-        }
-        albumMembers = library.userAlbumAssetIDs()
-        standaloneItems = measured
-
-        phase = .vision
-        // Similarity is uncalibrated, so it is strictly manual-review only. Pairwise
-        // groups prevent the transitive A~B, B~C => A~C deletion bug.
-        for (n,pair) in candidatePairs.enumerated() {
-            if Task.isCancelled { phase = .cancelled; return }
-            if claimedIDs.contains(pair.first) || claimedIDs.contains(pair.second) { continue }
-            guard let a = byID[pair.first], let b = byID[pair.second],
-                  let ah = hashes[a.id], let bh = hashes[b.id],
-                  CandidateIndex.hamming(ah, bh) <= 10 else { continue }
-            guard let firstImage = await library.thumbnail(a.id, target: 512),
-                  let secondImage = await library.thumbnail(b.id, target: 512) else { continue }
-            let distance: Double
-            do {
-                let firstPrint = try await VisualFeatures.printFeature(firstImage)
-                let secondPrint = try await VisualFeatures.printFeature(secondImage)
-                distance = try VisualFeatures.distance(firstPrint, secondPrint)
-            } catch {
-                statistics.visionFailures += 1
-                continue
-            }
-            guard distance < 0.32 else { continue }
-            let (sharpA, exposeA) = VisualFeatures.sharpnessAndExposure(firstImage)
-            let (sharpB, exposeB) = VisualFeatures.sharpnessAndExposure(secondImage)
-            let qa = QualitySignals(id: a.id, sharpness: sharpA,
-                                    faceQuality: (try? await VisualFeatures.faceQuality(firstImage)) ?? nil,
-                                    aesthetics: try? await VisualFeatures.aesthetics(firstImage), exposure: exposeA,
-                                    pixelCount: a.pixelCount, isFavorite: a.record.flags.contains(.favorite))
-            let qb = QualitySignals(id: b.id, sharpness: sharpB,
-                                    faceQuality: (try? await VisualFeatures.faceQuality(secondImage)) ?? nil,
-                                    aesthetics: try? await VisualFeatures.aesthetics(secondImage), exposure: exposeB,
-                                    pixelCount: b.pixelCount, isFavorite: b.record.flags.contains(.favorite))
-            let bestID = KeeperRanker.sorted([qa,qb]).first?.id ?? a.id
-            let keeper = bestID == a.id ? a : b
-            let candidate = bestID == a.id ? b : a
-            groupsFound.append(PhotoReviewGroup(id: "near-\(n)-\(keeper.id)", kind: .similar,
-                                               keeper: keeper, candidates: [candidate],
-                                               evidence: [PairEvidence(first: keeper.id, second: candidate.id,
-                                                                        relation: .visuallySimilar)],
-                                               verifiedCandidateBytes: [:]))
-            claimedIDs.insert(keeper.id); claimedIDs.insert(candidate.id)
-            if groupsFound.count >= 150 { break }
-            if n % 10 == 0 { progress = 0.88 + 0.1 * Double(n + 1) / Double(max(1,candidatePairs.count)); await Task.yield() }
-        }
-        // Review snapshots include the more expensive curated-album protection check.
-        groups = groupsFound.compactMap { group -> PhotoReviewGroup? in
-            guard let keeper = library.snapshot(id: group.keeper.id, inspectAlbums: true) else { return nil }
-            let candidates = group.candidates.compactMap { item in
-                library.snapshot(id: item.id, inspectAlbums: true)
-            }
-            guard candidates.count == group.candidates.count else { return nil }
-            return PhotoReviewGroup(id: group.id, kind: group.kind, keeper: keeper,
-                                    candidates: candidates, evidence: group.evidence,
-                                    verifiedCandidateBytes: group.verifiedCandidateBytes)
-        }.sorted {
-            $0.kind == $1.kind ? $0.estimatedVerifiedBytes > $1.estimatedVerifiedBytes : $0.kind == .exact
-        }
-        phase = .finished; progress = 1
-        statusMessage = statistics.truncated
-            ? "Partial scan: \(photos.count) of \(listing.totalVisible) accessible photos inventoried. "
-              + "Only \(candidatePairs.count) candidate pairs verified/reviewed in this pass. Tap Scan More for broader coverage."
-            : "Scanned \(photos.count) accessible photos. Not all iCloud-only originals were available locally; matches may be missed."
-        if statistics.visionFailures > 0 {
-            statusMessage = (statusMessage ?? "") + " Similar-photo comparison was unavailable for \(statistics.visionFailures) pair(s) on this device."
+    private func finishScan(_ outcome: ScanEngine.Outcome) {
+        groups.sort { $0.kind == $1.kind ? $0.estimatedVerifiedBytes > $1.estimatedVerifiedBytes : $0.kind == .exact }
+        switch outcome {
+        case .cancelled:
+            phase = .cancelled
+            statusMessage = "Scan paused. Your progress is saved, and the next scan picks up from here."
+        case .stopped(let reason):
+            phase = .cancelled
+            statusMessage = reason
+        case .finished:
+            phase = .finished; progress = 1
+            var message = "Looked through \(statistics.photosEnumerated.formatted()) photos."
+            if statistics.exactAssetsUnverifiable > 0 { message += " Some originals live only in iCloud, so matches there may be missed." }
+            if statistics.visionFailures > 0 { message += " Similar-photo comparison wasn't available for \(statistics.visionFailures) pair(s) on this device." }
+            if statistics.exactSkippedByLimit > 0 { message += " \(statistics.exactSkippedByLimit.formatted()) candidates were left for the next scan." }
+            statusMessage = message
         }
     }
 
-    private func preferredKeeper(_ photos: [PhotoSnapshot]) -> PhotoSnapshot {
-        // Preserve protected captures preferentially (favorite, user-picked, edited, RAW).
-        let ranked = photos.sorted { a,b in
-            let ap = a.record.flags.isEmpty ? 0 : 1
-            let bp = b.record.flags.isEmpty ? 0 : 1
-            if ap != bp { return ap > bp }
-            if a.pixelCount != b.pixelCount { return a.pixelCount > b.pixelCount }
-            return a.id < b.id
-        }
-        return ranked[0]
+    // MARK: ScanReporting
+
+    func scanDidEnter(_ phase: ScanPhase) { self.phase = phase }
+    func scanProgress(_ value: Double) { progress = max(progress, min(1, value)) }
+    func scanUpdate(_ change: (inout ScanStatistics) -> Void) { change(&statistics) }
+    func scanFound(groups found: [PhotoReviewGroup]) {
+        guard !found.isEmpty else { return }
+        let existing = Set(groups.map(\.id))
+        groups += found.filter { !existing.contains($0.id) }      // appear while the scan runs (U12)
+    }
+    func scanFoundStandalone(_ items: [StandaloneItem], albumMembers: Set<String>) {
+        self.albumMembers = albumMembers
+        standaloneItems = items
     }
 }

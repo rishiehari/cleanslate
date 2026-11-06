@@ -21,7 +21,8 @@ final class StandaloneTests: XCTestCase {
 
     private func makeModel() -> CleaningViewModel {
         CleaningViewModel(library: library, tray: DeletionTray(fileURL: nil),
-                          networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }))
+                          networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }),
+                          store: try! LibraryStore(path: nil))
     }
 
     private func expectError(_ expected: PhotoDeletionCoordinator.DeletionError, file: StaticString = #filePath, line: UInt = #line,

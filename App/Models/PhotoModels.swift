@@ -9,7 +9,7 @@ enum GroupKind: String, Codable {
 
 struct PhotoSnapshot: Identifiable, Codable, Equatable {
     let id: String
-    let record: AssetRecord
+    var record: AssetRecord
     let capturedAt: Date?
     let burstID: String?
     let width: Int
@@ -62,7 +62,12 @@ struct ScanStatistics {
     var cloudOnlyOrUnavailable = 0
     var exactAssetsVerified = 0
     var candidatePairsConsidered = 0
-    var truncated = false
+    enum InventoryMode: Equatable { case none, full, resumed, incremental }
+    var inventoryMode: InventoryMode = .none
+    var tokenExpired = false
+    var changesApplied = 0
+    var lshBucketsSkipped = 0
+    var visionPairsSkipped = 0
     /// Candidate pairs that could not be compared because Vision failed (e.g. simulator).
     var visionFailures = 0
     /// Exact-copy coverage (Step 3.5).

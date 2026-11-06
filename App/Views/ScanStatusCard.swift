@@ -24,9 +24,9 @@ struct ScanStatusCard: View {
             if let message = model.statusMessage {
                 Text(message).appText(.caption).foregroundStyle(Color.textSecondary)
             }
-            if model.statistics.truncated && !model.isScanning {
-                Button("Look through more photos", systemImage: "plus.magnifyingglass") { model.scanMore() }
-                    .appText(.secondary)
+            if let pause = model.pauseReason {
+                Label(pause, systemImage: "thermometer.medium").appText(.secondary).foregroundStyle(Color.warningAccent)
+                    .accessibilityIdentifier("scan.pausereason")
             }
         }
         .padding(Spacing.m)

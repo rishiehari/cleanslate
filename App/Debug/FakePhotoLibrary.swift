@@ -58,6 +58,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
                                      isVideo: isVideo, durationSeconds: duration, subtypes: subtypes)
         if let size { sizes[id] = size }
         assets[id] = Asset(snapshot: snapshot, digests: resources ?? [Self.digest(content ?? id, bytes: bytes)], look: content ?? id)
+        recordChange(changed: [id])
     }
 
     func update(_ id: String, revision: String? = nil, flags: Set<PreservationFlag>? = nil) {
@@ -70,6 +71,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
                                        isVideo: asset.snapshot.isVideo, durationSeconds: asset.snapshot.durationSeconds,
                                        subtypes: asset.snapshot.subtypes)
         assets[id] = asset
+        recordChange(changed: [id])
     }
 
     func simulateExternalChange() { handlers.values.forEach { $0() } }
@@ -78,9 +80,37 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 
     func requestAccess() async -> PHAuthorizationStatus { authorization }
 
-    func inventory(limit: Int) -> (photos: [PhotoSnapshot], totalVisible: Int) {
-        let all = assets.values.map(\.snapshot).sorted { $0.id < $1.id }
-        return (Array(all.prefix(limit)), all.count)
+    func inventoryPage(offset: Int, limit: Int) -> (photos: [PhotoSnapshot], total: Int) {
+        pageRequests.append(offset)
+        let all = assets.values.map(\.snapshot).sorted {
+            ($0.capturedAt ?? .distantPast, $1.id) > ($1.capturedAt ?? .distantPast, $0.id)
+        }
+        guard offset < all.count else { return ([], all.count) }
+        return (Array(all[offset..<min(all.count, offset + limit)]), all.count)
+    }
+
+    // MARK: Change tracking (token = a counter into `changeLog`)
+    private(set) var pageRequests: [Int] = []
+    private var changeLog: [(changed: Set<String>, deleted: Set<String>)] = []
+    var changeTokensExpired = false
+    var changeTrackingAvailable = true
+    private(set) var changeQueries = 0
+
+    func recordChange(changed: Set<String> = [], deleted: Set<String> = []) { changeLog.append((changed, deleted)) }
+
+    func currentChangeToken() -> Data? {
+        changeTrackingAvailable ? Data(String(changeLog.count).utf8) : nil
+    }
+
+    func changes(since token: Data) -> LibraryChangeResult {
+        changeQueries += 1
+        guard changeTrackingAvailable, let text = String(data: token, encoding: .utf8), let index = Int(text) else { return .unavailable }
+        if changeTokensExpired { return .tokenExpired }
+        let slice = changeLog.dropFirst(min(index, changeLog.count))
+        var changed: Set<String> = [], deleted: Set<String> = []
+        for entry in slice { changed.formUnion(entry.changed); deleted.formUnion(entry.deleted) }
+        changed.subtract(deleted)
+        return .changes(LibraryChangeSet(changedIDs: changed, deletedIDs: deleted, newToken: Data(String(changeLog.count).utf8)))
     }
 
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? { assets[id]?.snapshot }
@@ -139,6 +169,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         case .failure: throw PHPhotosError(.internalError)
         case .success:
             for id in ids { assets[id] = nil }
+            recordChange(deleted: Set(ids))
             if let after = authorizationAfterDelete { authorization = after }
         }
     }

@@ -196,6 +196,22 @@ actor LibraryStore {
         try transaction { for id in ids { try run("UPDATE assets SET deleted=1 WHERE id=?") { text($0, 1, id) } } }
     }
 
+    /// After a full inventory: anything not seen since the run started is gone from the library.
+    @discardableResult
+    func markUnseen(before startedAt: Double) throws -> Int {
+        let before = assetCount()
+        try run("UPDATE assets SET deleted=1 WHERE deleted=0 AND inventoried_at < ?") { sqlite3_bind_double($0, 1, startedAt) }
+        return before - assetCount()
+    }
+
+    /// Screenshots and videos without any protection flag (candidates for the keeper-less lists).
+    func standaloneCandidates(limit: Int) -> [PhotoSnapshot] {
+        (try? rows("""
+            SELECT \(Self.assetColumns) FROM assets WHERE deleted=0 AND flags='' AND (media_type=2 OR (subtypes & 4)<>0)
+            ORDER BY created_s DESC LIMIT ?
+            """, bind: { sqlite3_bind_int($0, 1, Int32(limit)) }, map: { snapshot(from: $0) })) ?? []
+    }
+
     func assetCount() -> Int {
         (try? rows("SELECT COUNT(*) FROM assets WHERE deleted=0", map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
     }
@@ -247,7 +263,8 @@ actor LibraryStore {
     func imageAssetsNeedingFeatures(limit: Int, version: Int) -> [PhotoSnapshot] {
         (try? rows("""
             SELECT \(Self.assetColumns) FROM assets a WHERE a.deleted=0 AND a.media_type=1
-              AND NOT EXISTS (SELECT 1 FROM features f WHERE f.asset_id=a.id AND f.revision=a.revision AND f.feature_version=?)
+              AND NOT EXISTS (SELECT 1 FROM features f WHERE f.asset_id=a.id AND f.revision=a.revision
+                              AND (f.feature_version=? OR f.feature_version=0))
             ORDER BY a.created_s DESC LIMIT ?
             """, bind: { sqlite3_bind_int($0, 1, Int32(version)); sqlite3_bind_int($0, 2, Int32(limit)) },
                    map: { snapshot(from: $0) })) ?? []
@@ -271,12 +288,49 @@ actor LibraryStore {
         }
     }
 
+    /// Marks "tried, no local thumbnail" (feature_version 0) so the same asset isn't retried in a loop.
+    /// Cleared at the start of each scan so iCloud photos that became local get another chance.
+    func markFeaturesUnavailable(_ items: [(id: String, revision: String)]) throws {
+        try transaction {
+            for item in items {
+                try run("""
+                    INSERT INTO features(asset_id,revision,dhash,band0,band1,band2,band3,feature_version) VALUES(?,?,0,0,0,0,0,0)
+                    ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision, feature_version=0
+                    """) { s in text(s, 1, item.id); text(s, 2, item.revision) }
+            }
+        }
+    }
+
+    func pendingFeatureCount(version: Int) -> Int {
+        (try? rows("""
+            SELECT COUNT(*) FROM assets a WHERE a.deleted=0 AND a.media_type=1
+              AND NOT EXISTS (SELECT 1 FROM features f WHERE f.asset_id=a.id AND f.revision=a.revision AND (f.feature_version=? OR f.feature_version=0))
+            """, bind: { sqlite3_bind_int($0, 1, Int32(version)) }, map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
+    }
+
+    /// Current-revision hashes for these assets (assets without a usable hash are simply absent).
+    func dhashes(ids: [String]) -> [String: UInt64] {
+        var out: [String: UInt64] = [:]
+        for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
+            let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            let found = (try? rows("""
+                SELECT f.asset_id, f.dhash FROM features f JOIN assets a ON a.id=f.asset_id AND a.revision=f.revision
+                WHERE f.feature_version>0 AND f.asset_id IN (\(marks))
+                """, bind: { s in for (i, id) in chunk.enumerated() { text(s, Int32(i + 1), id) } },
+                                   map: { (String(cString: sqlite3_column_text($0, 0)), UInt64(bitPattern: sqlite3_column_int64($0, 1))) })) ?? []
+            for (id, hash) in found { out[id] = hash }
+        }
+        return out
+    }
+
+    func clearUnavailableFeatures() throws { try run("DELETE FROM features WHERE feature_version=0") }
+
     func dhash(id: String, revision: String) -> UInt64? {
         (try? rows("SELECT dhash FROM features WHERE asset_id=? AND revision=?", bind: { text($0, 1, id); text($0, 2, revision) },
                    map: { UInt64(bitPattern: sqlite3_column_int64($0, 0)) }).first) ?? nil
     }
 
-    func featureCount() -> Int { (try? rows("SELECT COUNT(*) FROM features", map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0 }
+    func featureCount() -> Int { (try? rows("SELECT COUNT(*) FROM features WHERE feature_version>0", map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0 }
 
     /// Candidate near pairs from the four 16-bit LSH bands. A candidate is only a proposal.
     /// Buckets bigger than `maximumBucketSize` are skipped and counted, never silently dropped.
@@ -287,7 +341,8 @@ actor LibraryStore {
             let column = "band\(band)"
             let sql = """
                 SELECT f.\(column), f.asset_id, f.dhash FROM features f JOIN assets a ON a.id=f.asset_id AND a.deleted=0
-                WHERE f.\(column) IN (SELECT \(column) FROM features GROUP BY \(column) HAVING COUNT(*) BETWEEN 2 AND ?)
+                WHERE f.feature_version>0
+                  AND f.\(column) IN (SELECT \(column) FROM features WHERE feature_version>0 GROUP BY \(column) HAVING COUNT(*) BETWEEN 2 AND ?)
                 ORDER BY f.\(column)
                 """
             let bucketed = (try? rows(sql, bind: { sqlite3_bind_int($0, 1, Int32(maximumBucketSize)) }, map: { s in
@@ -303,7 +358,7 @@ actor LibraryStore {
                 }}
                 start = end
             }
-            let oversized = (try? rows("SELECT COUNT(*) FROM (SELECT \(column) FROM features GROUP BY \(column) HAVING COUNT(*) > ?)",
+            let oversized = (try? rows("SELECT COUNT(*) FROM (SELECT \(column) FROM features WHERE feature_version>0 GROUP BY \(column) HAVING COUNT(*) > ?)",
                                        bind: { sqlite3_bind_int($0, 1, Int32(maximumBucketSize)) }, map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
             skipped += oversized
         }

@@ -74,7 +74,8 @@ enum AppEnvironment {
             let suite = UserDefaults(suiteName: "org.cleanslate.uitest") ?? .standard
             suite.removePersistentDomain(forName: "org.cleanslate.uitest")
             let policy = NetworkPolicy(defaults: suite, pathCheck: { true })
-            let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL), networkPolicy: policy)
+            let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL), networkPolicy: policy,
+                                          store: try? LibraryStore(path: nil))   // fake mode never touches the real index
             if auth == .authorized { model.seedGroupsForUITesting(scenario.groups, standalone: scenario.standalone) }
             return (model, scenario.library)
         }

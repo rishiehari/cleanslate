@@ -12,8 +12,13 @@ protocol PhotoLibraryClient: AnyObject {
     var authorization: PHAuthorizationStatus { get }
     func requestAccess() async -> PHAuthorizationStatus
 
-    /// Newest-first inventory of image assets, capped at `limit`.
-    func inventory(limit: Int) -> (photos: [PhotoSnapshot], totalVisible: Int)
+    /// One page of the library (images and videos), newest first. Callers walk pages instead of
+    /// holding the whole library in memory.
+    func inventoryPage(offset: Int, limit: Int) -> (photos: [PhotoSnapshot], total: Int)
+    /// Opaque archived token for "now" (used to catch up on changes later), or nil if unsupported.
+    func currentChangeToken() -> Data?
+    /// What changed since `token`. `.tokenExpired` means the history is gone: do a full inventory.
+    func changes(since token: Data) -> LibraryChangeResult
     /// Fresh snapshot of one asset, or nil if it no longer exists / is not accessible.
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot?
     /// Local-only thumbnail; nil when no local rendition exists.
@@ -48,6 +53,18 @@ final class ChangeSubscription {
 extension PhotoLibraryClient {
     /// Local-only convenience.
     func digests(id: String) async throws -> [ResourceDigest] { try await digests(id: id, allowNetwork: false) }
+}
+
+struct LibraryChangeSet: Sendable, Equatable {
+    var changedIDs: Set<String>        // inserted or updated assets
+    var deletedIDs: Set<String>
+    var newToken: Data?
+}
+
+enum LibraryChangeResult: Sendable, Equatable {
+    case changes(LibraryChangeSet)
+    case tokenExpired
+    case unavailable
 }
 
 enum LibraryResourceError: LocalizedError, Equatable {

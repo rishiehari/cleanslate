@@ -12,7 +12,8 @@ final class ExactMatchingTests: XCTestCase {
     private func makeModel(policy: NetworkPolicy? = nil) -> CleaningViewModel {
         let defaults = UserDefaults(suiteName: "test.\(UUID().uuidString)")!
         return CleaningViewModel(library: library, tray: DeletionTray(fileURL: nil),
-                                 networkPolicy: policy ?? NetworkPolicy(defaults: defaults, pathCheck: { true }))
+                                 networkPolicy: policy ?? NetworkPolicy(defaults: defaults, pathCheck: { true }),
+                                 store: try! LibraryStore(path: nil))
     }
 
     private func photoResource(_ seed: String) -> ResourceDigest { FakePhotoLibrary.digest(seed, type: "1:public.heic") }
@@ -147,7 +148,7 @@ final class ExactMatchingTests: XCTestCase {
         let first = makeModel(); await first.runScan()
         let second = makeModel(); await second.runScan()
         XCTAssertEqual(first.groups.map(\.id), second.groups.map(\.id))
-        XCTAssertEqual(CleaningViewModel.stableToken("x"), CleaningViewModel.stableToken("x"))
+        XCTAssertEqual(ScanEngine.stableToken("x"), ScanEngine.stableToken("x"))
     }
 
     // MARK: Review-driven hardening
@@ -210,7 +211,7 @@ final class ExactMatchingTests: XCTestCase {
         let model = makeModel()
         await model.runScan()
         XCTAssertEqual(model.statistics.exactSkippedByLimit, 0, "small libraries are never capped")
-        XCTAssertEqual(CleaningViewModel.maximumFullHashesPerScan, 4_000)
+        XCTAssertEqual(ScanEngine.maximumFullHashesPerScan, 4_000)
     }
 
     func testScanCanBeStoppedWhenStartedWithScan() async {

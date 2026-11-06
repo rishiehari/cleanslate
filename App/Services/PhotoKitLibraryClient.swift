@@ -102,22 +102,52 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         }
     }
 
-    func inventory(limit: Int) -> (photos: [PhotoSnapshot], totalVisible: Int) {
-        let opts = PHFetchOptions()
-        opts.includeAllBurstAssets = true
-        opts.includeHiddenAssets = false
-        opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d",
-                                     PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
-        let result = PHAsset.fetchAssets(with: opts)
-        let count = min(result.count, limit)
+    private var inventoryFetch: PHFetchResult<PHAsset>?
+
+    func inventoryPage(offset: Int, limit: Int) -> (photos: [PhotoSnapshot], total: Int) {
+        if offset == 0 || inventoryFetch == nil {
+            let opts = PHFetchOptions()
+            opts.includeAllBurstAssets = true
+            opts.includeHiddenAssets = false
+            opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d",
+                                         PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+            inventoryFetch = PHAsset.fetchAssets(with: opts)
+        }
+        guard let result = inventoryFetch else { return ([], 0) }
         var photos: [PhotoSnapshot] = []
-        photos.reserveCapacity(count)
-        for index in 0..<count {
-            let asset = result.object(at: index)
-            photos.append(snapshot(asset))
+        let upper = min(result.count, offset + limit)
+        if offset < upper {
+            photos.reserveCapacity(upper - offset)
+            for index in offset..<upper { photos.append(snapshot(result.object(at: index))) }
         }
         return (photos, result.count)
+    }
+
+    func currentChangeToken() -> Data? {
+        try? NSKeyedArchiver.archivedData(withRootObject: PHPhotoLibrary.shared().currentChangeToken, requiringSecureCoding: true)
+    }
+
+    func changes(since tokenData: Data) -> LibraryChangeResult {
+        guard let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: PHPersistentChangeToken.self, from: tokenData) else { return .unavailable }
+        do {
+            let fetch = try PHPhotoLibrary.shared().fetchPersistentChanges(since: token)
+            var changed: Set<String> = [], deleted: Set<String> = []
+            var latest = token
+            for change in fetch {
+                latest = change.changeToken
+                guard let details = try? change.changeDetails(for: .asset) else { continue }
+                changed.formUnion(details.insertedLocalIdentifiers); changed.formUnion(details.updatedLocalIdentifiers)
+                deleted.formUnion(details.deletedLocalIdentifiers)
+            }
+            changed.subtract(deleted)
+            let newToken = try? NSKeyedArchiver.archivedData(withRootObject: latest, requiringSecureCoding: true)
+            return .changes(LibraryChangeSet(changedIDs: changed, deletedIDs: deleted, newToken: newToken))
+        } catch let error as PHPhotosError where error.code == .persistentChangeTokenExpired {
+            return .tokenExpired
+        } catch {
+            return .unavailable
+        }
     }
 
     private func fetchAsset(_ id: String) -> PHAsset? {
