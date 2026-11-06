@@ -1,12 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-try:
-    from generate_synthetic_photos import generate
-except ImportError:
-    generate = None
+from generate_synthetic_photos import generate
 
-@unittest.skipUnless(generate is not None, 'Pillow required')
 class FixtureGeneratorTests(unittest.TestCase):
     def test_count_and_semantic_cases(self):
         with tempfile.TemporaryDirectory() as tmp:
