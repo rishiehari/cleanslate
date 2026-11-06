@@ -5,12 +5,17 @@ import CleanSlateCore
 /// Approve moves the Delete-marked photos into the tray. It never deletes (U1).
 struct ReviewGroupView: View {
     @StateObject private var review: GroupReviewModel
-    @Environment(\.dismiss) private var dismiss
     @State private var explaining: Evidence?
     @State private var comparing: PhotoSnapshot?
 
-    init(group: PhotoReviewGroup, tray: DeletionTray) {
+    /// Called after Approve or Skip so the next group can open (or the session can end).
+    private let onFinished: () -> Void
+    private let position: String?
+
+    init(group: PhotoReviewGroup, tray: DeletionTray, position: String? = nil, onFinished: @escaping () -> Void) {
         _review = StateObject(wrappedValue: GroupReviewModel(group: group, tray: tray))
+        self.position = position
+        self.onFinished = onFinished
     }
 
     private var others: [PhotoSnapshot] { review.group.candidates }
@@ -47,7 +52,7 @@ struct ReviewGroupView: View {
         }
         .scrollEdgeEffectStyle(.soft, for: .bottom)   // separates the floating bar from scrolling photos
         .background(Color.surfaceBackground)
-        .navigationTitle("\(review.group.all.count) photos")
+        .navigationTitle(position ?? "\(review.group.all.count) photos")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -57,8 +62,8 @@ struct ReviewGroupView: View {
         }
         .safeAreaInset(edge: .bottom) {
             ApprovalBar(approveTitle: approveTitle, subtitle: subtitle, canApprove: review.canApprove,
-                        onSkip: { review.skip(); dismiss() },
-                        onApprove: { if review.approve() { dismiss() } })
+                        onSkip: { review.skip(); onFinished() },
+                        onApprove: { if review.approve() { onFinished() } })
         }
         .sheet(item: $explaining) { evidence in
             EvidenceExplanation(evidence: evidence)

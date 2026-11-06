@@ -24,6 +24,12 @@ final class ScreenshotTests: XCTestCase {
         if button.waitForExistence(timeout: 3) { button.tap() }
     }
 
+    private func backToHome(_ app: XCUIApplication) {
+        while !app.buttons["tray.button"].exists, app.navigationBars.buttons.firstMatch.exists {
+            app.navigationBars.buttons.firstMatch.tap()
+        }
+    }
+
     private func run(appearance: XCUIDevice.Appearance, suffix: String, size: String? = nil) throws {
         let dir = try captureDir()
         XCUIDevice.shared.appearance = appearance
@@ -50,11 +56,11 @@ final class ScreenshotTests: XCTestCase {
         shot("05-compare-\(suffix)", in: dir)
         app.buttons["compare.done"].tap()
         app.buttons["approval.approve"].tap()
-        back(app)
+        backToHome(app)
         app.buttons["category.exact"].tap()
         app.buttons["group.test-ex1-keep"].tap()
         app.buttons["approval.approve"].tap()
-        back(app)
+        backToHome(app)
         app.buttons["tray.button"].tap()
         _ = app.buttons["tray.delete"].waitForExistence(timeout: 5)
         shot("06-tray-\(suffix)", in: dir)

@@ -14,6 +14,28 @@ struct CleanSlateApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if let variant = Self.prototypeVariant {
+                PrototypeHost(variant: variant)
+            } else {
+                root
+            }
+            #else
+            root
+            #endif
+        }
+    }
+
+    #if DEBUG
+    /// `-prototype 1...5` shows a review-screen prototype instead of the app.
+    private static var prototypeVariant: ReviewVariant? {
+        let value = UserDefaults.standard.integer(forKey: "prototype")
+        return ReviewVariant(rawValue: value)
+    }
+    #endif
+
+    private var root: some View {
+        Group {
             DashboardView()
                 .environmentObject(model)
                 .environmentObject(model.tray)

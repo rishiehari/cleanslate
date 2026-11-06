@@ -24,9 +24,9 @@ struct CategoryGroupsView: View {
             LazyVStack(spacing: Spacing.s + Spacing.xs) {
                 if !approvable.isEmpty { approveAllButton }
                 if visible.isEmpty { emptyState }
-                ForEach(visible) { group in
+                ForEach(Array(visible.enumerated()), id: \.element.id) { position, group in
                     NavigationLink {
-                        ReviewGroupView(group: group, tray: tray)
+                        ReviewSessionView(groups: Array(visible[position...]), tray: tray)
                     } label: {
                         GroupRowView(group: group, status: status(group))
                     }

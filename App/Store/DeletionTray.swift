@@ -72,7 +72,7 @@ final class DeletionTray: ObservableObject {
         entries.append(entry)
         reviewedGroupIDs.insert(group.id)
         persist()
-        show("Approved \(selected.count) \(selected.count == 1 ? "photo" : "photos")") { [weak self] in
+        show("Added \(selected.count) \(selected.count == 1 ? "photo" : "photos") to your tray") { [weak self] in
             guard let self else { return }
             self.entries.removeAll { $0.id == group.id }
             if let previous { self.entries.append(previous) }
@@ -101,7 +101,7 @@ final class DeletionTray: ObservableObject {
         }
         persist()
         let n = items.reduce(0) { $0 + $1.selected.count }
-        show("Approved \(n) \(n == 1 ? "photo" : "photos")") { [weak self] in
+        show("Added \(n) \(n == 1 ? "photo" : "photos") to your tray") { [weak self] in
             self?.entries = before.0; self?.reviewedGroupIDs = before.1; self?.persist()
         }
     }
@@ -175,5 +175,8 @@ final class DeletionTray: ObservableObject {
         guard let fileURL else { return }
         let data = try? JSONEncoder().encode(Stored(entries: entries, reviewed: reviewedGroupIDs))
         if let data { try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
+        // Photo identifiers are private and the tray is rebuildable: keep it out of device backups.
+        var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true
+        var url = fileURL; try? url.setResourceValues(excluded)
     }
 }

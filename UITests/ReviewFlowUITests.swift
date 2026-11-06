@@ -42,6 +42,17 @@ final class ReviewFlowUITests: XCTestCase {
         XCTAssertTrue(state.contains("tray=1"), state)
     }
 
+    func testApproveOpensTheNextGroupInsteadOfGoingBack() {
+        let app = launch()
+        openGroup(app, category: "exact", id: "test-ex1-keep")
+        XCTAssertTrue(app.navigationBars["1 of 4"].exists)
+        app.buttons["approval.approve"].tap()
+        XCTAssertTrue(app.navigationBars["2 of 4"].waitForExistence(timeout: 3), "the next group should open")
+        app.buttons["approval.skip"].tap()
+        XCTAssertTrue(app.navigationBars["3 of 4"].waitForExistence(timeout: 3))
+        XCTAssertTrue(probe(app).contains("tray=1"), probe(app))
+    }
+
     func testSimilarGroupOpensWithNothingMarkedDeleteAndCannotApproveUntilUserPicks() {
         let app = launch()
         openGroup(app, category: "similar", id: "test-sim1-a")
