@@ -73,6 +73,7 @@ final class ScanEngine {
         if let early = await findStandaloneItems(albums: albums) { return early }
 
         reporter.scanDidEnter(.vision)
+        if let early = await buildReviewSets(albums: albums, claimed: &claimed) { return early }
         if let early = await compareSimilarPairs(pairs, albums: albums, claimed: &claimed) { return early }
         reporter.scanProgress(1)
         return .finished
@@ -294,7 +295,53 @@ final class ScanEngine {
         return nil
     }
 
-    // MARK: 6. Similar shots (Vision, manual review only)
+    // MARK: 6a. Bursts and quick runs (review sets: several shots, you choose what to keep)
+
+    private func buildReviewSets(albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
+        let items = await store.sequenceItems().filter { !claimed.contains($0.id) }
+        let sets = SequenceGrouping.groups(items)
+        reporter?.scanUpdate { $0.reviewSetsFound = sets.count }
+        var pending: [PhotoReviewGroup] = []
+        var visionUsable = true
+        for (n, ids) in sets.enumerated() {
+            if Task.isCancelled { return .cancelled }
+            if n % 10 == 0, case .stop(let reason) = await governor.checkpoint() { reporter?.scanFound(groups: pending); return .stopped(reason: reason) }
+            let found = await store.snapshots(ids: ids)
+            let photos = ids.compactMap { found[$0] }.map { Self.markAlbum($0, albums) }
+            guard photos.count >= 2 else { continue }
+            var quality: [QualitySignals] = []
+            for photo in photos {
+                guard let image = await library.thumbnail(photo.id, target: 512) else {
+                    quality.append(QualitySignals(id: photo.id, pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))); continue
+                }
+                let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
+                var face: Double?, aesthetics: Double?
+                if visionUsable {
+                    do { face = try await VisualFeatures.faceQuality(image); aesthetics = try await VisualFeatures.aesthetics(image) }
+                    catch { visionUsable = false; reporter?.scanUpdate { $0.visionFailures += 1; $0.visionUnavailable = true } }
+                }
+                quality.append(QualitySignals(id: photo.id, sharpness: sharpness, faceQuality: face, aesthetics: aesthetics, exposure: exposure,
+                                              pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite)))
+            }
+            let bestID = KeeperRanker.sorted(quality).first?.id ?? photos[0].id
+            guard let keeper = photos.first(where: { $0.id == bestID }) else { continue }
+            let rest = photos.filter { $0.id != keeper.id }
+            // Evidence between EVERY pair, so whichever photos the user chooses to keep are directly linked to each one removed.
+            var evidence: [PairEvidence] = []
+            for (i, a) in photos.enumerated() { for b in photos[(i + 1)...] {
+                evidence.append(PairEvidence(first: a.id, second: b.id, relation: .visuallySimilar))
+            }}
+            pending.append(PhotoReviewGroup(id: "seq-\(Self.stableToken(photos.map(\.id).sorted().joined(separator: "|")))", kind: .similar,
+                                            keeper: keeper, candidates: rest, evidence: evidence, verifiedCandidateBytes: [:]))
+            claimed.formUnion(photos.map(\.id))
+            if pending.count >= 5 { reporter?.scanFound(groups: pending); pending = [] }
+            if n % 10 == 0 { reporter?.scanProgress(0.90 + 0.05 * Double(n + 1) / Double(max(1, sets.count))); await Task.yield() }
+        }
+        reporter?.scanFound(groups: pending)
+        return nil
+    }
+
+    // MARK: 6b. Similar shots (Vision, manual review only)
 
     private func compareSimilarPairs(_ pairs: [CandidatePair], albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
         // Similarity is uncalibrated, so it is strictly manual-review only. Pairwise groups prevent the

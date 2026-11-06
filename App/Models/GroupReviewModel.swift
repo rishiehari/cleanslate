@@ -27,14 +27,25 @@ final class GroupReviewModel: ObservableObject {
     let group: PhotoReviewGroup
     @Published private(set) var draft: ReviewDraft
     @Published var notice: String?
+    /// Photos that differ from the suggested keeper in a way that matters (faces, text). Advisory (Step 7.3).
+    @Published private(set) var warnings: [String: Set<DifferenceWarning>] = [:]
+    /// Photos whose warnings the user has looked at and accepted.
+    @Published private(set) var acknowledged: Set<String> = []
+    /// The photo whose warning sheet is open (tapping it asked "are you sure?").
+    @Published var warningPromptFor: String?
+    /// Previous states, newest last (at most 20), for Undo.
+    private var history: [ReviewDraft] = []
     private let tray: DeletionTray
     private let haptics: HapticsService
+    private let analyzer: PhotoAnalyzer?
     private let protectedReasons: [String: String]
+    static let historyLimit = 20
 
-    init(group: PhotoReviewGroup, tray: DeletionTray, haptics: HapticsService = .shared) {
+    init(group: PhotoReviewGroup, tray: DeletionTray, haptics: HapticsService = .shared, analyzer: PhotoAnalyzer? = nil) {
         self.group = group
         self.tray = tray
         self.haptics = haptics
+        self.analyzer = analyzer
         let decision = SafetyPolicy.evaluate(group.coreCluster)
         var reasons: [String: String] = [:]
         for id in decision.blocked.keys {
@@ -61,7 +72,58 @@ final class GroupReviewModel: ObservableObject {
         }
     }
 
+    var canUndo: Bool { !history.isEmpty }
+
+    private func remember() {
+        history.append(draft)
+        if history.count > Self.historyLimit { history.removeFirst() }
+    }
+
+    func undo() {
+        guard let previous = history.popLast() else { return }
+        draft = previous; notice = nil
+        haptics.fire(.undo)
+    }
+
+    /// Looks for faces/text that differ from the suggested keeper. Runs once, in the background.
+    func loadWarnings() async {
+        guard let analyzer, warnings.isEmpty else { return }
+        let keeperDescription = await analyzer.describe(assetID: group.keeper.id)
+        for photo in group.candidates {
+            let found = DifferenceAnalysis.warnings(candidate: await analyzer.describe(assetID: photo.id), keeper: keeperDescription)
+            if !found.isEmpty { warnings[photo.id] = found }
+        }
+    }
+
+    func isAwaitingAcknowledgement(_ id: String) -> Bool {
+        !(warnings[id] ?? []).isEmpty && !acknowledged.contains(id)
+    }
+
+    /// The user looked at the warning and still wants this photo removed.
+    func acknowledgeAndDelete(_ id: String) {
+        acknowledged.insert(id)
+        warningPromptFor = nil
+        set(id, to: .delete)
+    }
+
+    /// "Keep the suggested photo, mark the rest": marks, it never approves. Photos with an unacknowledged
+    /// warning stay undecided so nothing important is marked for deletion without a look.
+    func markEverythingElseForDeletion() {
+        remember()
+        var changed = false
+        for photo in group.candidates where !isAwaitingAcknowledgement(photo.id) && draft.mark(for: photo.id) != .delete {
+            if case .changed = draft.set(photo.id, to: .delete) { changed = true }
+        }
+        if !changed { history.removeLast() } else { notice = nil; haptics.fire(.toggle) }
+    }
+
     func tap(_ id: String) {
+        if draft.mark(for: id) != .delete, isAwaitingAcknowledgement(id) {
+            warningPromptFor = id; haptics.fire(.blocked); return
+        }
+        remember()
+        let before = draft
+        defer { if draft == before, !history.isEmpty { history.removeLast() } }
         switch draft.toggle(id) {
         case .changed: notice = nil; haptics.fire(.toggle)
         case .blockedProtected: notice = protectedReasons[id] ?? "This photo is always kept."; haptics.fire(.blocked)
@@ -71,6 +133,9 @@ final class GroupReviewModel: ObservableObject {
     }
 
     func set(_ id: String, to mark: ReviewDraft.Mark) {
+        remember()
+        let before = draft
+        defer { if draft == before, !history.isEmpty { history.removeLast() } }
         switch draft.set(id, to: mark) {
         case .changed: notice = nil; haptics.fire(.toggle)
         case .blockedProtected: notice = protectedReasons[id] ?? "This photo is always kept."; haptics.fire(.blocked)
@@ -84,7 +149,7 @@ final class GroupReviewModel: ObservableObject {
     func approve() -> Bool {
         guard draft.canApprove else { haptics.fire(.blocked); return false }
         tray.approve(group: group, selected: draft.deleteIDs,
-                     manuallyReviewed: isExact ? [] : draft.userMarkedDelete)
+                     manuallyReviewed: isExact ? [] : draft.userMarkedDelete, keepers: draft.keepIDs)
         haptics.fire(.approve)
         return true
     }

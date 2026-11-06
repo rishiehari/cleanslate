@@ -370,6 +370,20 @@ actor LibraryStore {
         return (pairs.sorted(), skipped)
     }
 
+    /// Every live image with its time, burst and (if available) difference hash, for building review sets.
+    func sequenceItems() -> [SequenceItem] {
+        (try? rows("""
+            SELECT a.id, a.created_s, a.burst_id, f.dhash FROM assets a
+              LEFT JOIN features f ON f.asset_id=a.id AND f.revision=a.revision AND f.feature_version>0
+            WHERE a.deleted=0 AND a.media_type=1
+            """) { s in
+            SequenceItem(id: String(cString: sqlite3_column_text(s, 0)),
+                         timeSeconds: sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1),
+                         burstID: str(s, 2),
+                         hash: sqlite3_column_type(s, 3) == SQLITE_NULL ? nil : UInt64(bitPattern: sqlite3_column_int64(s, 3)))
+        }) ?? []
+    }
+
     /// Burst and time-window pairs for the same-moment candidates (images only).
     func momentPairs(maxSecondsApart: Int64, maximumBucketSize: Int, maximumPairs: Int) -> [CandidatePair] {
         var pairs: Set<CandidatePair> = []

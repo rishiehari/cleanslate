@@ -77,6 +77,10 @@ enum AppEnvironment {
             let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL), networkPolicy: policy,
                                           store: try? LibraryStore(path: nil))   // fake mode never touches the real index
             if auth == .authorized { model.seedGroupsForUITesting(scenario.groups, standalone: scenario.standalone) }
+            let analyzer = FakePhotoAnalyzer()
+            analyzer.descriptions = ["sim1-a": .init(faceCount: 2, text: ["market"]), "sim1-b": .init(faceCount: 3, text: ["market"]),
+                                     "sim1-c": .init(faceCount: 2, text: ["market"])]       // sim1-b shows an extra person
+            model.analyzer = analyzer
             return (model, scenario.library)
         }
         #endif

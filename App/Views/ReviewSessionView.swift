@@ -15,7 +15,7 @@ struct ReviewSessionView: View {
         let original = groups[index]
         let position = groups.count > 1 ? "\(index + 1) of \(groups.count)" : nil
         if let current = model.groups.first(where: { $0.id == original.id }) {
-            ReviewGroupView(group: current, tray: tray, position: position, onFinished: advance)
+            ReviewGroupView(group: current, tray: tray, analyzer: model.analyzer, position: position, onFinished: advance)
                 .id(Self.token(current))      // a changed group starts a fresh review
         } else {
             ContentStateView<Int, EmptyView>(state: .empty(

@@ -66,7 +66,7 @@ struct TrayChecker {
 
     /// nil = still fine. Otherwise the reason the user needs to take another look.
     func reasonNeedingAnotherLook(_ entry: TrayEntry) -> String? {
-        let involved = entry.group.all
+        let involved = entry.group.all.filter { entry.involvedIDs.contains($0.id) }
         var fresh: [String: AssetRecord] = [:]
         for member in involved {
             guard let current = library.snapshot(id: member.id, inspectAlbums: true) else { return "A photo was already deleted" }
@@ -77,7 +77,7 @@ struct TrayChecker {
             }
         }
         let plan = ApprovedDeletionPlan(
-            selectedIDs: entry.selectedIDs, keeperIDs: [entry.group.keeper.id],
+            selectedIDs: entry.selectedIDs, keeperIDs: entry.effectiveKeeperIDs,
             expectedRevisions: Dictionary(uniqueKeysWithValues: involved.map { ($0.id, $0.record.revision) }),
             wasExplicitlyConfirmedByUser: true, evidence: entry.group.evidence, manuallyReviewedIDs: entry.manuallyReviewedIDs)
         return SafetyPolicy.validateCommit(plan, currentByID: fresh).map(Self.words)

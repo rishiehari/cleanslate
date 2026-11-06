@@ -40,6 +40,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     }()
     private var scanTask: Task<Void, Never>?
     private var changeSubscription: ChangeSubscription?
+    /// Describes faces and text for the "different people / different text" warnings (replaced by a fake in UI tests).
+    lazy var analyzer: PhotoAnalyzer = VisionPhotoAnalyzer(library: library)
 
     init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared,
          tray: DeletionTray? = nil,
@@ -153,7 +155,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     func revalidateTray(touched: Set<String>?) {
         let checker = TrayChecker(library: library)
         var reasons = tray.needsAttention
-        for entry in tray.entries where touched.map({ !$0.isDisjoint(with: entry.group.all.map(\.id)) }) ?? true {
+        for entry in tray.entries where touched.map({ !$0.isDisjoint(with: entry.involvedIDs) }) ?? true {
             reasons[entry.id] = checker.reasonNeedingAnotherLook(entry)
         }
         for entry in tray.standaloneEntries where touched.map({ !$0.isDisjoint(with: entry.items.map(\.id)) }) ?? true {

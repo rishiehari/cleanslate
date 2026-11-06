@@ -14,8 +14,9 @@ struct ReviewGroupView: View {
     private let onFinished: () -> Void
     private let position: String?
 
-    init(group: PhotoReviewGroup, tray: DeletionTray, position: String? = nil, onFinished: @escaping () -> Void) {
-        _review = StateObject(wrappedValue: GroupReviewModel(group: group, tray: tray))
+    init(group: PhotoReviewGroup, tray: DeletionTray, analyzer: PhotoAnalyzer? = nil, position: String? = nil,
+         onFinished: @escaping () -> Void) {
+        _review = StateObject(wrappedValue: GroupReviewModel(group: group, tray: tray, analyzer: analyzer))
         self.position = position
         self.onFinished = onFinished
     }
@@ -37,8 +38,17 @@ struct ReviewGroupView: View {
                     .accessibilityLabel("Keep, suggested photo, photo 1 of \(review.group.all.count)")
                     .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("tile.\(review.group.keeper.id)")
-                Text(review.isExact ? "Copies" : "Other shots")
-                    .appText(.groupTitle).foregroundStyle(Color.textPrimary)
+                HStack {
+                    Text(review.isExact ? "Copies" : "Other shots")
+                        .appText(.groupTitle).foregroundStyle(Color.textPrimary)
+                    Spacer()
+                    if !review.isExact && others.count >= 2 {
+                        Button("Mark the rest") { review.markEverythingElseForDeletion() }
+                            .appText(.secondary).buttonStyle(.bordered)
+                            .accessibilityHint("Marks every other shot for deletion. Nothing is deleted until you approve.")
+                            .accessibilityIdentifier("review.markrest")
+                    }
+                }
                 LazyVGrid(columns: columns, spacing: Spacing.m) {
                     ForEach(Array(others.enumerated()), id: \.element.id) { index, photo in
                         tile(photo, index: index)
@@ -60,6 +70,12 @@ struct ReviewGroupView: View {
         .navigationTitle(position ?? "\(review.group.all.count) photos")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if review.canUndo {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Undo", systemImage: "arrow.uturn.backward") { review.undo() }
+                        .accessibilityIdentifier("review.undo")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Compare", systemImage: "square.split.2x1") { comparing = others.first }
                     .accessibilityIdentifier("review.compare")
@@ -74,6 +90,12 @@ struct ReviewGroupView: View {
         .sheet(item: $explaining) { evidence in
             EvidenceExplanation(evidence: evidence)
         }
+        .sheet(item: Binding(get: { review.warningPromptFor.map(WarningPrompt.init) }, set: { review.warningPromptFor = $0?.id })) { prompt in
+            WarningSheet(warnings: review.warnings[prompt.id] ?? [],
+                         onRemoveAnyway: { review.acknowledgeAndDelete(prompt.id) },
+                         onCancel: { review.warningPromptFor = nil })
+        }
+        .task { await review.loadWarnings() }
         .fullScreenCover(item: $comparing) { photo in
             CompareView(keeperID: review.group.keeper.id, otherID: photo.id,
                         otherChoices: others.map(\.id))
@@ -83,7 +105,8 @@ struct ReviewGroupView: View {
     }
 
     private var columns: [GridItem] {
-        others.count <= 2 ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())]
+        let count = others.count <= 2 ? 1 : (others.count <= 6 ? 2 : 3)        // photos stay big for small groups
+        return Array(repeating: GridItem(.flexible(), spacing: Spacing.s + Spacing.xs), count: count)
     }
 
     private var intro: some View {
@@ -110,9 +133,22 @@ struct ReviewGroupView: View {
 
     private func tile(_ photo: PhotoSnapshot, index: Int) -> some View {
         let decision = review.decision(for: photo.id)
-        return PhotoTile(assetID: photo.id, decision: decision, target: 700,
-                         caption: review.group.verifiedCandidateBytes[photo.id]?.friendlyBytes,
-                         traits: photo.record.flags)
+        return VStack(alignment: .leading, spacing: Spacing.xs) {
+            tileImage(photo, decision: decision, index: index)
+            if let found = review.warnings[photo.id], !found.isEmpty {
+                HStack(spacing: Spacing.xs) {
+                    ForEach(found.sorted { $0.rawValue < $1.rawValue }, id: \.self) { warning in
+                        EvidenceChip(evidence: warning == .differentPeople ? .differentPeople : .differentText) { review.warningPromptFor = photo.id }
+                    }
+                }
+            }
+        }
+    }
+
+    private func tileImage(_ photo: PhotoSnapshot, decision: Decision, index: Int) -> some View {
+        PhotoTile(assetID: photo.id, decision: decision, target: 700,
+                  caption: review.group.verifiedCandidateBytes[photo.id]?.friendlyBytes,
+                  traits: photo.record.flags)
             .onTapGesture { review.tap(photo.id) }
             .contextMenu {
                 Button("Compare with the Keep photo", systemImage: "square.split.2x1") { comparing = photo }
@@ -148,5 +184,33 @@ private struct EvidenceExplanation: View {
         }
         .padding(Spacing.l)
         .presentationDetents([.fraction(0.3)])
+    }
+}
+
+private struct WarningPrompt: Identifiable { let id: String }
+
+private struct WarningSheet: View {
+    let warnings: Set<DifferenceWarning>
+    let onRemoveAnyway: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            Label("Look closely before removing this", systemImage: "exclamationmark.triangle").appText(.title)
+            ForEach(warnings.sorted { $0.rawValue < $1.rawValue }, id: \.self) { warning in
+                Text(warning == .differentPeople ? Evidence.differentPeople.explanation : Evidence.differentText.explanation).appText(.body)
+            }
+            Spacer()
+            Button(action: onRemoveAnyway) { Text("I've looked, mark it for deletion").frame(maxWidth: .infinity, minHeight: 44) }
+                .buttonStyle(.glassProminent).tint(Color.deleteAccent)
+                .accessibilityIdentifier("warning.confirm")
+            Button("Keep it", role: .cancel, action: onCancel).frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("warning.cancel")
+        }
+        .padding(Spacing.l)
+        .presentationDetents([.medium])
+        .presentationBackground(Color.surfaceBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("warning.sheet")
     }
 }

@@ -153,4 +153,33 @@ final class ReviewFlowUITests: XCTestCase {
             issue.auditType == .contrast && glassControls.contains(issue.element?.identifier ?? "")
         }
     }
+
+    // MARK: Step 7 — similar shots
+
+    func testWarnedPhotoAsksBeforeItCanBeMarkedAndCanBeAcknowledged() {
+        let app = launch()
+        openGroup(app, category: "similar", id: "test-sim1-a")
+        XCTAssertTrue(app.buttons["chip.differentPeople"].waitForExistence(timeout: 5), "the extra person is flagged")
+        app.buttons["tile.sim1-b"].tap()
+        XCTAssertTrue(app.buttons["warning.confirm"].waitForExistence(timeout: 3), "tapping a warned photo asks first")
+        XCTAssertTrue(app.buttons["tile.sim1-b"].label.hasPrefix("Not decided"))
+        app.buttons["warning.cancel"].tap()
+        XCTAssertFalse(app.buttons["approval.approve"].isEnabled, "nothing is marked yet")
+        app.buttons["tile.sim1-b"].tap()
+        app.buttons["warning.confirm"].tap()
+        XCTAssertTrue(app.buttons["tile.sim1-b"].label.hasPrefix("Delete"))
+        XCTAssertTrue(app.buttons["approval.approve"].isEnabled)
+    }
+
+    func testMarkTheRestLeavesWarnedPhotosAloneAndUndoRestores() {
+        let app = launch()
+        openGroup(app, category: "similar", id: "test-sim1-a")
+        XCTAssertTrue(app.buttons["chip.differentPeople"].waitForExistence(timeout: 5))
+        app.buttons["review.markrest"].tap()
+        XCTAssertTrue(app.buttons["tile.sim1-c"].label.hasPrefix("Delete"))
+        XCTAssertTrue(app.buttons["tile.sim1-b"].label.hasPrefix("Not decided"), "the photo with an extra person still needs a look")
+        XCTAssertTrue(probe(app).contains("deleteCalls=0"))
+        app.buttons["review.undo"].tap()
+        XCTAssertTrue(app.buttons["tile.sim1-c"].label.hasPrefix("Not decided"))
+    }
 }

@@ -43,21 +43,23 @@ final class PhotoDeletionCoordinator {
     /// Only invoked after the user reviews the image pair(s) and confirms an additional
     /// SwiftUI alert. PhotoKit presents its OWN OS confirmation as the final authority.
     /// Photos deletion is not transactional with iCloud synchronization: reconcile afterward.
-    func commit(group: PhotoReviewGroup, selected: Set<String>, manuallyReviewed: Set<String>) async throws -> DeletionResult {
+    func commit(group: PhotoReviewGroup, selected: Set<String>, manuallyReviewed: Set<String>,
+                keeperIDs: Set<String>? = nil) async throws -> DeletionResult {
         guard !activeCommit else { throw DeletionError.busy }
         guard !selected.isEmpty else { throw DeletionError.noSelection }
         guard hasAccess else { throw DeletionError.revoked }
         activeCommit = true
         defer { activeCommit = false }
 
-        let involved = selected.union([group.keeper.id])
+        let keepers = keeperIDs ?? [group.keeper.id]            // the user may keep several photos
+        let involved = selected.union(keepers)
         var fresh: [String: AssetRecord] = [:]
         for id in involved {
             guard let snapshot = library.snapshot(id: id, inspectAlbums: true) else { throw DeletionError.vanished }
             fresh[id] = snapshot.record
         }
         let expected = Dictionary(uniqueKeysWithValues: group.all.map { ($0.id, $0.record.revision) })
-        let plan = ApprovedDeletionPlan(selectedIDs: selected, keeperIDs: [group.keeper.id],
+        let plan = ApprovedDeletionPlan(selectedIDs: selected, keeperIDs: keepers,
                                         expectedRevisions: expected,
                                         wasExplicitlyConfirmedByUser: true,
                                         evidence: group.evidence,
@@ -69,9 +71,11 @@ final class PhotoDeletionCoordinator {
         // For exact duplicates, rehash all ORIGINAL resources immediately before mutation,
         // not merely their cached fingerprints or metadata revisions.
         if group.kind == .exact {
-            let keeperSignature = ResourceSignatures.canonical(try await verifiedDigests(group.keeper.id))
+            // Every kept photo AND every photo to delete must still be byte-identical to each other.
+            let firstKeeper = keepers.sorted()[0]
+            let keeperSignature = ResourceSignatures.canonical(try await verifiedDigests(firstKeeper))
             guard let keeperSignature else { throw DeletionError.changedResource }
-            for id in selected.sorted() {
+            for id in selected.union(keepers.subtracting([firstKeeper])).sorted() {
                 guard let signature = ResourceSignatures.canonical(try await verifiedDigests(id)),
                       signature == keeperSignature else { throw DeletionError.changedResource }
             }

@@ -52,12 +52,12 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     /// same `at`; by default every asset gets its own timestamp so nothing is bucketed by accident.
     func add(_ id: String, revision: String = "v1", flags: Set<PreservationFlag> = [],
              content: String? = nil, bytes: Int64 = 1_000, at: Int64? = nil, resources: [ResourceDigest]? = nil,
-             subtypes: UInt = 0, isVideo: Bool = false, duration: Double = 0, size: Int64? = nil) {
+             subtypes: UInt = 0, isVideo: Bool = false, duration: Double = 0, size: Int64? = nil, burst: String? = nil) {
         let record = AssetRecord(id: id, revision: revision, flags: flags)
         nextTimestamp += 1_000
         let time = at ?? nextTimestamp
         let snapshot = PhotoSnapshot(id: id, record: record, capturedAt: Date(timeIntervalSince1970: TimeInterval(time)),
-                                     burstID: nil, width: 4032, height: 3024, originalFilename: "IMG_\(id).HEIC",
+                                     burstID: burst, width: 4032, height: 3024, originalFilename: "IMG_\(id).HEIC",
                                      isVideo: isVideo, durationSeconds: duration, subtypes: subtypes)
         if let size { sizes[id] = size }
         assets[id] = Asset(snapshot: snapshot, digests: resources ?? [Self.digest(content ?? id, bytes: bytes)], look: content ?? id)
@@ -269,6 +269,15 @@ extension FakePhotoLibrary {
         group(kind: .exact, keeper: keeper, copies: copies, relation: .exactResources, equal: true, bytes: bytes)
     }
 
+    /// A review set: every pair is linked by "looks similar" evidence, so any photo may be the one kept.
+    func reviewSet(_ ids: [String]) -> PhotoReviewGroup {
+        let photos = ids.map { assets[$0]!.snapshot }
+        var evidence: [PairEvidence] = []
+        for (i, a) in photos.enumerated() { for b in photos[(i + 1)...] { evidence.append(PairEvidence(first: a.id, second: b.id, relation: .visuallySimilar)) } }
+        return PhotoReviewGroup(id: "set-\(ids.joined(separator: "-"))", kind: .similar, keeper: photos[0],
+                                candidates: Array(photos.dropFirst()), evidence: evidence, verifiedCandidateBytes: [:])
+    }
+
     func similarGroup(keeper: String, copies: [String]) -> PhotoReviewGroup {
         group(kind: .similar, keeper: keeper, copies: copies, relation: .visuallySimilar, equal: false, bytes: 0)
     }
@@ -281,6 +290,15 @@ extension FakePhotoLibrary {
             candidates: copies.map { assets[$0]!.snapshot },
             evidence: copies.map { PairEvidence(first: keeper, second: $0, relation: relation, completeResourceEquality: equal) },
             verifiedCandidateBytes: kind == .exact ? Dictionary(uniqueKeysWithValues: copies.map { ($0, bytes) }) : [:])
+    }
+}
+
+/// Deterministic faces/text for UI tests (the real analyzer needs a device).
+@MainActor
+final class FakePhotoAnalyzer: PhotoAnalyzer {
+    var descriptions: [String: PhotoDescription] = [:]
+    func describe(assetID: String) async -> PhotoDescription {
+        descriptions[assetID] ?? PhotoDescription(faceCount: nil, text: nil)
     }
 }
 #endif

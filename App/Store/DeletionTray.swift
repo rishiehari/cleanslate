@@ -9,6 +9,12 @@ struct TrayEntry: Codable, Identifiable, Equatable {
     let selectedIDs: Set<String>
     let manuallyReviewedIDs: Set<String>
     let approvedAt: Date
+    /// The photos the user chose to KEEP (several are allowed). nil = just the group's suggested keeper.
+    var keeperIDs: Set<String>? = nil
+
+    var effectiveKeeperIDs: Set<String> { keeperIDs ?? [group.keeper.id] }
+    /// The photos this approval actually depends on (not the undecided bystanders in a big group).
+    var involvedIDs: Set<String> { selectedIDs.union(effectiveKeeperIDs) }
 
     var verifiedBytes: Int64 { selectedIDs.reduce(Int64(0)) { $0 + (group.verifiedCandidateBytes[$1] ?? 0) } }
     static func == (a: TrayEntry, b: TrayEntry) -> Bool {
@@ -94,9 +100,10 @@ final class DeletionTray: ObservableObject {
 
     // MARK: Approve / skip / undo
 
-    func approve(group: PhotoReviewGroup, selected: Set<String>, manuallyReviewed: Set<String>) {
+    func approve(group: PhotoReviewGroup, selected: Set<String>, manuallyReviewed: Set<String>, keepers: Set<String>? = nil) {
         guard !selected.isEmpty else { return }
-        let entry = TrayEntry(group: group, selectedIDs: selected, manuallyReviewedIDs: manuallyReviewed, approvedAt: Date())
+        let entry = TrayEntry(group: group, selectedIDs: selected, manuallyReviewedIDs: manuallyReviewed, approvedAt: Date(),
+                              keeperIDs: keepers)
         let previous = entries.first { $0.id == group.id }
         let wasReviewed = reviewedGroupIDs.contains(group.id)
         entries.removeAll { $0.id == group.id }
@@ -191,7 +198,7 @@ final class DeletionTray: ObservableObject {
             result.requested += entry.selectedIDs.count
             do {
                 let r = try await coordinator.commit(group: entry.group, selected: entry.selectedIDs,
-                                                     manuallyReviewed: entry.manuallyReviewedIDs)
+                                                     manuallyReviewed: entry.manuallyReviewedIDs, keeperIDs: entry.effectiveKeeperIDs)
                 result.verifiedRemoved += r.verifiedRemoved
                 result.uncertain += r.uncertain
                 result.logicalBytesRemoved += r.logicalBytesRemoved
