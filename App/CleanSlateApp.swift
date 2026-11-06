@@ -18,7 +18,7 @@ struct CleanSlateApp: App {
                 .environmentObject(model)
                 .environmentObject(model.tray)
                 .environment(\.photoLibrary, library)
-                .tint(Color(red: 0.12, green: 0.55, blue: 0.42))
+                .tint(Color.actionPrimary)
         }
     }
 }

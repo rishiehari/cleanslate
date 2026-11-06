@@ -1,0 +1,32 @@
+# Design-system rules from apple-skills:design (keep styling in tokens).
+only_rules:
+  - custom_rules
+included:
+  - App
+excluded:
+  - App/Debug
+custom_rules:
+  ds_raw_font_size:
+    name: "Raw font size"
+    message: "Use a text style (.appText(.body)) — raw sizes make every restyle a call-site hunt."
+    regex: '\.font\(\s*\.system\(\s*size:(?!\s*IconSize)'
+    severity: error
+    excluded: ".*(DesignSystem|Tokens|Theme|Styles)/.*"
+  ds_raw_color:
+    name: "Raw colour"
+    message: "Use a role-named colour token (Color.textPrimary) instead of RGB/white values."
+    regex: '\b(Color|UIColor|NSColor)\(\s*(red|white|hue|hex):'
+    severity: error
+    excluded: ".*(DesignSystem|Tokens|Theme|Styles)/.*"
+  ds_raw_spacing:
+    name: "Raw spacing / radius"
+    message: "Use the spacing/radius scale (Spacing.m, Radius.s); only 0 is allowed inline."
+    regex: '(\.padding\(\s*(\.\w+\s*,\s*)?|\.cornerRadius\(\s*|cornerRadius:\s*)[1-9][0-9]*(\.[0-9]+)?\s*[,)]'
+    severity: error
+    excluded: ".*(DesignSystem|Tokens|Theme|Styles)/.*"
+  ds_call_site_case:
+    name: "Case or tracking at call site"
+    message: "Case and tracking belong in the text style (.appText(.label))."
+    regex: '\.(textCase|tracking|kerning)\(|Text\([^)]*\.uppercased\(\)'
+    severity: error
+    excluded: ".*(DesignSystem|Tokens|Theme|Styles)/.*"

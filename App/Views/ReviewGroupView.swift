@@ -43,7 +43,7 @@ struct ReviewGroupView: View {
                 }
             }
             .padding(Spacing.m)
-            .padding(.bottom, 96)
+            .padding(.bottom, Spacing.barClearance)
         }
         .scrollEdgeEffectStyle(.soft, for: .bottom)   // separates the floating bar from scrolling photos
         .background(Color.surfaceBackground)

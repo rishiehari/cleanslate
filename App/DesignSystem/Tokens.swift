@@ -8,6 +8,8 @@ enum Spacing {
     static let m: CGFloat = 16
     static let l: CGFloat = 24
     static let xl: CGFloat = 32
+    /// Room at the bottom of scrolling content so the floating approval bar never hides the last photo.
+    static let barClearance: CGFloat = 96
 }
 
 enum Radius {

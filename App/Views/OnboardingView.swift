@@ -22,19 +22,19 @@ struct OnboardingView: View {
                     VStack(spacing: 20) {
                         Spacer()
                         Image(systemName: pages[index].symbol)
-                            .font(.system(size: 64))
+                            .font(.system(size: IconSize.hero))
                             .foregroundStyle(.tint)
                             .accessibilityHidden(true)
                         Text(pages[index].title)
-                            .font(.title.bold())
+                            .appText(.title)
                             .multilineTextAlignment(.center)
                         Text(pages[index].body)
-                            .font(.body)
-                            .foregroundStyle(.secondary)
+                            .appText(.body)
+                            .foregroundStyle(Color.textSecondary)
                             .multilineTextAlignment(.center)
                         Spacer()
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, Spacing.l)
                     .tag(index)
                 }
             }
@@ -48,8 +48,8 @@ struct OnboardingView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+            .padding(.horizontal, Spacing.l)
+            .padding(.bottom, Spacing.l)
             .accessibilityIdentifier(page < pages.count - 1 ? "onboarding.next" : "onboarding.done")
         }
     }

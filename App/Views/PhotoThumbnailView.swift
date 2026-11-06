@@ -9,7 +9,7 @@ struct PhotoThumbnailView: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10).fill(Color(uiColor: .secondarySystemBackground))
+            RoundedRectangle(cornerRadius: Radius.s).fill(Color.surfaceCard)
             if let image {
                 Image(uiImage: image).resizable().scaledToFit()
             } else {

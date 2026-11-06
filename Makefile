@@ -3,7 +3,7 @@ PY := $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 DD := build/DerivedData
 XCB := xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -derivedDataPath $(DD) CODE_SIGNING_ALLOWED=NO
 
-.PHONY: core-test gen build ios-test seed fixtures-test ci verify screens
+.PHONY: core-test gen build ios-test seed fixtures-test ci verify screens lint
 core-test:
 	swift test --package-path Core
 gen:
@@ -17,7 +17,9 @@ fixtures-test:
 	$(PY) -I -m unittest discover -s fixtures -p 'test_*.py'
 seed:
 	./scripts/seed_simulator.sh
-ci: core-test fixtures-test build ios-test
+lint:
+	@if command -v swiftlint >/dev/null; then swiftlint lint --strict --quiet; else echo "warning: swiftlint not installed (brew install swiftlint); skipping design-system lint"; fi
+ci: core-test fixtures-test lint build ios-test
 verify:
 	./scripts/verify_linux.sh
 
