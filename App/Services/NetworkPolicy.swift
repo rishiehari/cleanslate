@@ -26,11 +26,11 @@ final class NetworkPolicy: ObservableObject {
         self.isEnabled = defaults.bool(forKey: Self.enabledKey)
         let stored = defaults.integer(forKey: Self.budgetKey)
         self.budgetGB = Self.budgetChoicesGB.contains(stored) ? stored : 2
-        self.pathCheck = pathCheck ?? { true }
+        // Production: unknown connection == not allowed, until the monitor reports a real path.
+        self.pathCheck = pathCheck ?? { false }
         if pathCheck == nil {
             monitor.pathUpdateHandler = { [weak self] path in Task { @MainActor in self?.latestPath = path } }
             monitor.start(queue: DispatchQueue(label: "org.cleanslate.networkpolicy"))
-            latestPath = monitor.currentPath
         }
     }
 
@@ -53,6 +53,7 @@ final class NetworkPolicy: ObservableObject {
 }
 
 /// Reads originals locally first; downloads only when `NetworkPolicy` allows it.
+/// Used by the SCAN only. The commit-time recheck is always local-only (no surprise downloads mid-deletion).
 @MainActor
 struct DigestFetcher {
     let library: PhotoLibraryClient
@@ -60,14 +61,21 @@ struct DigestFetcher {
 
     struct Result { let digests: [ResourceDigest]; let downloaded: Bool }
 
-    func fetch(id: String) async throws -> Result {
+    /// `estimatedBytes` lets the budget refuse an asset that clearly won't fit, and charges the
+    /// estimate when a download fails part-way (so repeated failures can't use unlimited data).
+    func fetch(id: String, estimatedBytes: Int64 = 0) async throws -> Result {
         do {
             return Result(digests: try await library.digests(id: id, allowNetwork: false), downloaded: false)
         } catch let error as LibraryResourceError where error == .notAccessible || error == .empty {
-            guard policy.allowsOriginalDownload() else { throw error }
-            let digests = try await library.digests(id: id, allowNetwork: true)
-            policy.record(downloadedBytes: digests.reduce(Int64(0)) { $0 + $1.byteCount })
-            return Result(digests: digests, downloaded: true)
+            guard policy.allowsOriginalDownload(), estimatedBytes <= policy.remainingBytes else { throw error }
+            do {
+                let digests = try await library.digests(id: id, allowNetwork: true)
+                policy.record(downloadedBytes: digests.reduce(Int64(0)) { $0 + $1.byteCount })
+                return Result(digests: digests, downloaded: true)
+            } catch {
+                policy.record(downloadedBytes: estimatedBytes)
+                throw error
+            }
         }
     }
 }

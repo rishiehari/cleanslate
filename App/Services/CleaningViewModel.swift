@@ -29,7 +29,7 @@ final class CleaningViewModel: ObservableObject {
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
-        self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: networkPolicy ?? NetworkPolicy.shared)
+        self.coordinator = PhotoDeletionCoordinator(library: library)
         self.authorization = library.authorization
         changeSubscription = library.observeChanges { [weak self] in
             self?.invalidateAfterLibraryChange()
@@ -82,6 +82,16 @@ final class CleaningViewModel: ObservableObject {
         Task { authorization = await library.requestAccess() }
     }
 
+    /// Upper bound of assets fully hashed in one scan (the rest are reported as skipped).
+    static let maximumFullHashesPerScan = 4_000
+
+    /// Rough size guess used only to budget iCloud downloads.
+    static func estimatedOriginalBytes(_ photo: PhotoSnapshot?) -> Int64 {
+        guard let photo else { return 0 }
+        if photo.isVideo { return Int64(photo.durationSeconds * 2_000_000) }
+        return max(2_000_000, photo.pixelCount / 4)
+    }
+
     /// Stable across launches (unlike `hashValue`), so reviewed groups and the tray survive relaunch.
     static func stableToken(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -92,18 +102,16 @@ final class CleaningViewModel: ObservableObject {
         guard !isScanning, authorization == .authorized || authorization == .limited else { return }
         isScanning = true
         statistics = ScanStatistics(); statusMessage = nil; groups = []; progress = 0
+        networkPolicy.resetSessionBudget()          // the iCloud download limit is per scan
         await performScan()
         isScanning = false
     }
 
     func scan() {
-        guard !isScanning, authorization == .authorized || authorization == .limited else { return }
-        isScanning = true
-        statistics = ScanStatistics(); statusMessage = nil; groups = []; progress = 0
+        guard !isScanning else { return }
         scanTask = Task { [weak self] in
-            await self?.performScan()
+            await self?.runScan()
             self?.scanTask = nil
-            self?.isScanning = false
         }
     }
 
@@ -196,19 +204,26 @@ final class CleaningViewModel: ObservableObject {
         })
         statistics.exactBucketsFound = buckets.buckets.count
         statistics.bucketsOversized = buckets.oversizedBuckets
-        let candidateIDs = Set(candidatePairs.flatMap { [$0.first, $0.second] })
-            .union(buckets.buckets.flatMap { $0 })
+        // Smaller buckets first (most likely real copies), then the best visual pairs. A cap keeps one
+        // scan bounded; anything past it is reported, not silently skipped.
+        var orderedIDs: [String] = []
+        var queued: Set<String> = []
+        func enqueue(_ id: String) { if queued.insert(id).inserted { orderedIDs.append(id) } }
+        buckets.buckets.sorted { $0.count < $1.count }.forEach { $0.forEach(enqueue) }
+        candidatePairs.forEach { enqueue($0.first); enqueue($0.second) }
+        if orderedIDs.count > Self.maximumFullHashesPerScan {
+            statistics.exactSkippedByLimit = orderedIDs.count - Self.maximumFullHashesPerScan
+            orderedIDs = Array(orderedIDs.prefix(Self.maximumFullHashesPerScan))
+        }
         var allDigests: [String: [ResourceDigest]] = [:]
-        let orderedIDs = candidateIDs.sorted()
         let fetcher = DigestFetcher(library: library, policy: networkPolicy)
         for (n, id) in orderedIDs.enumerated() {
             if Task.isCancelled { phase = .cancelled; return }
             guard byID[id] != nil else { continue }
             do {
-                let result = try await fetcher.fetch(id: id)
+                let result = try await fetcher.fetch(id: id, estimatedBytes: Self.estimatedOriginalBytes(byID[id]))
                 allDigests[id] = result.digests
                 statistics.exactAssetsHashed += 1
-                statistics.exactAssetsVerified += 1
                 if result.downloaded { statistics.originalsDownloaded += 1 }
             } catch is CancellationError {
                 phase = .cancelled; return
@@ -241,7 +256,7 @@ final class CleaningViewModel: ObservableObject {
                 guard let digest = allDigests[photo.id], let size = ResourceSignatures.logicalBytes(digest) else { return nil }
                 return (photo.id, size)
             })
-            let group = PhotoReviewGroup(id: "exact-\(Self.stableToken(signature))-\(keeper.id)", kind: .exact,
+            let group = PhotoReviewGroup(id: "exact-\(Self.stableToken(signature))", kind: .exact,
                                          keeper: keeper, candidates: remaining, evidence: pairEvidence,
                                          verifiedCandidateBytes: bytes)
             groupsFound.append(group)

@@ -14,6 +14,8 @@ extension PreservationFlag {
         case .userBurstPick: "Your burst pick — always kept"
         case .curatedAlbum: "In one of your albums — kept"
         case .incompleteResources: "Not fully on this iPhone — kept"
+        case .cinematicVideo: "Cinematic video — kept"
+        case .spatialMedia: "Spatial photo or video — kept"
         case .unknownOwnership, .uncertainMetadata: "Can't be sure — kept"
         }
     }

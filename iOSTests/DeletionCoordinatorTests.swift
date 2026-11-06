@@ -79,6 +79,13 @@ final class DeletionCoordinatorTests: XCTestCase {
         XCTAssertTrue(library.deleteCalls.isEmpty)
     }
 
+    func testCommitTimeRecheckNeverUsesTheNetwork() async throws {
+        let group = makeExactPair()
+        _ = try await coordinator.commit(group: group, selected: ["c"], manuallyReviewed: [])
+        XCTAssertFalse(library.digestRequests.isEmpty)
+        XCTAssertFalse(library.digestRequests.contains { $0.allowNetwork }, "deleting must never trigger a download")
+    }
+
     func testChangeAtTheLastMomentIsCaughtByTheDeleteCall() async {
         let group = makeExactPair()
         // Passes every earlier check, then changes right before the request is applied.

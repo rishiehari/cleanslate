@@ -27,11 +27,19 @@ final class ExactCandidatesTests: XCTestCase {
         XCTAssertEqual(ExactCandidates.buckets([key("a", dur: 5_100, type: 2), key("b", dur: 5_400, type: 2)]).buckets, [["a", "b"]])
     }
     func testOversizedBucketsAreCountedNotSilentlyDropped() {
+        // 70 look-alikes in the SAME second can't be split any further: counted, not silently dropped.
         let keys = (0..<70).map { key("p\($0)") } + [key("x", t: 1), key("y", t: 1)]
         let out = ExactCandidates.buckets(keys, maximumBucketSize: 64)
         XCTAssertEqual(out.buckets, [["x", "y"]])
         XCTAssertEqual(out.oversizedBuckets, 1)
         XCTAssertEqual(out.oversizedAssets, 70)
+    }
+    func testOversizedFilenameBucketIsSplitByTimeSoRealCopiesStayReachable() {
+        // 100 assets share a filename across years, plus one true copy pair; the pair must still be found.
+        var keys = (0..<100).map { key("p\($0)", t: Int64($0) * 100_000, file: "IMG_0001.HEIC") }
+        keys.append(key("copy", t: 50 * 100_000, file: "IMG_0001.HEIC"))
+        let out = ExactCandidates.buckets(keys, maximumBucketSize: 64)
+        XCTAssertTrue(out.buckets.contains(["copy", "p50"]), "\(out.buckets)")
     }
     func testIdenticalMemberSetsAreNotDuplicatedAcrossPasses() {
         let out = ExactCandidates.buckets([key("a", file: "x.jpg"), key("b", file: "x.jpg")])

@@ -46,14 +46,26 @@ public enum ExactCandidates {
         var seen: Set<[String]> = []
         var result: [[String]] = []
         var oversized = 0, oversizedAssets = 0
-        func consume(_ members: [String]) {
+        let creation = Dictionary(keys.compactMap { key in key.creationSecond.map { (key.id, $0) } }, uniquingKeysWith: { a, _ in a })
+        func consume(_ members: [String], allowSplit: Bool = true) {
             let ids = Array(Set(members)).sorted()
             guard ids.count >= 2 else { return }
-            guard ids.count <= maximumBucketSize else { oversized += 1; oversizedAssets += ids.count; return }
+            if ids.count > maximumBucketSize {
+                // Too many to hash blindly: split by creation minute first, so real copies stay reachable.
+                if allowSplit {
+                    let byMinute = Dictionary(grouping: ids.filter { creation[$0] != nil }, by: { (creation[$0] ?? 0) / 60 })
+                    let leftover = ids.filter { creation[$0] == nil }.count
+                    for sub in byMinute.values { consume(sub, allowSplit: false) }
+                    if leftover > 0 { oversized += 1; oversizedAssets += leftover }
+                } else {
+                    oversized += 1; oversizedAssets += ids.count
+                }
+                return
+            }
             if seen.insert(ids).inserted { result.append(ids) }
         }
-        first.values.forEach(consume)
-        second.values.forEach(consume)
+        first.values.forEach { consume($0) }
+        second.values.forEach { consume($0) }
         result.sort { $0.lexicographicallyPrecedes($1) }
         return ExactBuckets(buckets: result, oversizedBuckets: oversized, oversizedAssets: oversizedAssets)
     }

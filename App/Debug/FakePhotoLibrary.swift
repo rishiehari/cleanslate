@@ -30,6 +30,8 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     /// Every digest request with its `allowNetwork` flag, in order.
     private(set) var digestRequests: [(id: String, allowNetwork: Bool)] = []
     private var nextTimestamp: Int64 = 1_700_000_000
+    /// Local file sizes for `verifiedSize` (absent = not local).
+    var sizes: [String: Int64] = [:]
     /// Called when hashing of an asset begins; lets a test mutate the library mid-flight.
     var onDigests: ((String) -> Void)?
     private var handlers: [UUID: @MainActor () -> Void] = [:]
@@ -46,12 +48,15 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     /// `at` is the creation time (seconds). Assets that should look like copies of each other pass the
     /// same `at`; by default every asset gets its own timestamp so nothing is bucketed by accident.
     func add(_ id: String, revision: String = "v1", flags: Set<PreservationFlag> = [],
-             content: String? = nil, bytes: Int64 = 1_000, at: Int64? = nil, resources: [ResourceDigest]? = nil) {
+             content: String? = nil, bytes: Int64 = 1_000, at: Int64? = nil, resources: [ResourceDigest]? = nil,
+             subtypes: UInt = 0, isVideo: Bool = false, duration: Double = 0, size: Int64? = nil) {
         let record = AssetRecord(id: id, revision: revision, flags: flags)
         nextTimestamp += 1_000
         let time = at ?? nextTimestamp
         let snapshot = PhotoSnapshot(id: id, record: record, capturedAt: Date(timeIntervalSince1970: TimeInterval(time)),
-                                     burstID: nil, width: 4032, height: 3024, originalFilename: "IMG_\(id).HEIC")
+                                     burstID: nil, width: 4032, height: 3024, originalFilename: "IMG_\(id).HEIC",
+                                     isVideo: isVideo, durationSeconds: duration, subtypes: subtypes)
+        if let size { sizes[id] = size }
         assets[id] = Asset(snapshot: snapshot, digests: resources ?? [Self.digest(content ?? id, bytes: bytes)], look: content ?? id)
     }
 
@@ -61,7 +66,9 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         let record = AssetRecord(id: id, revision: revision ?? old.revision, flags: flags ?? old.flags)
         asset.snapshot = PhotoSnapshot(id: id, record: record, capturedAt: asset.snapshot.capturedAt,
                                        burstID: asset.snapshot.burstID, width: asset.snapshot.width,
-                                       height: asset.snapshot.height, originalFilename: asset.snapshot.originalFilename)
+                                       height: asset.snapshot.height, originalFilename: asset.snapshot.originalFilename,
+                                       isVideo: asset.snapshot.isVideo, durationSeconds: asset.snapshot.durationSeconds,
+                                       subtypes: asset.snapshot.subtypes)
         assets[id] = asset
     }
 
@@ -113,6 +120,8 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         if allowNetwork, let cloud = asset.cloudDigests { return cloud }
         throw LibraryResourceError.notAccessible
     }
+
+    func verifiedSize(id: String) async -> Int64? { sizes[id] }
 
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
         beforeDelete?()

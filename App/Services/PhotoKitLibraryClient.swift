@@ -1,6 +1,7 @@
 import Foundation
 import Photos
 import UIKit
+import AVFoundation
 import CryptoKit
 import CleanSlateCore
 
@@ -44,6 +45,26 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         return try await completeDigests(asset, allowNetwork: allowNetwork)
     }
 
+    func verifiedSize(id: String) async -> Int64? {
+        guard let asset = fetchAsset(id) else { return nil }
+        if asset.mediaType == .video {
+            let options = PHVideoRequestOptions()
+            options.isNetworkAccessAllowed = false
+            options.deliveryMode = .fastFormat
+            return await withCheckedContinuation { (continuation: CheckedContinuation<Int64?, Never>) in
+                PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                    guard let url = (avAsset as? AVURLAsset)?.url,
+                          let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+                        continuation.resume(returning: nil); return
+                    }
+                    continuation.resume(returning: Int64(size))
+                }
+            }
+        }
+        guard let digests = try? await completeDigests(asset, allowNetwork: false) else { return nil }
+        return ResourceSignatures.logicalBytes(digests)
+    }
+
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
         let assets = ids.compactMap { fetchAsset($0) }
         guard assets.count == ids.count else { throw LibraryResourceError.notAccessible }
@@ -72,7 +93,9 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         opts.includeAllBurstAssets = true
         opts.includeHiddenAssets = false
         opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let result = PHAsset.fetchAssets(with: .image, options: opts)
+        opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d",
+                                     PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+        let result = PHAsset.fetchAssets(with: opts)
         let count = min(result.count, limit)
         var photos: [PhotoSnapshot] = []
         photos.reserveCapacity(count)
@@ -103,6 +126,8 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
             asset, with: .album, options: nil).count > 0 {
             flags.insert(.curatedAlbum)
         }
+        if asset.mediaSubtypes.contains(.videoCinematic) { flags.insert(.cinematicVideo) }
+        if asset.mediaSubtypes.contains(.spatialMedia) { flags.insert(.spatialMedia) }
         let resources = PHAssetResource.assetResources(for: asset)
         if resources.isEmpty { flags.insert(.incompleteResources) }
         if resources.contains(where: { $0.type == .adjustmentData || $0.type == .adjustmentBasePhoto }) {
@@ -127,7 +152,9 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         return PhotoSnapshot(id: asset.localIdentifier, record: record,
                              capturedAt: asset.creationDate, burstID: asset.burstIdentifier,
                              width: asset.pixelWidth, height: asset.pixelHeight,
-                             originalFilename: resources.first(where: { $0.type == .photo || $0.type == .video })?.originalFilename)
+                             originalFilename: resources.first(where: { $0.type == .photo || $0.type == .video })?.originalFilename,
+                             isVideo: asset.mediaType == .video, durationSeconds: asset.duration,
+                             subtypes: asset.mediaSubtypes.rawValue)
     }
 
     /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable.

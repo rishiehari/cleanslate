@@ -21,6 +21,9 @@ protocol PhotoLibraryClient: AnyObject {
     /// Digest of EVERY resource of the asset. Reads the network only when `allowNetwork` is true,
     /// which only `NetworkPolicy` (via `DigestFetcher`) may request.
     func digests(id: String, allowNetwork: Bool) async throws -> [ResourceDigest]
+    /// Size in bytes of the asset's local file(s), or nil if not local. Never touches the network
+    /// and never uses private API (videos: the local file's size; images: the streamed resource bytes).
+    func verifiedSize(id: String) async -> Int64?
     /// Asks the system to delete the assets. The system presents its own confirmation.
     /// Immediately before the change request, the implementation re-reads the very objects
     /// it is about to delete and throws `.changed` if any revision differs from

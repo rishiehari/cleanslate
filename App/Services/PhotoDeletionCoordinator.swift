@@ -5,12 +5,10 @@ import CleanSlateCore
 @MainActor
 final class PhotoDeletionCoordinator {
     private let library: PhotoLibraryClient
-    private let networkPolicy: NetworkPolicy
     private var activeCommit = false
 
-    init(library: PhotoLibraryClient, networkPolicy: NetworkPolicy? = nil) {
+    init(library: PhotoLibraryClient) {
         self.library = library
-        self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
     }
 
     enum DeletionError: LocalizedError, Equatable {
@@ -114,7 +112,8 @@ final class PhotoDeletionCoordinator {
     /// Maps "can't read the original" failures to a safe, explicit abort. Cancellation passes through.
     private func verifiedDigests(_ id: String) async throws -> [ResourceDigest] {
         do {
-            return try await DigestFetcher(library: library, policy: networkPolicy).fetch(id: id).digests
+            // Local-only on purpose: a deletion must never trigger a surprise multi-GB download.
+            return try await library.digests(id: id, allowNetwork: false)
         } catch let error as LibraryResourceError {
             switch error {
             case .cancelled: throw CancellationError()

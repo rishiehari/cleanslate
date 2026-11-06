@@ -1,4 +1,5 @@
 import Foundation
+import Photos
 import CleanSlateCore
 
 enum GroupKind: String, Codable {
@@ -17,6 +18,11 @@ struct PhotoSnapshot: Identifiable, Codable, Equatable {
     var originalFilename: String? = nil
     var isVideo: Bool = false
     var durationSeconds: Double = 0
+    /// Raw `PHAssetMediaSubtype` bits.
+    var subtypes: UInt = 0
+
+    var isScreenshot: Bool { PHAssetMediaSubtype(rawValue: subtypes).contains(.photoScreenshot) }
+    var isScreenRecording: Bool { PHAssetMediaSubtype(rawValue: subtypes).contains(.videoScreenRecording) }
 
     var pixelCount: Int64 { Int64(width) * Int64(height) }
 }
@@ -62,6 +68,7 @@ struct ScanStatistics {
     var exactBucketsFound = 0
     var exactAssetsHashed = 0
     var exactAssetsUnverifiable = 0      // not local (iCloud), incomplete or failed
+    var exactSkippedByLimit = 0          // past the per-scan hashing cap
     var originalsDownloaded = 0          // only with the opt-in iCloud verification
     var bucketsOversized = 0
     var lastError: String?

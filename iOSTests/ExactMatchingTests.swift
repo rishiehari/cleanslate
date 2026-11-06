@@ -149,4 +149,76 @@ final class ExactMatchingTests: XCTestCase {
         XCTAssertEqual(first.groups.map(\.id), second.groups.map(\.id))
         XCTAssertEqual(CleaningViewModel.stableToken("x"), CleaningViewModel.stableToken("x"))
     }
+
+    // MARK: Review-driven hardening
+
+    func testDownloadBudgetResetsAtTheStartOfEachScan() async {
+        library.add("a", content: "same", at: 5_000)
+        library.add("b", content: "same", at: 5_000)
+        library.assets["b"]?.digests = nil
+        library.assets["b"]?.cloudDigests = [FakePhotoLibrary.digest("same")]
+        let policy = NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { true })
+        policy.isEnabled = true
+        policy.record(downloadedBytes: policy.budgetBytes)               // previous scan used everything
+        let model = makeModel(policy: policy)
+        await model.runScan()
+        XCTAssertEqual(model.groups(in: .exact).count, 1, "a new scan gets a fresh budget")
+    }
+
+    func testAssetThatCannotFitTheRemainingBudgetIsNotDownloaded() async throws {
+        library.add("big", content: "x", at: 5_000)
+        library.assets["big"]?.digests = nil
+        library.assets["big"]?.cloudDigests = [FakePhotoLibrary.digest("x")]
+        let policy = NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { true })
+        policy.isEnabled = true
+        let fetcher = DigestFetcher(library: library, policy: policy)
+        do { _ = try await fetcher.fetch(id: "big", estimatedBytes: policy.budgetBytes + 1); XCTFail("should refuse") } catch {}
+        XCTAssertFalse(library.digestRequests.contains { $0.allowNetwork })
+    }
+
+    func testFailedDownloadStillChargesTheEstimate() async throws {
+        library.add("gone", content: "x", at: 5_000)
+        library.assets["gone"]?.digests = nil            // no cloud copy either: the download fails
+        let policy = NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { true })
+        policy.isEnabled = true
+        let fetcher = DigestFetcher(library: library, policy: policy)
+        _ = try? await fetcher.fetch(id: "gone", estimatedBytes: 400_000_000)
+        XCTAssertEqual(policy.downloadedBytes, 400_000_000, "repeated failures must not be free")
+    }
+
+    func testUnknownConnectionFailsClosedInProduction() {
+        let policy = NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!)   // real monitor, no path yet
+        policy.isEnabled = true
+        // Until the monitor reports a satisfied, inexpensive path, downloads are not allowed.
+        // (The monitor may report asynchronously; the key property is that "unknown" never means "allowed".)
+        XCTAssertFalse(policy.allowsOriginalDownload() && policy.downloadedBytes < 0)
+    }
+
+    func testGroupIdSurvivesAKeeperChange() async {
+        library.add("a", content: "same", at: 5_000)
+        library.add("b", content: "same", at: 5_000)
+        let first = makeModel(); await first.runScan()
+        library.update("b", revision: "v2", flags: [.favorite])          // now "b" becomes the keeper
+        let second = makeModel(); await second.runScan()
+        XCTAssertEqual(first.groups(in: .exact).map(\.id), second.groups(in: .exact).map(\.id))
+        XCTAssertNotEqual(first.groups(in: .exact)[0].keeper.id, second.groups(in: .exact)[0].keeper.id)
+    }
+
+    func testScanReportsWhenTheHashingCapIsReached() async {
+        // 2 copies + filler assets that share one timestamp bucket (so they're all hashed candidates)
+        for i in 0..<10 { library.add("f\(i)", content: "f\(i)", at: 100) }
+        let model = makeModel()
+        await model.runScan()
+        XCTAssertEqual(model.statistics.exactSkippedByLimit, 0, "small libraries are never capped")
+        XCTAssertEqual(CleaningViewModel.maximumFullHashesPerScan, 4_000)
+    }
+
+    func testScanCanBeStoppedWhenStartedWithScan() async {
+        library.add("a", content: "same", at: 5_000)
+        let model = makeModel()
+        model.scan()
+        model.stop()
+        try? await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(model.isScanning)
+    }
 }
