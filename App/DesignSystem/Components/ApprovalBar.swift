@@ -12,18 +12,17 @@ struct ApprovalBar: View {
         GlassEffectContainer(spacing: Spacing.m) {
             HStack(spacing: Spacing.m) {
                 Button(action: onSkip) {
-                    Text("Skip").appText(.groupTitle).padding(.horizontal, Spacing.s)
+                    Text("Skip").appText(.groupTitle).foregroundStyle(.primary).padding(.horizontal, Spacing.s)
                         .frame(minHeight: 44)
                 }
                 .buttonStyle(.glass)
                 .accessibilityIdentifier("approval.skip")
 
                 Button(action: onApprove) {
-                    VStack(spacing: Spacing.xxs) {
-                        Text(approveTitle).appText(.groupTitle)
-                        if let subtitle { Text(subtitle).appText(.caption) }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    Text(subtitle.map { "\(approveTitle) · \($0)" } ?? approveTitle)
+                        .appText(.groupTitle)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.glassProminent)
                 .tint(Color.actionPrimary)
@@ -32,7 +31,17 @@ struct ApprovalBar: View {
             }
         }
         .padding(.horizontal, Spacing.m)
+        .padding(.top, Spacing.m)
         .padding(.bottom, Spacing.s)
+        // Fade the scrolling photos out behind the controls so labels stay legible (plain fill, not glass).
+        .background(alignment: .bottom) {
+            LinearGradient(stops: [.init(color: Color.surfaceBackground.opacity(0), location: 0),
+                                   .init(color: Color.surfaceBackground.opacity(0.96), location: 0.4),
+                                   .init(color: Color.surfaceBackground, location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
     }
 }
 

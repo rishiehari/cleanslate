@@ -13,7 +13,8 @@ struct CategoryCardView: View {
                 .foregroundStyle(category.isAvailable ? Color.actionPrimary : Color.textSecondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Spacing.xxs) {
-                Text(category.title).appText(.groupTitle).foregroundStyle(Color.textPrimary)
+                Text(category.title).appText(.groupTitle)
+                    .foregroundStyle(category.isAvailable ? Color.textPrimary : Color.textSecondary)
                 Text(subtitle).appText(.secondary).foregroundStyle(Color.textSecondary)
             }
             Spacer()
@@ -24,7 +25,6 @@ struct CategoryCardView: View {
         .padding(Spacing.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.m))
-        .opacity(category.isAvailable ? 1 : 0.55)
         .accessibilityElement(children: .combine)
     }
 

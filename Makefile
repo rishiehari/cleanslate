@@ -3,7 +3,7 @@ PY := $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 DD := build/DerivedData
 XCB := xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -derivedDataPath $(DD) CODE_SIGNING_ALLOWED=NO
 
-.PHONY: core-test gen build ios-test seed fixtures-test ci verify
+.PHONY: core-test gen build ios-test seed fixtures-test ci verify screens
 core-test:
 	swift test --package-path Core
 gen:
@@ -20,3 +20,8 @@ seed:
 ci: core-test fixtures-test build ios-test
 verify:
 	./scripts/verify_linux.sh
+
+# Capture design-review screenshots (light, dark, large text) into docs/screens/<name>
+screens:
+	@test -n "$(SIM_ID)" || { echo "No iPhone simulator available."; exit 2; }
+	TEST_RUNNER_CAPTURE_DIR=$(CURDIR)/docs/screens/$(or $(NAME),latest) $(XCB) -destination "platform=iOS Simulator,id=$(SIM_ID)" test -only-testing:CleanSlateUITests/ScreenshotTests

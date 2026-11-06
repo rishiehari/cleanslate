@@ -17,7 +17,7 @@ struct DecisionBadge: View {
         }
         .padding(.horizontal, Spacing.s)
         .padding(.vertical, Spacing.xs)
-        .foregroundStyle(.white)
+        .foregroundStyle(Color.onAccent)
         .background(tint, in: Capsule())
         .accessibilityElement(children: .combine)
     }

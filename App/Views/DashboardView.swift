@@ -3,53 +3,46 @@ import Photos
 
 struct DashboardView: View {
     @EnvironmentObject private var model: CleaningViewModel
+    @EnvironmentObject private var tray: DeletionTray
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showClearCache = false
     @AppStorage("onboarding.seen.v1") private var onboardingSeen = false
+    @AppStorage(HapticsService.defaultsKey) private var hapticsOn = true
+    @State private var showClearCache = false
+    @State private var showTray = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    header
-                    if model.authorization == .notDetermined || model.authorization == .denied || model.authorization == .restricted {
+                VStack(alignment: .leading, spacing: Spacing.m) {
+                    if needsPermission {
                         permissionCard
                     } else {
-                        storageCard
-                        progressCard
-                        controls
-                        if let message = model.statusMessage {
-                            Label(message, systemImage: "info.circle")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                        if let receipt = model.deletionReceipt {
-                            Label(receipt, systemImage: "checkmark.shield")
-                                .font(.footnote)
-                                .padding(12)
-                                .background(.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+                        StorageHero(verifiedBytes: model.potentialVerifiedBytes)
+                        ScanStatusCard()
+                        if model.authorization == .limited {
+                            Label("You gave CleanSlate access to some photos. It can only look at those.", systemImage: "exclamationmark.circle")
+                                .appText(.caption).foregroundStyle(Color.warningAccent)
                         }
                         categories
                     }
-                    privacyFooter
+                    thingsToKnow
                 }
-                .padding(18)
+                .padding(Spacing.m)
             }
+            .background(Color.surfaceBackground)
             .navigationTitle("CleanSlate")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    TrayButton(count: tray.photoCount) { showTray = true }
+                }
+                ToolbarItem(placement: .topBarTrailing) { menu }
+            }
             .fullScreenCover(isPresented: Binding(get: { !onboardingSeen }, set: { if !$0 { onboardingSeen = true } })) {
                 OnboardingView { onboardingSeen = true }
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Clear local feature cache", systemImage: "trash.slash") { showClearCache = true }
-                        Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
-                        Button("Open Photos permissions", systemImage: "hand.raised") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                    } label: { Image(systemName: "gearshape") }
-                }
+            .sheet(isPresented: $showTray) { TrayView(tray: tray) }
+            .fullScreenCover(isPresented: Binding(get: { tray.receipt != nil }, set: { if !$0 { tray.receipt = nil } })) {
+                if let receipt = tray.receipt { ReceiptView(receipt: receipt) { tray.receipt = nil } }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active { model.refreshPermissions() }
@@ -58,108 +51,75 @@ struct DashboardView: View {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear index", role: .destructive) { model.clearIndex() }
             } message: {
-                Text("Removes CleanSlate's local feature cache. It will not modify your photos.")
+                Text("Removes CleanSlate's saved scan data. Your photos aren't touched.")
             }
         }
+        // Outside the stack so they stay visible on pushed screens.
+        .overlay(alignment: .bottom) {
+            if let toast = tray.toast {
+                UndoToast(message: toast.message) { tray.undo(); HapticsService.shared.fire(.undo) }
+                    .padding(.bottom, Spacing.l + 56)   // clear of the approval bar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: tray.toast)
+        #if DEBUG
+        .overlay(alignment: .topLeading) { debugProbe }
+        #endif
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Keep the memories. Lose the copies.")
-                .font(.title2.bold())
-            Text("Free, private, on-device photo cleanup. No accounts, ads, or uploads to our servers.")
-                .foregroundStyle(.secondary)
+    private var needsPermission: Bool {
+        [.notDetermined, .denied, .restricted].contains(model.authorization)
+    }
+
+    private var menu: some View {
+        Menu {
+            Toggle("Haptics", systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
+            Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
+            Button("Open Photos settings", systemImage: "hand.raised") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }
+            Button("Clear saved scan data", systemImage: "trash.slash") { showClearCache = true }
+        } label: {
+            Image(systemName: "gearshape")
         }
+        .accessibilityLabel("Settings")
+        .accessibilityIdentifier("dashboard.menu")
     }
 
     private var permissionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Your Photos stay yours", systemImage: "lock.shield")
-                .font(.headline)
-            Text("CleanSlate analyzes accessible photos on this iPhone. The system will ask you to confirm deletions; the app cannot silently remove pictures.")
-                .font(.subheadline)
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            Label("Your photos stay yours", systemImage: "lock.shield").appText(.groupTitle)
+            Text("To find copies, CleanSlate needs to look at your photos. It all happens on this iPhone, and nothing is deleted without your say-so.")
+                .appText(.body).foregroundStyle(Color.textSecondary)
             Button("Allow Photos access") { model.requestPermission() }
-                .accessibilityIdentifier("permission.allow")
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent).tint(Color.actionPrimary)
                 .disabled(model.authorization == .restricted)
+                .accessibilityIdentifier("permission.allow")
             if model.authorization == .denied {
-                Text("Access is denied. Enable Photos permission in iPhone Settings.").font(.footnote)
+                Text("Photos access is off. Turn it on in Settings to continue.")
+                    .appText(.caption).foregroundStyle(Color.textSecondary)
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
             }
         }
-        .padding(18)
+        .padding(Spacing.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.l))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("permission.card")
     }
 
-    private var storageCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Verified potential logical savings")
-                .font(.subheadline).foregroundStyle(.secondary)
-            Text(model.potentialVerifiedBytes.friendlyBytes)
-                .font(.system(size: 38, weight: .bold, design: .rounded))
-            Text("File-resource bytes of verified exact copies only. This is NOT an iCloud quota or iPhone free-space measurement.")
-                .font(.caption).foregroundStyle(.secondary)
-            if model.authorization == .limited {
-                Label("Limited Photos access: the scan covers only the photos you selected.", systemImage: "exclamationmark.circle")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.teal.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private var progressCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(model.phase.rawValue).font(.headline)
-                Spacer()
-                Text("\(Int(model.progress * 100))%")
-                    .monospacedDigit().foregroundStyle(.secondary)
-            }
-            ProgressView(value: model.progress)
-            HStack {
-                Text("\(model.statistics.photosEnumerated) inventoried")
-                Spacer()
-                Text("\(model.statistics.cloudOnlyOrUnavailable) unavailable thumbnails")
-            }
-            .font(.caption).foregroundStyle(.secondary)
-            Text("\(model.statistics.exactAssetsVerified) original resource sets verified · \(model.statistics.candidatePairsConsidered) candidate pairs checked")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    private var controls: some View {
-        HStack(spacing: 10) {
-            if model.isScanning {
-                Button("Cancel scan", systemImage: "pause.fill") { model.stop() }
-                    .buttonStyle(.bordered)
-            } else {
-                Button("Scan photos", systemImage: "sparkle.magnifyingglass") { model.scan() }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("dashboard.scan")
-                if model.statistics.photosEnumerated > 0 {
-                    Button("Scan more", systemImage: "plus.magnifyingglass") { model.scanMore() }
-                        .buttonStyle(.bordered)
-                }
-            }
-        }
-    }
-
     private var categories: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("What to review").font(.title3.bold())
+        VStack(alignment: .leading, spacing: Spacing.s + Spacing.xs) {
+            Text("What to review").appText(.title).foregroundStyle(Color.textPrimary)
             ForEach(visibleCategories) { category in
                 if category.isAvailable {
                     NavigationLink {
                         CategoryGroupsView(category: category)
                     } label: {
-                        CategoryCardView(category: category,
-                                         groupCount: model.groups(in: category).count,
+                        CategoryCardView(category: category, groupCount: model.groups(in: category).count,
                                          verifiedBytes: model.verifiedBytes(in: category))
                     }
                     .buttonStyle(.plain)
@@ -180,14 +140,30 @@ struct DashboardView: View {
         #endif
     }
 
-    private var privacyFooter: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Important", systemImage: "shield.lefthalf.filled")
-                .font(.headline)
-            Text("Deleting from iCloud Photos also deletes that item on other synchronized devices. Recently Deleted may retain recoverable items. Actual free-space gains can differ from file sizes, especially with Optimize iPhone Storage.")
-            Text("This version uses a bounded, partial local scan. It cannot analyze cloud-only originals without permission to download them. Similar-photo ranking is experimental and is never auto-selected for deletion.")
+    private var thingsToKnow: some View {
+        DisclosureGroup("Things to know") {
+            VStack(alignment: .leading, spacing: Spacing.s) {
+                Text("Deleting with iCloud Photos on also removes the photo from your other devices. Recently Deleted keeps it for 30 days.")
+                Text("File sizes shown are verified sizes. Actual free space can differ, especially with Optimize iPhone Storage.")
+                Text("This version checks part of your library at a time, and can't compare photos that only live in iCloud. Similar shots are never selected for you.")
+            }
+            .appText(.caption).foregroundStyle(Color.textSecondary)
+            .padding(.top, Spacing.s)
         }
-        .font(.caption).foregroundStyle(.secondary)
-        .padding(.top, 16)
+        .appText(.secondary)
+        .tint(Color.textSecondary)
+        .accessibilityIdentifier("dashboard.thingstoknow")
     }
+
+    #if DEBUG
+    /// Lets UI tests assert how many delete requests reached the (fake) library.
+    private var debugProbe: some View {
+        let calls = (model.library as? FakePhotoLibrary)?.deleteCalls.count ?? -1
+        let remaining = (model.library as? FakePhotoLibrary)?.assets.count ?? -1
+        return Color.clear.frame(width: 1, height: 1)
+            .accessibilityElement()
+            .accessibilityIdentifier("debug.probe")
+            .accessibilityValue("deleteCalls=\(calls);assets=\(remaining);tray=\(tray.photoCount)")
+    }
+    #endif
 }

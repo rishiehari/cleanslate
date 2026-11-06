@@ -39,6 +39,7 @@ struct ConfirmSheet: View {
         }
         .padding(Spacing.l)
         .presentationDetents([.medium])
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("confirm.sheet")
     }
 }

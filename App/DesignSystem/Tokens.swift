@@ -31,6 +31,8 @@ extension Color {
     static let deleteAccent = Color("deleteAccent")
     static let protectedAccent = Color("protectedAccent")
     static let warningAccent = Color("warningAccent")
+    /// Text/icons drawn ON an accent fill (white in light mode, near-black in dark mode).
+    static let onAccent = Color("onAccent")
     static let surfaceBackground = Color("surfaceBackground")
     static let surfaceCard = Color("surfaceCard")
     static let textPrimary = Color("textPrimary")

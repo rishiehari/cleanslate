@@ -11,19 +11,20 @@ final class CleaningViewModel: ObservableObject {
     @Published private(set) var groups: [PhotoReviewGroup] = []
     @Published private(set) var statistics = ScanStatistics()
     @Published var statusMessage: String?
-    @Published var isDeleting = false
     @Published private(set) var isScanning = false
-    @Published var deletionReceipt: String?
 
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
+    let tray: DeletionTray
     private let featureStore = LocalFeatureIndex()
     private var scanTask: Task<Void, Never>?
     private var changeSubscription: ChangeSubscription?
     private var scanLimit = 1500
 
-    init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared) {
+    init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared,
+         tray: DeletionTray? = nil) {
         self.library = library
+        self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
         self.coordinator = PhotoDeletionCoordinator(library: library)
         self.authorization = library.authorization
         changeSubscription = library.observeChanges { [weak self] in
@@ -103,22 +104,14 @@ final class CleaningViewModel: ObservableObject {
         statusMessage = "The local feature cache was cleared. Photos were not modified."
     }
 
-    func delete(group: PhotoReviewGroup, selected: Set<String>, manuallyReviewed: Set<String>) async -> Bool {
-        guard !isDeleting else { return false }
-        isDeleting = true
-        defer { isDeleting = false }
-        do {
-            let receipt = try await coordinator.commit(
-                group: group, selected: selected, manuallyReviewed: manuallyReviewed)
-            deletionReceipt = "Requested \(receipt.requested) deletion(s). Verified removed: \(receipt.verifiedRemoved). "
-                + "Verified logical bytes: \(receipt.logicalBytesRemoved.friendlyBytes). "
-                + "Uncertain: \(receipt.uncertain). Check Photos and Recently Deleted."
-            groups.removeAll { $0.id == group.id }
-            return true
-        } catch {
-            statusMessage = error.localizedDescription
-            return false
-        }
+    /// Deletes everything in the tray (after the user confirmed in the summary sheet).
+    /// Each group is still fully revalidated by the coordinator, and Apple shows its own prompt.
+    func deleteTray() async {
+        let idsBefore = Set(tray.entries.map(\.id))
+        let receipt = await tray.deleteAll(using: coordinator)
+        let deleted = idsBefore.subtracting(tray.entries.map(\.id))
+        groups.removeAll { deleted.contains($0.id) }
+        if receipt.verifiedRemoved > 0 { HapticsService.shared.fire(.batchDeleted) }
     }
 
     private func performScan() async {

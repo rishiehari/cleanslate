@@ -16,6 +16,7 @@ struct CleanSlateApp: App {
         WindowGroup {
             DashboardView()
                 .environmentObject(model)
+                .environmentObject(model.tray)
                 .environment(\.photoLibrary, library)
                 .tint(Color(red: 0.12, green: 0.55, blue: 0.42))
         }
@@ -34,7 +35,9 @@ enum AppEnvironment {
         if arguments.contains("-uiTestingFakeLibrary") {
             let auth = AuthArgument.current()
             let scenario = FakePhotoLibrary.uiTestScenario(authorization: auth)
-            let model = CleaningViewModel(library: scenario.library)
+            let trayURL = DeletionTray.defaultURL(name: "tray-uitest.json")
+            if !arguments.contains("-keepTray"), let trayURL { try? FileManager.default.removeItem(at: trayURL) }
+            let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL))
             if auth == .authorized { model.seedGroupsForUITesting(scenario.groups) }
             return (model, scenario.library)
         }

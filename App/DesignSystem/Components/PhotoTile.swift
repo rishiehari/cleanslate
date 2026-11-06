@@ -15,11 +15,11 @@ struct PhotoTile: View {
             .overlay(alignment: .topLeading) {
                 if let decision { DecisionBadge(decision: decision).padding(Spacing.s) }
             }
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: .topTrailing) {
                 if let caption {
                     Text(caption).appText(.badge).foregroundStyle(.white)
                         .padding(.horizontal, Spacing.s).padding(.vertical, Spacing.xs)
-                        .background(.black.opacity(0.55), in: Capsule())
+                        .background(.black.opacity(0.78), in: Capsule())
                         .padding(Spacing.s)
                 }
             }

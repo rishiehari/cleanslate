@@ -13,7 +13,7 @@ struct TrayButton: View {
                     if count > 0 {
                         Text("\(count)")
                             .appText(.badge)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.onAccent)
                             .padding(.horizontal, Spacing.xs + Spacing.xxs)
                             .background(Color.deleteAccent, in: Capsule())
                             .contentTransition(.numericText(value: Double(count)))

@@ -1,12 +1,12 @@
 import Foundation
 import CleanSlateCore
 
-enum GroupKind: String {
+enum GroupKind: String, Codable {
     case exact = "Verified identical files"
     case similar = "Similar captures · review required"
 }
 
-struct PhotoSnapshot: Identifiable {
+struct PhotoSnapshot: Identifiable, Codable, Equatable {
     let id: String
     let record: AssetRecord
     let capturedAt: Date?
@@ -17,7 +17,7 @@ struct PhotoSnapshot: Identifiable {
     var pixelCount: Int64 { Int64(width) * Int64(height) }
 }
 
-struct PhotoReviewGroup: Identifiable {
+struct PhotoReviewGroup: Identifiable, Codable {
     let id: String
     let kind: GroupKind
     let keeper: PhotoSnapshot
