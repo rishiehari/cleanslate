@@ -273,19 +273,21 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         statusMessage = "Saved scan data was cleared. Your photos weren't touched."
     }
 
-    /// Deletes everything in the tray (after the user confirmed in the summary sheet).
-    /// Each group is still fully revalidated by the coordinator, and Apple shows its own prompt.
-    func deleteTray() async {
-        let idsBefore = Set(tray.entries.map(\.id))
-        let candidateAssets = Set(tray.entries.flatMap(\.selectedIDs) + tray.standaloneEntries.flatMap { $0.items.map(\.id) })
-        let receipt = await tray.deleteAll(using: coordinator)
-        let deleted = idsBefore.subtracting(tray.entries.map(\.id))
-        groups.removeAll { deleted.contains($0.id) }
+    /// Deletes everything in the tray with ONE Apple prompt (after the user confirmed in the summary sheet).
+    /// Everything is still fully revalidated by the coordinator. Returns true if photos were actually removed.
+    @discardableResult
+    func deleteTray() async -> Bool {
+        let candidateAssets = Set(tray.readyEntries.flatMap(\.selectedIDs) + tray.readyStandaloneEntries.flatMap { $0.items.map(\.id) })
+        let readyGroupIDs = Set(tray.readyEntries.map(\.id))
+        guard let receipt = await tray.deleteAll(using: coordinator) else { return false }
+        let leftInTray = Set(tray.entries.map(\.id))
+        groups.removeAll { readyGroupIDs.contains($0.id) && !leftInTray.contains($0.id) }
         standaloneItems.removeAll { library.snapshot(id: $0.id, inspectAlbums: false) == nil }
         // Keep the index honest about what is gone (only assets that really disappeared).
         let removed = candidateAssets.filter { library.snapshot(id: $0, inspectAlbums: false) == nil }
         if !removed.isEmpty { try? await store.markDeleted(Array(removed)) }
         if receipt.verifiedRemoved > 0 { HapticsService.shared.fire(.batchDeleted) }
+        return true
     }
 
     private func finishScan(_ outcome: ScanEngine.Outcome) {

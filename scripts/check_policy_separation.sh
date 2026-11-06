@@ -11,7 +11,7 @@ check() { # policy name, allowed enclosing func signatures (separated by |)
   bad=$(for f in $(grep -rl "SafetyPolicy.$name(" App | grep -v "^App/Debug"); do
     awk -v name="SafetyPolicy.$name(" -v allowed="$allowed" -v file="$f" '
       BEGIN { n = split(allowed, ok, "|") }
-      /^ *(private |fileprivate |static |nonisolated )*func / { current = $0 }
+      /^ {0,4}(private |fileprivate |static |nonisolated )*func / { current = $0 }
       index($0, name) {
         good = 0
         for (i = 1; i <= n; i++) if (index(current, ok[i])) good = 1
@@ -24,7 +24,8 @@ check() { # policy name, allowed enclosing func signatures (separated by |)
   if [[ "$count" -lt 1 ]]; then echo "$name is never called"; fail=1; fi
 }
 check validateCommit "func commit(|func reasonNeedingAnotherLook(_ entry: TrayEntry)"
-check validateStandalone "func commitStandalone(|func reasonNeedingAnotherLook(_ entry: StandaloneTrayEntry)"
+check validateStandalone "func commitStandalone(|func reasonNeedingAnotherLook(_ entry: StandaloneTrayEntry)|func evaluate(groups:"
+check validateBatch "func evaluate(groups:"
 n=$(grep -rn "deleteAssets" App | wc -l | tr -d ' ')
 if [[ "$n" -ne 1 ]]; then echo "expected exactly one deleteAssets call, found $n"; fail=1; fi
 exit $fail

@@ -28,14 +28,7 @@ enum VisualFeatures {
             return true
         }
         guard worked else { return nil }
-        var hash: UInt64 = 0
-        for row in 0..<8 {
-            for col in 0..<8 {
-                hash <<= 1
-                if pixels[row * 9 + col] > pixels[row * 9 + col + 1] { hash |= 1 }
-            }
-        }
-        return hash
+        return DifferenceHash.compute(gray9x8: pixels)       // shared with the eval tool so both agree
     }
 
     /// Vision feature print (Swift Vision API, iOS 18+). Throws so callers can tell

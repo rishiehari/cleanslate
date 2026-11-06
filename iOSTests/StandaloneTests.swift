@@ -206,13 +206,15 @@ final class StandaloneTests: XCTestCase {
 
     // MARK: Review-driven hardening
 
-    func testStandaloneListsAreClearedWhenTheLibraryChangesOrAScanRestarts() async {
+    func testStandaloneListsAreClearedWhenAScanRestartsOrTheIndexIsCleared() async {
         seedMedia()
         let model = makeModel(); await model.runScan()
         XCTAssertFalse(model.standalone(in: .screenshots).isEmpty)
-        library.simulateExternalChange()
-        try? await Task.sleep(for: .milliseconds(100))
-        XCTAssertTrue(model.standalone(in: .screenshots).isEmpty, "stale items must not stay visible after a library change")
+        // A library change no longer wipes everything (Step 6): only changed items are refreshed. See InvalidationTests.
+        library.assets["shotA"] = nil; library.recordChange(deleted: ["shotA"])
+        await model.processLibraryChange()
+        XCTAssertFalse(model.standalone(in: .screenshots).contains { $0.id == "shotA" })
+        XCTAssertTrue(model.standalone(in: .screenshots).contains { $0.id == "shotNew" }, "unrelated items stay")
         await model.runScan()
         XCTAssertFalse(model.standalone(in: .screenshots).isEmpty)
         model.clearIndex()

@@ -7,6 +7,7 @@ let package = Package(
     products: [.library(name: "CleanSlateCore", targets: ["CleanSlateCore"])],
     targets: [
         .target(name: "CleanSlateCore"),
+        .executableTarget(name: "cleanslate-eval", dependencies: ["CleanSlateCore"]),
         .testTarget(name: "CleanSlateCoreTests", dependencies: ["CleanSlateCore"])
     ]
 )

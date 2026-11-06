@@ -7,6 +7,7 @@ struct TrayView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirming = false
     @State private var confirmClear = false
+    @State private var deleteTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -64,15 +65,20 @@ struct TrayView: View {
             }
             .sheet(isPresented: $confirming) {
                 ConfirmSheet(photoCount: tray.photoCount, verifiedBytes: tray.verifiedBytes,
-                             isWorking: tray.isDeleting,
+                             isWorking: tray.isDeleting, promptCount: tray.promptCount, progress: tray.checkProgress,
                              onConfirm: {
-                                 Task {
-                                     await model.deleteTray()
+                                 deleteTask = Task {
+                                     let removed = await model.deleteTray()
                                      confirming = false
-                                     dismiss()   // the receipt is shown by Home
+                                     if removed { dismiss() }          // the receipt is shown by Home
                                  }
                              },
-                             onCancel: { confirming = false })
+                             onCancel: { deleteTask?.cancel(); confirming = false })
+            }
+            .alert("Not deleted", isPresented: Binding(get: { tray.batchNotice != nil }, set: { if !$0 { tray.batchNotice = nil } })) {
+                Button("OK") { tray.batchNotice = nil }
+            } message: {
+                Text(tray.batchNotice ?? "")
             }
             .alert("Empty the tray?", isPresented: $confirmClear) {
                 Button("Cancel", role: .cancel) {}

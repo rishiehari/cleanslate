@@ -1,4 +1,5 @@
 import Foundation
+import Photos
 import CleanSlateCore
 
 /// One approved group waiting in the tray. Frozen at approval time; every item is
@@ -57,6 +58,10 @@ final class DeletionTray: ObservableObject {
     @Published private(set) var toast: ToastState?
     @Published var receipt: DeletionReceipt?
     @Published private(set) var isDeleting = false
+    /// Plain-words explanation when a delete did not go through (blocked groups, cancelled check, a failure).
+    @Published var batchNotice: String?
+    /// "Double-checking N of M" while the originals are rechecked before the Apple prompt.
+    @Published private(set) var checkProgress: (done: Int, total: Int)?
 
     private let fileURL: URL?
     private var undoAction: (() -> Void)?
@@ -149,11 +154,16 @@ final class DeletionTray: ObservableObject {
         let existing = Set(standaloneEntries.flatMap { $0.items.map(\.id) })
         let fresh = items.filter { !existing.contains($0.id) }
         guard !fresh.isEmpty else { return }
-        let entry = StandaloneTrayEntry(id: "standalone-\(UUID().uuidString)", items: fresh, approvedAt: Date())
-        standaloneEntries.append(entry)
+        // One Apple prompt covers at most `maximumBatchTargets` photos, so a big selection becomes several entries.
+        let size = SafetyPolicy.maximumBatchTargets
+        let added = stride(from: 0, to: fresh.count, by: size).map { start in
+            StandaloneTrayEntry(id: "standalone-\(UUID().uuidString)", items: Array(fresh[start..<min(start + size, fresh.count)]), approvedAt: Date())
+        }
+        standaloneEntries.append(contentsOf: added)
         persist()
+        let addedIDs = Set(added.map(\.id))
         show("Added \(fresh.count) \(fresh.count == 1 ? "item" : "items") to your tray") { [weak self] in
-            self?.standaloneEntries.removeAll { $0.id == entry.id }
+            self?.standaloneEntries.removeAll { addedIDs.contains($0.id) }
             self?.persist()
         }
     }
@@ -187,45 +197,78 @@ final class DeletionTray: ObservableObject {
         }
     }
 
-    // MARK: Deleting (interim: one system prompt per group; Step 8 replaces this with a single batch)
+    // MARK: Deleting (the whole tray is ONE request and ONE Apple prompt)
 
-    func deleteAll(using coordinator: PhotoDeletionCoordinator) async -> DeletionReceipt {
-        guard !isDeleting else { return receipt ?? DeletionReceipt() }
+    /// Sends every ready entry to the coordinator as a single batch. Returns the receipt, or nil when nothing was
+    /// deleted (the batch was blocked, the user cancelled the system prompt, or the check was cancelled).
+    func deleteAll(using coordinator: PhotoDeletionCoordinator) async -> DeletionReceipt? {
+        guard !isDeleting else { return nil }
         isDeleting = true
-        defer { isDeleting = false }
-        var result = DeletionReceipt()
-        for entry in readyEntries {
-            result.requested += entry.selectedIDs.count
-            do {
-                let r = try await coordinator.commit(group: entry.group, selected: entry.selectedIDs,
-                                                     manuallyReviewed: entry.manuallyReviewedIDs, keeperIDs: entry.effectiveKeeperIDs)
-                result.verifiedRemoved += r.verifiedRemoved
-                result.uncertain += r.uncertain
-                result.logicalBytesRemoved += r.logicalBytesRemoved
-                entries.removeAll { $0.id == entry.id }
-            } catch {
-                result.setAside[entry.id] = error.localizedDescription
-                if (error as? CancellationError) != nil { break }
+        batchNotice = nil
+        checkProgress = nil
+        defer { isDeleting = false; checkProgress = nil }
+        var total = DeletionReceipt()
+        var anyCompleted = false
+        let chunks = Self.chunks(groups: readyEntries, standalone: readyStandaloneEntries, limit: SafetyPolicy.maximumBatchTargets)
+        guard !chunks.isEmpty else { return nil }            // nothing ready to delete
+        do {
+            for chunk in chunks {
+                let outcome = try await coordinator.commitBatch(groups: chunk.groups, standalone: chunk.standalone) { [weak self] done, count in
+                    self?.checkProgress = (done, count)
+                }
+                switch outcome {
+                case .blocked(let reasons):
+                    var attention = needsAttention
+                    for (id, reason) in reasons { attention[id] = reason }
+                    needsAttention = attention
+                    let n = reasons.count
+                    batchNotice = "\(n) \(n == 1 ? "group" : "groups") changed since you approved \(n == 1 ? "it" : "them") and \(n == 1 ? "was" : "were") set aside. "
+                        + (anyCompleted ? "The earlier part was deleted; the rest is still in your tray." : "Nothing was deleted. Tap Delete again to remove the rest.")
+                    return anyCompleted ? finish(total) : nil
+                case .completed(let done):
+                    anyCompleted = true
+                    entries.removeAll { done.removedEntryIDs.contains($0.id) }
+                    standaloneEntries.removeAll { done.removedEntryIDs.contains($0.id) }
+                    persist()
+                    total.requested += done.requested; total.verifiedRemoved += done.verifiedRemoved
+                    total.uncertain += done.uncertain; total.logicalBytesRemoved += done.logicalBytesRemoved
+                }
             }
-            persist()
+            return finish(total)
+        } catch is CancellationError {
+            batchNotice = anyCompleted ? "Stopped. The earlier part was deleted; the rest is still in your tray." : "Stopped. Nothing was deleted."
+            return anyCompleted ? finish(total) : nil
+        } catch let error as PHPhotosError where error.code == .userCancelled {
+            return anyCompleted ? finish(total) : nil          // the user said no in Apple's prompt
+        } catch {
+            batchNotice = error.localizedDescription
+            return anyCompleted ? finish(total) : nil
         }
-        for entry in readyStandaloneEntries {
-            result.requested += entry.items.count
-            do {
-                let r = try await coordinator.commitStandalone(items: entry.items)
-                result.verifiedRemoved += r.verifiedRemoved
-                result.uncertain += r.uncertain
-                result.logicalBytesRemoved += r.logicalBytesRemoved
-                standaloneEntries.removeAll { $0.id == entry.id }
-            } catch {
-                result.setAside[entry.id] = error.localizedDescription
-                if (error as? CancellationError) != nil { break }
-            }
-            persist()
+    }
+
+    private func finish(_ total: DeletionReceipt) -> DeletionReceipt {
+        receipt = total
+        return total
+    }
+
+    /// Apple's single prompt is limited to `limit` photos here (a safety bound), so a bigger tray is split into batches.
+    nonisolated static func chunks(groups: [TrayEntry], standalone: [StandaloneTrayEntry],
+                                   limit: Int) -> [(groups: [TrayEntry], standalone: [StandaloneTrayEntry])] {
+        var result: [(groups: [TrayEntry], standalone: [StandaloneTrayEntry])] = []
+        var current: (groups: [TrayEntry], standalone: [StandaloneTrayEntry]) = ([], [])
+        var count = 0
+        func add(size: Int, _ place: () -> Void) {
+            if count + size > limit, count > 0 { result.append(current); current = ([], []); count = 0 }
+            place(); count += size
         }
-        receipt = result
+        for entry in groups { add(size: entry.selectedIDs.count) { current.groups.append(entry) } }
+        for entry in standalone { add(size: entry.items.count) { current.standalone.append(entry) } }
+        if count > 0 { result.append(current) }
         return result
     }
+
+    /// How many Apple prompts the current tray will need.
+    var promptCount: Int { max(1, Self.chunks(groups: readyEntries, standalone: readyStandaloneEntries, limit: SafetyPolicy.maximumBatchTargets).count) }
 
     // MARK: Persistence
 
