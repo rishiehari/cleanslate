@@ -52,7 +52,7 @@ final class LibraryStoreTests: XCTestCase {
         let afterChange = await store.dhash(id: "a", revision: "r1")
         XCTAssertNil(afterChange, "a fingerprint of the old revision must not survive an edit")
         let needing = await store.imageAssetsNeedingFeatures(limit: 10, version: 1)
-        XCTAssertEqual(needing.map(\.id), ["a"])
+        XCTAssertEqual(needing.photos.map(\.id), ["a"])
     }
 
     func testDeletedAssetsDisappearFromEveryQuery() async throws {
@@ -85,6 +85,22 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(seen.count, 25)
         XCTAssertEqual(Set(seen).count, 25)
         XCTAssertEqual(seen.first, "p24")
+    }
+
+    func testFeatureCursorWalksEveryAssetOnceAndCostsTheSamePerBatch() async throws {
+        let store = try LibraryStore(path: nil)
+        try await store.upsert((0..<1_000).map { photo("p\($0)", at: Int64($0)) })
+        var seen: [String] = []
+        var cursor: Int64 = 0
+        while true {
+            let batch = await store.imageAssetsNeedingFeatures(afterRowID: cursor, limit: 150, version: 1)
+            if batch.photos.isEmpty { break }
+            cursor = batch.lastRowID
+            seen += batch.photos.map(\.id)
+            try await store.markFeaturesUnavailable(batch.photos.map { ($0.id, $0.record.revision) })
+        }
+        XCTAssertEqual(seen.count, 1_000)
+        XCTAssertEqual(Set(seen).count, 1_000, "no asset is returned twice")
     }
 
     func testHighBitDifferenceHashSurvivesStorage() async throws {

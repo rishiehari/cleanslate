@@ -45,6 +45,8 @@ struct ToastState: Equatable, Identifiable {
 final class DeletionTray: ObservableObject {
     @Published private(set) var entries: [TrayEntry] = []
     @Published private(set) var standaloneEntries: [StandaloneTrayEntry] = []
+    /// Entries that changed since approval, with the plain-words reason. They are never deleted until the user looks again.
+    @Published private(set) var needsAttention: [String: String] = [:]
     @Published private(set) var reviewedGroupIDs: Set<String> = []
     @Published private(set) var toast: ToastState?
     @Published var receipt: DeletionReceipt?
@@ -66,13 +68,28 @@ final class DeletionTray: ObservableObject {
         return dir.appendingPathComponent(name)
     }
 
+    /// Only entries that are still fine count toward what will be deleted.
+    var readyEntries: [TrayEntry] { entries.filter { needsAttention[$0.id] == nil } }
+    var readyStandaloneEntries: [StandaloneTrayEntry] { standaloneEntries.filter { needsAttention[$0.id] == nil } }
     var photoCount: Int {
-        entries.reduce(0) { $0 + $1.selectedIDs.count } + standaloneEntries.reduce(0) { $0 + $1.items.count }
+        readyEntries.reduce(0) { $0 + $1.selectedIDs.count } + readyStandaloneEntries.reduce(0) { $0 + $1.items.count }
     }
     var verifiedBytes: Int64 {
-        entries.reduce(Int64(0)) { $0 + $1.verifiedBytes } + standaloneEntries.reduce(Int64(0)) { $0 + $1.verifiedBytes }
+        readyEntries.reduce(Int64(0)) { $0 + $1.verifiedBytes } + readyStandaloneEntries.reduce(Int64(0)) { $0 + $1.verifiedBytes }
     }
     var isEmpty: Bool { entries.isEmpty && standaloneEntries.isEmpty }
+    var hasReadyItems: Bool { !readyEntries.isEmpty || !readyStandaloneEntries.isEmpty }
+
+    func setNeedsAttention(_ reasons: [String: String]) { needsAttention = reasons }
+
+    /// Takes an entry out of the tray and returns the group to the review inbox.
+    func sendBackToReview(_ id: String) {
+        entries.removeAll { $0.id == id }
+        standaloneEntries.removeAll { $0.id == id }
+        reviewedGroupIDs.remove(id)
+        needsAttention[id] = nil
+        persist()
+    }
     func contains(_ groupID: String) -> Bool { entries.contains { $0.id == groupID } }
 
     // MARK: Approve / skip / undo
@@ -170,7 +187,7 @@ final class DeletionTray: ObservableObject {
         isDeleting = true
         defer { isDeleting = false }
         var result = DeletionReceipt()
-        for entry in entries {
+        for entry in readyEntries {
             result.requested += entry.selectedIDs.count
             do {
                 let r = try await coordinator.commit(group: entry.group, selected: entry.selectedIDs,
@@ -185,7 +202,7 @@ final class DeletionTray: ObservableObject {
             }
             persist()
         }
-        for entry in standaloneEntries {
+        for entry in readyStandaloneEntries {
             result.requested += entry.items.count
             do {
                 let r = try await coordinator.commitStandalone(items: entry.items)

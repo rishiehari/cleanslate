@@ -260,14 +260,19 @@ actor LibraryStore {
 
     // MARK: Features (difference hash + LSH bands)
 
-    func imageAssetsNeedingFeatures(limit: Int, version: Int) -> [PhotoSnapshot] {
-        (try? rows("""
-            SELECT \(Self.assetColumns) FROM assets a WHERE a.deleted=0 AND a.media_type=1
+    /// Next batch of images that still need a fingerprint, resuming AFTER `afterRowID` (a keyset cursor), so each
+    /// batch costs the same no matter how many were done already (a "skip the done ones" query is quadratic).
+    /// Rows are in insertion order, which is newest-first because the inventory is written newest-first.
+    func imageAssetsNeedingFeatures(afterRowID: Int64 = 0, limit: Int, version: Int) -> (photos: [PhotoSnapshot], lastRowID: Int64) {
+        var last = afterRowID
+        let photos = (try? rows("""
+            SELECT \(Self.assetColumns), a.rowid FROM assets a WHERE a.rowid > ? AND a.deleted=0 AND a.media_type=1
               AND NOT EXISTS (SELECT 1 FROM features f WHERE f.asset_id=a.id AND f.revision=a.revision
                               AND (f.feature_version=? OR f.feature_version=0))
-            ORDER BY a.created_s DESC LIMIT ?
-            """, bind: { sqlite3_bind_int($0, 1, Int32(version)); sqlite3_bind_int($0, 2, Int32(limit)) },
-                   map: { snapshot(from: $0) })) ?? []
+            ORDER BY a.rowid LIMIT ?
+            """, bind: { sqlite3_bind_int64($0, 1, afterRowID); sqlite3_bind_int($0, 2, Int32(version)); sqlite3_bind_int($0, 3, Int32(limit)) },
+                          map: { s -> PhotoSnapshot in last = max(last, sqlite3_column_int64(s, 11)); return snapshot(from: s) })) ?? []
+        return (photos, last)
     }
 
     func putFeatures(_ items: [(id: String, revision: String, dhash: UInt64)], version: Int) throws {

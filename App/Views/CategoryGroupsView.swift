@@ -107,6 +107,7 @@ struct CategoryGroupsView: View {
     }
 
     private func status(_ group: PhotoReviewGroup) -> String? {
+        if model.recheckingGroupIDs.contains(group.id) { return "Rechecking…" }
         if tray.contains(group.id) { return "In your tray" }
         return tray.reviewedGroupIDs.contains(group.id) ? "Skipped" : nil
     }

@@ -16,9 +16,22 @@ struct TrayView: View {
                         description: Text("Approve photos in a review and they'll wait here. Nothing is deleted until you confirm."))
                 } else {
                     List {
+                        if !tray.needsAttention.isEmpty {
+                            Section {
+                                ForEach(tray.entries.filter { tray.needsAttention[$0.id] != nil }) { entry in attentionRow(id: entry.id, thumbnailID: entry.group.keeper.id) }
+                                ForEach(tray.standaloneEntries.filter { tray.needsAttention[$0.id] != nil }) { entry in
+                                    attentionRow(id: entry.id, thumbnailID: entry.items.first?.id ?? "")
+                                }
+                            } header: {
+                                Text("Needs another look")
+                            } footer: {
+                                Text("These changed after you approved them, so they won't be deleted unless you review them again.")
+                            }
+                            .accessibilityIdentifier("tray.attention")
+                        }
                         Section {
-                            ForEach(tray.entries) { entry in row(entry) }
-                            ForEach(tray.standaloneEntries) { entry in standaloneRow(entry) }
+                            ForEach(tray.readyEntries) { entry in row(entry) }
+                            ForEach(tray.readyStandaloneEntries) { entry in standaloneRow(entry) }
                         } footer: {
                             Text("Swipe a group to take it out of the tray.")
                         }
@@ -38,7 +51,7 @@ struct TrayView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if !tray.isEmpty {
+                if tray.hasReadyItems {
                     Button { confirming = true } label: {
                         Text("Delete \(tray.photoCount) \(tray.photoCount == 1 ? "photo" : "photos")")
                             .appText(.groupTitle).frame(maxWidth: .infinity, minHeight: 44)
@@ -70,6 +83,21 @@ struct TrayView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tray.screen")
+    }
+
+    private func attentionRow(id: String, thumbnailID: String) -> some View {
+        HStack(spacing: Spacing.m) {
+            PhotoThumbnailView(assetID: thumbnailID, target: 160)
+                .frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: Radius.s))
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(tray.needsAttention[id] ?? "").appText(.groupTitle)
+                Button("Review again") { tray.sendBackToReview(id) }
+                    .appText(.secondary).accessibilityIdentifier("tray.reviewagain.\(id)")
+            }
+        }
+        .swipeActions { Button("Remove", role: .destructive) { tray.remove(groupID: id) } }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("tray.attention.\(id)")
     }
 
     private func standaloneRow(_ entry: StandaloneTrayEntry) -> some View {

@@ -80,13 +80,7 @@ final class ScanEngine {
 
     // MARK: 1. Inventory sync
 
-    private enum Meta {
-        static let token = "library.changeToken"
-        static let complete = "inventory.complete"
-        static let offset = "inventory.offset"
-        static let startedAt = "inventory.startedAt"
-        static let startToken = "inventory.startToken"
-    }
+    private typealias Meta = LibrarySync.Meta
 
     private func syncInventory() async {
         if await store.meta(Meta.complete) != nil, let token = await store.meta(Meta.token), await store.assetCount() > 0 {
@@ -105,17 +99,8 @@ final class ScanEngine {
     }
 
     private func applyChanges(_ set: LibraryChangeSet) async {
-        let changed = Array(set.changedIDs)
-        var upserts: [PhotoSnapshot] = []
-        var vanished = set.deletedIDs
-        for id in changed {
-            if let photo = library.snapshot(id: id, inspectAlbums: false) { upserts.append(photo) }
-            else { vanished.insert(id) }     // no longer fetchable (e.g. hidden or removed)
-        }
-        try? await store.upsert(upserts)
-        try? await store.markDeleted(Array(vanished))
-        try? await store.setMeta(Meta.token, set.newToken)
-        reporter?.scanUpdate { $0.changesApplied = upserts.count + vanished.count }
+        let touched = await LibrarySync.apply(set, library: library, store: store)
+        reporter?.scanUpdate { $0.changesApplied = touched }
     }
 
     private func fullInventory() async {
@@ -157,6 +142,7 @@ final class ScanEngine {
         try? await store.clearUnavailableFeatures()
         let pending = await store.pendingFeatureCount(version: Self.featureVersion)
         var processed = 0
+        var cursor: Int64 = 0
         while true {
             if Task.isCancelled { return .cancelled }
             let concurrency: Int
@@ -164,8 +150,10 @@ final class ScanEngine {
             case .stop(let reason): return .stopped(reason: reason)
             case .proceed(let width): concurrency = width
             }
-            let batch = await store.imageAssetsNeedingFeatures(limit: 200, version: Self.featureVersion)
+            let next = await store.imageAssetsNeedingFeatures(afterRowID: cursor, limit: 200, version: Self.featureVersion)
+            let batch = next.photos
             if batch.isEmpty { break }
+            cursor = next.lastRowID
             var hashed: [(id: String, revision: String, dhash: UInt64)] = []
             var unavailable: [(id: String, revision: String)] = []
             var index = 0

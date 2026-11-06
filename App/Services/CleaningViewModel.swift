@@ -8,7 +8,13 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     @Published private(set) var authorization: PHAuthorizationStatus
     @Published private(set) var phase: ScanPhase = .idle
     @Published private(set) var progress: Double = 0
-    @Published private(set) var groups: [PhotoReviewGroup] = [] { didSet { recomputeStandalone() } }
+    @Published private(set) var groups: [PhotoReviewGroup] = [] { didSet { recomputeStandalone(); rebuildMembership() } }
+    /// Groups being rechecked after a library change. Their Approve button is disabled meanwhile.
+    @Published private(set) var recheckingGroupIDs: Set<String> = []
+    private var membership = GroupMembershipIndex()
+    private var isProcessingChanges = false
+    private var changesDirty = false
+    private var changesArrivedDuringScan = false
     @Published private(set) var standaloneItems: [StandaloneItem] = [] { didSet { recomputeStandalone() } }
     /// Cached per category: the lists are read many times per screen update.
     private(set) var standaloneCache: [ScanCategory: [StandaloneItem]] = [:]
@@ -51,8 +57,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         trayObserver = self.tray.$standaloneEntries.sink { [weak self] entries in self?.recomputeStandalone(trayEntries: entries) }
         governorObserver = self.governor.$pauseReason.sink { [weak self] reason in self?.pauseReason = reason }
         changeSubscription = library.observeChanges { [weak self] in
-            self?.invalidateAfterLibraryChange()
+            self?.libraryDidChange()
         }
+        revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
     }
 
     func refreshPermissions() {
@@ -66,13 +73,94 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         authorization = newStatus
     }
 
-    /// A library change makes shown results untrustworthy. (Step 6 narrows this to only the affected groups.)
-    private func invalidateAfterLibraryChange() {
-        if isScanning { scanTask?.cancel() }
-        let hadResults = !groups.isEmpty || !standaloneItems.isEmpty
+    // MARK: Live invalidation (only what changed is rechecked)
+
+    /// Called by PhotoKit (via the observer). Changes are processed one pass at a time; a change that
+    /// arrives during a pass triggers one more pass.
+    private func libraryDidChange() {
+        if isScanning { changesArrivedDuringScan = true; return }
+        changesDirty = true
+        guard !isProcessingChanges else { return }
+        isProcessingChanges = true
+        Task { [weak self] in
+            while let self, self.changesDirty {
+                self.changesDirty = false
+                await self.processLibraryChange()
+            }
+            self?.isProcessingChanges = false
+        }
+    }
+
+    /// Catches the index up with the library and rechecks ONLY the groups, lists and tray entries that contain a changed asset.
+    func processLibraryChange() async {
+        let hasResults = !groups.isEmpty || !standaloneItems.isEmpty || !tray.isEmpty
+        guard let token = await store.meta(LibrarySync.Meta.token), await store.meta(LibrarySync.Meta.complete) != nil else {
+            if hasResults { clearResultsAfterUnknownChange() }
+            return
+        }
+        switch library.changes(since: token) {
+        case .changes(let set):
+            await LibrarySync.apply(set, library: library, store: store)
+            let touched = set.changedIDs.union(set.deletedIDs)
+            guard !touched.isEmpty else { return }
+            await recheckGroups(affectedBy: touched)
+            refreshStandalone(touched: touched)
+            revalidateTray(touched: touched)
+        case .tokenExpired, .unavailable:
+            if hasResults { clearResultsAfterUnknownChange() }
+        }
+    }
+
+    private func clearResultsAfterUnknownChange() {
         groups = []
         standaloneItems = []
-        if hadResults { statusMessage = "The Photos library changed. Previous results were cleared. Scan again." }
+        statusMessage = "The Photos library changed. Previous results were cleared. Scan again."
+    }
+
+    private func rebuildMembership() {
+        membership = GroupMembershipIndex(groups: Dictionary(uniqueKeysWithValues: groups.map { ($0.id, Set($0.all.map(\.id))) }))
+    }
+
+    private func recheckGroups(affectedBy touched: Set<String>) async {
+        let affected = membership.groupsAffected(by: touched)
+        guard !affected.isEmpty else { return }
+        recheckingGroupIDs.formUnion(affected)
+        let rechecker = GroupRechecker(library: library, networkPolicy: networkPolicy, albums: albumMembers)
+        for id in affected.sorted() {
+            defer { recheckingGroupIDs.remove(id) }
+            guard let group = groups.first(where: { $0.id == id }) else { continue }
+            switch await rechecker.recheck(group) {
+            case .unchanged: break
+            case .updated(let updated): if let index = groups.firstIndex(where: { $0.id == id }) { groups[index] = updated }
+            case .dissolved: groups.removeAll { $0.id == id }
+            }
+        }
+    }
+
+    private func refreshStandalone(touched: Set<String>) {
+        guard standaloneItems.contains(where: { touched.contains($0.id) }) else { return }
+        var refreshed: [StandaloneItem] = []
+        for item in standaloneItems {
+            guard touched.contains(item.id) else { refreshed.append(item); continue }
+            guard let fresh = library.snapshot(id: item.id, inspectAlbums: false) else { continue }      // gone
+            let sameFile = fresh.record.revision == item.snapshot.record.revision
+            refreshed.append(StandaloneItem(snapshot: fresh, verifiedBytes: sameFile ? item.verifiedBytes : nil))
+        }
+        standaloneItems = refreshed
+    }
+
+    /// Re-judges approved entries. `touched == nil` checks everything (at launch).
+    func revalidateTray(touched: Set<String>?) {
+        let checker = TrayChecker(library: library)
+        var reasons = tray.needsAttention
+        for entry in tray.entries where touched.map({ !$0.isDisjoint(with: entry.group.all.map(\.id)) }) ?? true {
+            reasons[entry.id] = checker.reasonNeedingAnotherLook(entry)
+        }
+        for entry in tray.standaloneEntries where touched.map({ !$0.isDisjoint(with: entry.items.map(\.id)) }) ?? true {
+            reasons[entry.id] = checker.reasonNeedingAnotherLook(entry)
+        }
+        let live = Set(tray.entries.map(\.id) + tray.standaloneEntries.map(\.id))
+        tray.setNeedsAttention(reasons.filter { live.contains($0.key) })
     }
 
     func groups(in category: ScanCategory) -> [PhotoReviewGroup] {
@@ -157,6 +245,10 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         let outcome = await engine.run()
         finishScan(outcome)
         isScanning = false
+        if changesArrivedDuringScan {              // the library moved while we were scanning: recheck what that touched
+            changesArrivedDuringScan = false
+            await processLibraryChange()
+        }
     }
 
     func scan() {

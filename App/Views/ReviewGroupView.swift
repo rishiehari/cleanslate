@@ -4,6 +4,7 @@ import CleanSlateCore
 /// Review one group: the Keep photo on top, the others below. Tap a photo to flip Keep/Delete.
 /// Approve moves the Delete-marked photos into the tray. It never deletes (U1).
 struct ReviewGroupView: View {
+    @EnvironmentObject private var model: CleaningViewModel
     @StateObject private var review: GroupReviewModel
     @ScaledMetric(relativeTo: .body) private var barClearance = Spacing.barClearance
     @State private var explaining: Evidence?
@@ -20,6 +21,8 @@ struct ReviewGroupView: View {
     }
 
     private var others: [PhotoSnapshot] { review.group.candidates }
+    /// The library changed under this group; Approve waits until it has been rechecked.
+    private var isRechecking: Bool { model.recheckingGroupIDs.contains(review.group.id) }
 
     var body: some View {
         ScrollView {
@@ -63,7 +66,8 @@ struct ReviewGroupView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            ApprovalBar(approveTitle: approveTitle, subtitle: subtitle, canApprove: review.canApprove,
+            ApprovalBar(approveTitle: isRechecking ? "Rechecking…" : approveTitle, subtitle: isRechecking ? nil : subtitle,
+                        canApprove: review.canApprove && !isRechecking,
                         onSkip: { review.skip(); onFinished() },
                         onApprove: { if review.approve() { onFinished() } })
         }
