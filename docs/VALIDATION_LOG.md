@@ -124,6 +124,20 @@ Start commit: 158d904  End commit: see `git log` ("Step 3" commits)
 ### Tests added
 Core: 9 ExactCandidates, 9 flag-split/fuzz. iOS: 11 `ExactMatchingTests` (Live pair exact + preselected; different paired video not exact; paired video not local counted, not matched; edited and RAW copies findable; favorite is keeper; network never used when off; never used on an expensive connection; opt-in downloads and counts budget; budget stops downloads; stable group ids). UI: iCloud flow end to end (scan → "couldn't be checked" → opt in → rescan → the iCloud-only copy becomes a group) and menu sheet.
 
+### /code-review (medium) on 158d904..HEAD — 10 findings, 9 fixed, 1 partly
+| # | Finding | Outcome |
+|---|---|---|
+| 1 | iCloud budget never reset (really per launch) | Fixed: reset at the start of every scan; test |
+| 2 | `snapshot()` didn't fill video fields | Fixed (Step 4); duration/type now reach bucketing |
+| 3 | Budget only checked before an asset; failed downloads uncounted | Fixed: refuse assets whose estimated size exceeds what's left; failed downloads are charged the estimate; tests |
+| 4 | Unbounded full hashing | Fixed: smaller buckets first, cap of 4,000 hashed assets per scan, remainder reported (`exactSkippedByLimit`) |
+| 5 | Commit-time rehash could download | Fixed: commit is **local-only**; test asserts no network flag on any commit-time request |
+| 6 | `runScan` duplicated `scan` | Fixed: `scan()` wraps `runScan()`; stop works; test |
+| 7 | Redundant counters | Fixed |
+| 8 | Group id depended on the keeper | Fixed: id is the content signature only; test (keeper changes, id doesn't) |
+| 9 | Oversized buckets dropped | Fixed: split by creation minute first, residual counted; tests |
+| 10 | Network path unknown at launch | Fixed: unknown == not allowed (fail closed) |
+
 ### Self-review
 - Existing SafetyPolicy assertions changed: **one, as authorized** (`testProtectionFlagsFailClosed` → split; semantics for hard flags unchanged). **Owner must review `SafetyPolicy.swift` + that test.** The change is isolated in commit `1eb00cb` and can be reverted independently of the rest of Step 3.
 - `deleteAssets`: still exactly one call site.
@@ -132,3 +146,27 @@ Core: 9 ExactCandidates, 9 flag-split/fuzz. iOS: 11 `ExactMatchingTests` (Live p
 
 ### 🧑 Human gate (PENDING): device check (disposable library)
 Use Photos' "Duplicate" on a Live Photo, an edited photo and a normal photo; scan; expect 3 exact groups; delete one in the app (with only ONE group in the tray, see the Step 8 note); confirm Recently Deleted and the keeper. Then with iCloud Photos + Optimize Storage on: toggle iCloud checking off then on and note the coverage numbers.
+
+## Step 4 — Videos, screenshots, screen recordings, large files — 2026-11-06
+Start commit: c9f0fe1 (Step 3 end)  **make ci: PASS** — core 65, iOS unit 56 (1 simulator skip), UI 26, lint + policy-separation guard.
+
+### Built
+- Inventory covers images **and videos**; flags for Cinematic and Spatial media (conditional); subtypes (screenshot, screen recording) and duration on snapshots.
+- Exact **video** duplicates reuse the Step 3 pipeline (duration-aware buckets, full-resource hash) → own "Videos" inbox with the same Review → Approve → Tray flow.
+- **Keeper-less lists** (`StandaloneListView`): *Screenshots & recordings* (grid, "Older than 30 days" filter, optional select-all) and *Large files* (list, largest first, no select-all). **Nothing is ever pre-selected.** Items with any protection flag are excluded; album membership is checked at tap time and again at commit.
+- Sizes without private API: video = size of the local file; image = streamed resource bytes. Verified sizes are plain, estimates are "≈ … (estimated)", unknown is "Size in iCloud"; estimates are never added to verified totals (tested).
+- Core `SafetyPolicy.validateStandalone` (separate from `validateCommit`): requires explicit confirmation, every item individually confirmed, fresh revision, and **any** flag blocks (no keeper can stand in). 10 tests.
+- `PhotoDeletionCoordinator.commitStandalone` + tray rows for standalone items (persisted, backup-excluded).
+- `scripts/check_policy_separation.sh` (in `make lint`): `validateCommit` may only be called inside `commit`, `validateStandalone` only inside `commitStandalone`, exactly one `deleteAssets`. Proven by a deliberate mix-up being detected.
+
+### Defects found by looking at screenshots / thinking adversarially, fixed
+- **Safety:** identical copies (two identical large videos) also appeared in Large files, so a user could delete *both* copies. Members of any exact-copy group are now excluded from keeper-less lists (test: 2 identical videos + 2 identical screenshots → neither appears).
+- "Select all" on large videos removed (too easy to nuke every big video); filter chip now looks like a toggle; grid thumbnails letterboxed (now fill).
+
+### Tests
+Core: 10 standalone policy. iOS: 19 `StandaloneTests` (commit refuses on favorite-after-approval, protected flag without revision change, conditional flag, last-moment change, cancel, revoked/vanished/empty, limited access; categories computed by a scan; estimate labeling; identical videos in Videos not Exact; videos never visually hashed; tray adds once, deletes, survives relaunch). UI: screenshots opens with nothing selected and favorites excluded, 30-day filter, approve + tray delete, large files sorted, identical videos in Videos inbox.
+
+### Deferred (honest)
+- **4.3 Similar videos** (3 sampled frames + feature prints): needs Vision, which cannot run in the simulator, and real video fixtures; not built. Exact video duplicates are covered. Revisit with the device runs.
+- `scripts/make_video_fixtures.sh` (ffmpeg real videos for the simulator) not written; video behavior is verified through the fake library only.
+- 🧑 Human gate (device): take 5 real screenshots + 1 screen recording; confirm they're categorized (simulator imports don't carry the screenshot subtype); delete 2; confirm outcome. **PENDING**. Owner must also review `validateStandalone` (Core/StandalonePolicy.swift) per the plan's 4.5 gate. **PENDING**.
