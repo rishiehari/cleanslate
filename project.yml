@@ -1,0 +1,48 @@
+name: CleanSlate
+options:
+  bundleIdPrefix: org.cleanslate
+  deploymentTarget:
+    iOS: '18.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    PRODUCT_BUNDLE_IDENTIFIER: org.cleanslate.free
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: CleanSlate
+    INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 'Analyze photos privately on this device to find redundant pictures and request user-approved deletions.'
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    SWIFT_STRICT_CONCURRENCY: minimal
+    CODE_SIGN_STYLE: Automatic
+packages:
+  CleanSlateCore:
+    path: Core
+targets:
+  CleanSlate:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: CleanSlateCore
+        product: CleanSlateCore
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+    scheme:
+      testTargets:
+        - CleanSlateTests
+  CleanSlateTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: iOSTests
+    dependencies:
+      - target: CleanSlate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.cleanslate.free.tests
+        GENERATE_INFOPLIST_FILE: YES
