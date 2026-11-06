@@ -1,0 +1,27 @@
+import SwiftUI
+
+struct PhotoThumbnailView: View {
+    let assetID: String
+    var target: CGFloat = 280
+    @State private var image: UIImage?
+    @State private var finished = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10).fill(Color(uiColor: .secondarySystemBackground))
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: finished ? "icloud.slash" : "photo")
+                    .font(.title3).foregroundStyle(.secondary)
+            }
+        }
+        .clipped()
+        .task(id: assetID) {
+            finished = false
+            image = await PhotoCatalog.shared.thumbnail(assetID, target: target)
+            finished = true
+        }
+        .accessibilityLabel(image == nil ? "Photo thumbnail unavailable" : "Photo preview")
+    }
+}

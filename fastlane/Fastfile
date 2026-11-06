@@ -1,0 +1,38 @@
+def api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_KEY_CONTENT"),
+    is_key_content_base64: false
+  )
+end
+
+def make_project
+  sh("xcodegen generate --spec project.yml")
+end
+
+platform :ios do
+  desc "Compile the app and validate safety core without signing"
+  lane :verify do
+    sh("swift test --package-path Core")
+    make_project
+    sh("xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build")
+  end
+
+  desc "Upload an explicitly triggered signed build to TestFlight"
+  lane :beta do
+    make_project
+    key = api_key
+    build_app(project: "CleanSlate.xcodeproj", scheme: "CleanSlate", export_method: "app-store")
+    upload_to_testflight(api_key: key, skip_waiting_for_build_processing: true)
+  end
+
+  desc "Upload a store build, but DO NOT submit it for review or release automatically"
+  lane :store_upload_only do
+    make_project
+    key = api_key
+    build_app(project: "CleanSlate.xcodeproj", scheme: "CleanSlate", export_method: "app-store")
+    upload_to_app_store(api_key: key, submit_for_review: false, automatic_release: false,
+                        skip_metadata: true, skip_screenshots: true)
+  end
+end

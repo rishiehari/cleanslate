@@ -1,0 +1,2 @@
+app_identifier(ENV.fetch("CLEANSLATE_BUNDLE_ID", "org.cleanslate.free"))
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"]

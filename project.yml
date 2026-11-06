@@ -30,7 +30,6 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
     scheme:
       testTargets:
