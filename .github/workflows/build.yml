@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select newest Xcode
         run: |
-          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          XC=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
           echo "Using $XC"
           sudo xcode-select -s "$XC/Contents/Developer"
           xcodebuild -version

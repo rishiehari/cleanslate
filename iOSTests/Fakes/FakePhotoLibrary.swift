@@ -25,7 +25,9 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     private(set) var digestCalls: [String] = []
     /// Called when hashing of an asset begins; lets a test mutate the library mid-flight.
     var onDigests: ((String) -> Void)?
-    private var changeHandler: (@MainActor () -> Void)?
+    private var handlers: [UUID: @MainActor () -> Void] = [:]
+    /// Called right before the delete request is applied; lets a test change things at the last moment.
+    var beforeDelete: (() -> Void)?
 
     // MARK: Test helpers
 
@@ -52,7 +54,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         assets[id] = asset
     }
 
-    func simulateExternalChange() { changeHandler?() }
+    func simulateExternalChange() { handlers.values.forEach { $0() } }
 
     // MARK: PhotoLibraryClient
 
@@ -75,7 +77,12 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         return digests
     }
 
-    func delete(ids: [String]) async throws {
+    func delete(ids: [String], expectedRevisions: [String: String]) async throws {
+        beforeDelete?()
+        for id in ids {
+            guard let asset = assets[id] else { throw LibraryResourceError.notAccessible }
+            guard expectedRevisions[id] == asset.snapshot.record.revision else { throw LibraryResourceError.changed }
+        }
         deleteCalls.append(ids.sorted())
         switch deleteOutcome {
         case .userCancelled: throw PHPhotosError(.userCancelled)
@@ -86,8 +93,11 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         }
     }
 
-    func startObservingChanges(_ onChange: @escaping @MainActor () -> Void) { changeHandler = onChange }
-    func stopObservingChanges() { changeHandler = nil }
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) -> ChangeSubscription {
+        let id = UUID()
+        handlers[id] = onChange
+        return ChangeSubscription { [weak self] in Task { @MainActor in self?.handlers[id] = nil } }
+    }
 }
 
 /// Builds a review group out of fake-library assets.

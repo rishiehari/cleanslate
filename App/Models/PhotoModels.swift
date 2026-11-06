@@ -52,6 +52,8 @@ struct ScanStatistics {
     var exactAssetsVerified = 0
     var candidatePairsConsidered = 0
     var truncated = false
+    /// Candidate pairs that could not be compared because Vision failed (e.g. simulator).
+    var visionFailures = 0
     var lastError: String?
 }
 

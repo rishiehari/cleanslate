@@ -21,12 +21,22 @@ protocol PhotoLibraryClient: AnyObject {
     /// Digest of EVERY resource of the asset. Never touches the network.
     func digests(id: String) async throws -> [ResourceDigest]
     /// Asks the system to delete the assets. The system presents its own confirmation.
+    /// Immediately before the change request, the implementation re-reads the very objects
+    /// it is about to delete and throws `.changed` if any revision differs from
+    /// `expectedRevisions`. Order of `ids` is not significant.
     /// Throws if the user cancels or the change fails.
-    func delete(ids: [String]) async throws
+    func delete(ids: [String], expectedRevisions: [String: String]) async throws
 
-    /// Invalidation hint only; observers must refetch and re-verify.
-    func startObservingChanges(_ onChange: @escaping @MainActor () -> Void)
-    func stopObservingChanges()
+    /// Invalidation hint only; observers must refetch and re-verify. Keep the returned
+    /// subscription alive for as long as you want callbacks; releasing it unsubscribes.
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) -> ChangeSubscription
+}
+
+/// Unsubscribes when released.
+final class ChangeSubscription {
+    private let onCancel: () -> Void
+    init(onCancel: @escaping () -> Void) { self.onCancel = onCancel }
+    deinit { onCancel() }
 }
 
 enum LibraryResourceError: LocalizedError {

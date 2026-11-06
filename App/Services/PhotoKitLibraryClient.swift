@@ -11,16 +11,28 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     static let shared = PhotoKitLibraryClient()
     private let imageManager = PHCachingImageManager()
     private let watcher = PhotoLibraryWatcher()
-    private var observing = false
-    private init() {}
-
-    func startObservingChanges(_ onChange: @escaping @MainActor () -> Void) {
-        watcher.onChange = { Task { @MainActor in onChange() } }
-        if !observing { PHPhotoLibrary.shared().register(watcher); observing = true }
+    private var handlers: [UUID: @MainActor () -> Void] = [:]
+    private var registered = false
+    private init() {
+        watcher.onChange = { [weak self] in
+            Task { @MainActor in self?.handlers.values.forEach { $0() } }
+        }
     }
 
-    func stopObservingChanges() {
-        if observing { PHPhotoLibrary.shared().unregisterChangeObserver(watcher); observing = false }
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) -> ChangeSubscription {
+        let id = UUID()
+        handlers[id] = onChange
+        if !registered { PHPhotoLibrary.shared().register(watcher); registered = true }
+        return ChangeSubscription { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.handlers[id] = nil
+                if self.handlers.isEmpty && self.registered {
+                    PHPhotoLibrary.shared().unregisterChangeObserver(self.watcher)
+                    self.registered = false
+                }
+            }
+        }
     }
 
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? {
@@ -32,9 +44,14 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         return try await completeDigests(asset)
     }
 
-    func delete(ids: [String]) async throws {
-        let assets = ids.sorted().compactMap { fetchAsset($0) }
+    func delete(ids: [String], expectedRevisions: [String: String]) async throws {
+        let assets = ids.compactMap { fetchAsset($0) }
         guard assets.count == ids.count else { throw LibraryResourceError.notAccessible }
+        // Re-read the exact objects handed to PhotoKit; abort if any differ from what the user approved.
+        for asset in assets {
+            guard let expected = expectedRevisions[asset.localIdentifier],
+                  snapshot(asset).record.revision == expected else { throw LibraryResourceError.changed }
+        }
         try await PHPhotoLibrary.shared().performChanges {
             PHAssetChangeRequest.deleteAssets(assets as NSArray)
         }

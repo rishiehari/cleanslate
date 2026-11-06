@@ -28,7 +28,7 @@ GitHub Actions run: NOT VERIFIED (no push performed; the plan says not to push w
 | 10 | removal reconciled only with `.authorized` access | yes | yes |
 
 ### Tests
-- 14 `DeletionCoordinatorTests` (plan asked for 9): exact deletes only selected, stale revision, keeper vanished, bytes changed, original not local, favorited during hash, flag change without revision change, protected target blocked before hashing, user cancels system prompt, concurrent commit rejected, limited access never counts as verified, revoked access, empty/keeper selection, similar requires manual review.
+- 16 `DeletionCoordinatorTests` after review fixes (plan asked for 9): exact deletes only selected, stale revision, keeper vanished, bytes changed, original not local, favorited during hash, flag change without revision change, protected target blocked before hashing, user cancels system prompt, concurrent commit rejected, limited access never counts as verified, revoked access, empty/keeper selection, similar requires manual review.
 - **Mutation check:** disabling guard 7 made 2 tests fail; disabling the signature comparison in guard 6 made 1 test fail. Guards are covered by tests that can fail.
 
 ### Self-review
@@ -37,6 +37,19 @@ GitHub Actions run: NOT VERIFIED (no push performed; the plan says not to push w
 - Network: only `isNetworkAccessAllowed = false` (two places). No `URLSession`.
 - Main-thread work: unchanged from baseline (the scan still runs on the main actor; fixed in Step 5).
 - Known behavior kept as-is: a failed post-hash revalidation reports `.vanished` ("no longer available") even if the cause is a changed revision/flag. Message improvement is a Step 6 item.
+
+### /code-review (medium) on 1891668..HEAD — 9 findings, all addressed
+| # | Finding | Outcome |
+|---|---|---|
+| 1 | Vision failures swallowed with `try?`, scan "succeeds" with zero similar groups | Fixed: `statistics.visionFailures` counted and shown in the scan status message |
+| 2 | Change observer: single handler slot, `deinit` comment wrong, `stopObserving` dead | Fixed: `observeChanges` returns a `ChangeSubscription` token (multiple observers, unsubscribes on release); test added |
+| 3 | `digests` errors not mapped to `DeletionError` | Fixed: new `.cannotVerify`; cancellation passes through; test now asserts the exact error |
+| 4 | Window between final revalidation and the real delete | Partly disputed (the old code also refetched after revalidation) but hardened anyway: `delete(ids:expectedRevisions:)` re-reads the exact objects it deletes and aborts on any revision mismatch; test `testChangeAtTheLastMomentIsCaughtByTheDeleteCall` |
+| 5 | Makefile `SIM_ID` eager + no guard | Fixed: lazy variable and an explicit "no simulator" error |
+| 6 | CI could pick a beta Xcode | Fixed: betas filtered out |
+| 7 | `mac-build`/`mac-tests` aliases misleading | Removed |
+| 8 | Redundant sorting / ordering contract | Contract documented in the protocol |
+| 9 | Digest stage swallowed cancellation | Fixed: cancellation now stops the scan |
 
 ### Human gate 1.7 — first physical device run: **PENDING (needs the owner)**
 Checklist for the owner (disposable library, iCloud Photos OFF, ~30 photos incl. 3 pairs made with Photos "Duplicate"):

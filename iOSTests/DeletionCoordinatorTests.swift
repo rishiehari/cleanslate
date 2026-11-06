@@ -73,12 +73,38 @@ final class DeletionCoordinatorTests: XCTestCase {
     func testOriginalNotLocalAtCommitAborts() async {
         let group = makeExactPair()
         library.assets["c"]?.digests = nil
-        do {
+        await expectError(.cannotVerify) {
             _ = try await coordinator.commit(group: group, selected: ["c"], manuallyReviewed: [])
-            XCTFail("must not delete when bytes cannot be verified")
-        } catch {
-            XCTAssertTrue(library.deleteCalls.isEmpty)
         }
+        XCTAssertTrue(library.deleteCalls.isEmpty)
+    }
+
+    func testChangeAtTheLastMomentIsCaughtByTheDeleteCall() async {
+        let group = makeExactPair()
+        // Passes every earlier check, then changes right before the request is applied.
+        library.beforeDelete = { [library] in library?.update("c", revision: "v-last-second") }
+        await expectError(.changedResource) {
+            _ = try await coordinator.commit(group: group, selected: ["c"], manuallyReviewed: [])
+        }
+        XCTAssertTrue(library.deleteCalls.isEmpty)
+        XCTAssertNotNil(library.assets["c"])
+    }
+
+    func testDroppingTheChangeSubscriptionStopsCallbacks() {
+        var fired = 0
+        var subscription: ChangeSubscription? = library.observeChanges { fired += 1 }
+        library.simulateExternalChange()
+        XCTAssertEqual(fired, 1)
+        subscription = nil
+        let released = expectation(description: "subscription released")
+        Task { @MainActor in
+            await Task.yield()
+            self.library.simulateExternalChange()
+            XCTAssertEqual(fired, 1)
+            released.fulfill()
+        }
+        wait(for: [released], timeout: 2)
+        _ = subscription
     }
 
     func testBecameFavoriteDuringHashAborts() async {

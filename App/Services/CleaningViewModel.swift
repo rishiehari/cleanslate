@@ -19,20 +19,16 @@ final class CleaningViewModel: ObservableObject {
     private let coordinator: PhotoDeletionCoordinator
     private let featureStore = LocalFeatureIndex()
     private var scanTask: Task<Void, Never>?
+    private var changeSubscription: ChangeSubscription?
     private var scanLimit = 1500
 
     init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared) {
         self.library = library
         self.coordinator = PhotoDeletionCoordinator(library: library)
         self.authorization = library.authorization
-        library.startObservingChanges { [weak self] in
+        changeSubscription = library.observeChanges { [weak self] in
             self?.invalidateAfterLibraryChange()
         }
-    }
-
-    deinit {
-        // The observer holds only a weak reference to self; PhotoKit registration is
-        // released when the client is torn down or replaced.
     }
 
     func refreshPermissions() {
@@ -171,6 +167,10 @@ final class CleaningViewModel: ObservableObject {
             do {
                 allDigests[id] = try await library.digests(id: id)
                 statistics.exactAssetsVerified += 1
+            } catch is CancellationError {
+                phase = .cancelled; return
+            } catch LibraryResourceError.cancelled {
+                phase = .cancelled; return
             } catch { /* Local-only asset or permission failure: do not claim a match. */ }
             if n % 5 == 0 { progress = 0.65 + 0.23 * Double(n + 1) / Double(max(1, orderedIDs.count)); await Task.yield() }
         }
@@ -212,11 +212,17 @@ final class CleaningViewModel: ObservableObject {
                   let ah = hashes[a.id], let bh = hashes[b.id],
                   CandidateIndex.hamming(ah, bh) <= 10 else { continue }
             guard let firstImage = await library.thumbnail(a.id, target: 512),
-                  let secondImage = await library.thumbnail(b.id, target: 512),
-                  let firstPrint = try? await VisualFeatures.printFeature(firstImage),
-                  let secondPrint = try? await VisualFeatures.printFeature(secondImage),
-                  let distance = try? VisualFeatures.distance(firstPrint, secondPrint),
-                  distance < 0.32 else { continue }
+                  let secondImage = await library.thumbnail(b.id, target: 512) else { continue }
+            let distance: Double
+            do {
+                let firstPrint = try await VisualFeatures.printFeature(firstImage)
+                let secondPrint = try await VisualFeatures.printFeature(secondImage)
+                distance = try VisualFeatures.distance(firstPrint, secondPrint)
+            } catch {
+                statistics.visionFailures += 1
+                continue
+            }
+            guard distance < 0.32 else { continue }
             let (sharpA, exposeA) = VisualFeatures.sharpnessAndExposure(firstImage)
             let (sharpB, exposeB) = VisualFeatures.sharpnessAndExposure(secondImage)
             let qa = QualitySignals(id: a.id, sharpness: sharpA,
@@ -257,6 +263,9 @@ final class CleaningViewModel: ObservableObject {
             ? "Partial scan: \(photos.count) of \(listing.totalVisible) accessible photos inventoried. "
               + "Only \(candidatePairs.count) candidate pairs verified/reviewed in this pass. Tap Scan More for broader coverage."
             : "Scanned \(photos.count) accessible photos. Not all iCloud-only originals were available locally; matches may be missed."
+        if statistics.visionFailures > 0 {
+            statusMessage = (statusMessage ?? "") + " Similar-photo comparison was unavailable for \(statistics.visionFailures) pair(s) on this device."
+        }
     }
 
     private func preferredKeeper(_ photos: [PhotoSnapshot]) -> PhotoSnapshot {

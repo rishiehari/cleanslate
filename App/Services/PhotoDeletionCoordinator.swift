@@ -12,7 +12,7 @@ final class PhotoDeletionCoordinator {
     }
 
     enum DeletionError: LocalizedError, Equatable {
-        case busy, revoked, vanished, unsafe(String), changedResource, noSelection, confirmationFailed
+        case busy, revoked, vanished, unsafe(String), changedResource, cannotVerify, noSelection, confirmationFailed
         var errorDescription: String? {
             switch self {
             case .busy: "Another photo deletion is still being reconciled."
@@ -20,6 +20,7 @@ final class PhotoDeletionCoordinator {
             case .vanished: "A photo or its keeper is no longer available. Please rescan."
             case .unsafe(let reason): "Safety policy blocked deletion: \(reason)."
             case .changedResource: "Original resource bytes changed. Please rescan before deleting."
+            case .cannotVerify: "Couldn't verify the original files right now. Nothing was deleted."
             case .noSelection: "No eligible photos are selected."
             case .confirmationFailed: "Photos did not confirm the deletion."
             }
@@ -64,10 +65,10 @@ final class PhotoDeletionCoordinator {
         // For exact duplicates, rehash all ORIGINAL resources immediately before mutation,
         // not merely their cached fingerprints or metadata revisions.
         if group.kind == .exact {
-            let keeperSignature = ResourceSignatures.canonical(try await library.digests(id: group.keeper.id))
+            let keeperSignature = ResourceSignatures.canonical(try await verifiedDigests(group.keeper.id))
             guard let keeperSignature else { throw DeletionError.changedResource }
             for id in selected.sorted() {
-                guard let signature = ResourceSignatures.canonical(try await library.digests(id: id)),
+                guard let signature = ResourceSignatures.canonical(try await verifiedDigests(id)),
                       signature == keeperSignature else { throw DeletionError.changedResource }
             }
         }
@@ -83,9 +84,11 @@ final class PhotoDeletionCoordinator {
         guard hasAccess else { throw DeletionError.revoked }
 
         do {
-            try await library.delete(ids: Array(selected))
+            try await library.delete(ids: Array(selected), expectedRevisions: expected)
         } catch LibraryResourceError.notAccessible {
             throw DeletionError.vanished
+        } catch LibraryResourceError.changed {
+            throw DeletionError.changedResource
         }
 
         let access = library.authorization
@@ -100,5 +103,18 @@ final class PhotoDeletionCoordinator {
         }
         return DeletionResult(requested: selected.count, verifiedRemoved: removed,
                               logicalBytesRemoved: bytes, uncertain: selected.count - removed)
+    }
+
+    /// Maps "can't read the original" failures to a safe, explicit abort. Cancellation passes through.
+    private func verifiedDigests(_ id: String) async throws -> [ResourceDigest] {
+        do {
+            return try await library.digests(id: id)
+        } catch let error as LibraryResourceError {
+            switch error {
+            case .cancelled: throw CancellationError()
+            case .changed: throw DeletionError.changedResource
+            case .notAccessible, .empty: throw DeletionError.cannotVerify
+            }
+        }
     }
 }
