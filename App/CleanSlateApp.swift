@@ -5,6 +5,7 @@ import Photos
 struct CleanSlateApp: App {
     @StateObject private var model: CleaningViewModel
     private let library: PhotoLibraryClient
+    @StateObject private var labels = LabelStore(fileURL: LabelStore.defaultURL())
 
     init() {
         let environment = AppEnvironment.make()
@@ -51,6 +52,7 @@ struct CleanSlateApp: App {
                 #endif
                 .environmentObject(model)
                 .environmentObject(model.tray)
+                .environmentObject(labels)
                 .environment(\.photoLibraryOverride, library)
                 .tint(Color.actionPrimary)
         }

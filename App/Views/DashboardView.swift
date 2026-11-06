@@ -4,6 +4,7 @@ import Photos
 struct DashboardView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
+    @EnvironmentObject private var labels: LabelStore
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("onboarding.seen.v1") private var onboardingSeen = false
     @AppStorage(HapticsService.defaultsKey) private var hapticsOn = true
@@ -79,6 +80,15 @@ struct DashboardView: View {
             Toggle("Haptics", systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
             Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }
             Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
+            if labels.corrections > 0 {
+                Label("Suggestions you corrected: \(labels.corrections)", systemImage: "hand.thumbsdown")
+            }
+            if LabelStore.isAvailableInThisBuild {
+                Toggle("Label mode (testers)", systemImage: "tag", isOn: $labels.isEnabled)
+                if labels.isEnabled, let url = try? labels.exportFile() {
+                    ShareLink("Export labels (anonymous)", item: url)
+                }
+            }
             Button("Open Photos settings", systemImage: "hand.raised") {
                 if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
             }

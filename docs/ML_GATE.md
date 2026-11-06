@@ -25,7 +25,7 @@ change (not a remote flag, not a setting), when ALL of these hold on **held-out,
 ## Evidence so far (2026-11-06)
 | Data | Size | Result |
 |---|---|---|
-| Synthetic fixtures (authored, `fixtures/`) | 8 variants × N scenes | Used ONLY as a regression canary: 0 unique-content variants reach the Exact tier. **Not evidence of real-world accuracy.** |
+| Synthetic fixtures (authored, `fixtures/`), `make eval` | 40 scenes, 320 images | Exact recall 1.000, exact precision 1.000, **0 of 120** unique-content photos pre-selected (95% upper bound **2.5%**, 25× above the gate). Re-encoded/brightened copies: near recall 1.000 at ≤ 6 bits. **Important:** 80 of 120 unique-content variants (changed sign, expression, missing person) are still within 10 hash bits of their base, so a hash-based "near duplicate" rule WOULD pick them. This is the concrete reason near pre-selection stays off. Synthetic canary only; not evidence of real-world accuracy. |
 | Real labeled groups | **0** | The labeling tool exists (DEBUG/TestFlight "Label mode"); no data collected yet |
 
 So the current upper bound is **uninformative (100%)** and near-duplicate pre-selection stays **off**.

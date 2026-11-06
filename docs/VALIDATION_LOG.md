@@ -261,3 +261,18 @@ Real-library **scan-only** run on a device (Instruments: time, memory, thermal);
 - **Not done / deferred:** per-face crop strip in Compare, shake-to-undo, per-photo quality thumbnails for the whole set in
   one filmstrip (the grid is used instead), `QualitySignals.minFaceQuality/faceCount`, any Vision-based behavior can only be
   exercised on a device. 🧑 **Gate PENDING:** cull 3 real bursts on a device and record time per group and any wrong keeper suggestion.
+
+## Step 8 — One prompt for the whole tray — 2026-11-06
+- **Core `SafetyPolicy.validateBatch`** (8 tests + a 5,000-batch fuzz): each plan valid on its own, no photo kept in one group and deleted in another, none deleted twice, ≤ 500 targets; any problem rejects the whole batch and names the plans.
+- **`PhotoDeletionCoordinator.commitBatch`**: fresh snapshots → batch policy → rehash every exact group (progress, cancellable) → snapshots and policy AGAIN → ONE `delete` request → per-entry reconcile. Groups and keeper-less items share the request. 13 tests: 50 groups = one request; cancelling Apple's prompt deletes nothing and keeps the tray; one changed group (of 40) blocks everything and is named, then Delete again removes the other 39 in one request; a favorite appearing without a revision change blocks; contradicting groups both set aside; progress 0…N; cancellation while rechecking deletes nothing; limited access reports "uncertain"; empty/revoked do nothing.
+- **Beyond 500 photos** the tray splits into batches (one Apple prompt each, each fully checked); a big keeper-less approval becomes several entries; the confirm sheet says how many prompts. Undo removes all entries one approval added.
+- UX: "Double-checking 12 of 214…" with a working Cancel, a plain-words alert for blocked batches ("1 group changed… Nothing was deleted. Tap Delete again…").
+- `scripts/check_policy_separation.sh` extended (`validateBatch` and the standalone policy only from the batch evaluator).
+- **8.4 album transfer: DEFERRED on purpose.** It changes a hard protection into a conditional one, which is a safety-rule edit that the plan puts behind an owner gate and can only be checked properly on a device with real albums. Photos in the user's albums therefore remain **always protected** (the conservative default). 🧑 Owner decision pending.
+
+## Step 9 — Measure accuracy — 2026-11-06
+- `cleanslate-eval` (Core executable): recall/precision, near recall at 6/8/10/12 bits, harmful-preselection count with the exact Clopper–Pearson 95% bound, and a `--gate` canary run by `make eval` (in `make ci`). The app now shares `DifferenceHash.compute` with the tool so both agree.
+- Synthetic result and what it shows: see `docs/ML_GATE.md` (notably 80/120 unique-content variants are hash-near, so near pre-selection stays OFF).
+- `EvaluationExport` (Core) and **Label mode** (debug/TestFlight only): per-photo verdicts + best shot, export = salted hashes + numbers only. Leak tests assert no identifiers, filenames, dates or locations appear in the JSON and that only allow-listed fields exist. "This suggestion was wrong" button (all builds) keeps a local counter shown in the menu; nothing is transmitted.
+- `KeeperRanker.Weights` + `RankerFitter` (pairwise logistic regression): on synthetic data where humans pick the sharpest shot, learned weights beat v1 by > 5 points held-out. **v1 remains the shipped default** until real labels beat it by ≥ 5 points.
+- 🧑 **Gate PENDING:** label ≥ 200 real groups on a device, run the eval, review keeper mistakes. Until then the harmful-suggestion bound is uninformative and `docs/ML_GATE.md` says near pre-selection ships OFF.

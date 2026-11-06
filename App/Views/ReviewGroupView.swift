@@ -5,6 +5,7 @@ import CleanSlateCore
 /// Approve moves the Delete-marked photos into the tray. It never deletes (U1).
 struct ReviewGroupView: View {
     @EnvironmentObject private var model: CleaningViewModel
+    @EnvironmentObject private var labels: LabelStore
     @StateObject private var review: GroupReviewModel
     @ScaledMetric(relativeTo: .body) private var barClearance = Spacing.barClearance
     @State private var explaining: Evidence?
@@ -80,6 +81,13 @@ struct ReviewGroupView: View {
                 Button("Compare", systemImage: "square.split.2x1") { comparing = others.first }
                     .accessibilityIdentifier("review.compare")
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("This suggestion was wrong", systemImage: "hand.thumbsdown") { labels.recordCorrection() }
+                        .accessibilityIdentifier("review.wrong")
+                } label: { Image(systemName: "ellipsis.circle") }
+                    .accessibilityLabel("More")
+            }
         }
         .safeAreaInset(edge: .bottom) {
             ApprovalBar(approveTitle: isRechecking ? "Rechecking…" : approveTitle, subtitle: isRechecking ? nil : subtitle,
@@ -135,6 +143,7 @@ struct ReviewGroupView: View {
         let decision = review.decision(for: photo.id)
         return VStack(alignment: .leading, spacing: Spacing.xs) {
             tileImage(photo, decision: decision, index: index)
+            if labels.isEnabled && !review.isExact { labelMenu(for: photo) }
             if let found = review.warnings[photo.id], !found.isEmpty {
                 HStack(spacing: Spacing.xs) {
                     ForEach(found.sorted { $0.rawValue < $1.rawValue }, id: \.self) { warning in
@@ -143,6 +152,21 @@ struct ReviewGroupView: View {
                 }
             }
         }
+    }
+
+    /// Testers only: what is this photo really, compared with the suggested keeper?
+    private func labelMenu(for photo: PhotoSnapshot) -> some View {
+        Menu {
+            ForEach(RawLabel.Verdict.allCases, id: \.self) { verdict in
+                Button(verdict.rawValue) { labels.set(verdict, for: photo, in: review.group.id) }
+            }
+            Button("Best shot of the group", systemImage: "star") { labels.setBest(photo, in: review.group.id) }
+        } label: {
+            Label(labels.verdict(for: photo.id, in: review.group.id)?.rawValue ?? "Label this photo",
+                  systemImage: labels.isBest(photo.id, in: review.group.id) ? "star.fill" : "tag")
+                .appText(.chip)
+        }
+        .accessibilityIdentifier("label.\(photo.id)")
     }
 
     private func tileImage(_ photo: PhotoSnapshot, decision: Decision, index: Int) -> some View {
