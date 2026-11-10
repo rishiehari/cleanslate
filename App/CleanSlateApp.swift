@@ -5,12 +5,15 @@ import Photos
 struct CleanSlateApp: App {
     @StateObject private var model: CleaningViewModel
     private let library: PhotoLibraryClient
+    private let watchdog: MainThreadWatchdog
     @StateObject private var labels = LabelStore(fileURL: LabelStore.defaultURL())
 
     init() {
         let environment = AppEnvironment.make()
         library = environment.library
+        watchdog = environment.watchdog
         _model = StateObject(wrappedValue: environment.model)
+        environment.watchdog.start()
     }
 
     var body: some Scene {
@@ -62,7 +65,13 @@ struct CleanSlateApp: App {
 /// Builds the real PhotoKit-backed model, or (DEBUG only) a deterministic fake for UI tests.
 @MainActor
 enum AppEnvironment {
-    static func make() -> (model: CleaningViewModel, library: PhotoLibraryClient) {
+    struct Built {
+        let model: CleaningViewModel
+        let library: PhotoLibraryClient
+        let watchdog: MainThreadWatchdog
+    }
+
+    static func make() -> Built {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         // Real writes (not argument-domain overrides) so the app can record onboarding as seen.
@@ -83,11 +92,19 @@ enum AppEnvironment {
             analyzer.descriptions = ["sim1-a": .init(faceCount: 2, text: ["market"]), "sim1-b": .init(faceCount: 3, text: ["market"]),
                                      "sim1-c": .init(faceCount: 2, text: ["market"])]       // sim1-b shows an extra person
             model.analyzer = analyzer
-            return (model, scenario.library)
+            return finish(model: model, library: scenario.library)
         }
         #endif
         let library = PhotoKitLibraryClient.shared
-        return (CleaningViewModel(library: library), library)
+        return finish(model: CleaningViewModel(library: library), library: library)
+    }
+
+    /// Diagnostics owned by the process: the log lives on the model, the watchdog reads the live scan counters.
+    private static func finish(model: CleaningViewModel, library: PhotoLibraryClient) -> Built {
+        let log = model.diagnostics
+        let counters = model.scanCounters
+        let watchdog = MainThreadWatchdog(log: log, probes: .init(phase: { counters.snapshot.phase }))
+        return Built(model: model, library: library, watchdog: watchdog)
     }
 }
 
