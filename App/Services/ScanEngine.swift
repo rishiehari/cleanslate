@@ -131,16 +131,15 @@ final class ScanEngine {
         reporter.scanUpdate { $0.candidatePairsConsidered = pairs.count }
 
         await enter(.fullResources)
-        let albums = library.userAlbumAssetIDs()
         var claimed: Set<String> = []
-        if let early = await verifyExactCopies(buckets: buckets, pairs: pairs, albums: albums, claimed: &claimed) { return early }
+        if let early = await verifyExactCopies(buckets: buckets, pairs: pairs, claimed: &claimed) { return early }
 
         await enter(.sizing)
-        if let early = await findStandaloneItems(albums: albums) { return early }
+        if let early = await findStandaloneItems() { return early }
 
         await enter(.vision)
-        if let early = await buildReviewSets(albums: albums, claimed: &claimed) { return early }
-        if let early = await compareSimilarPairs(pairs, albums: albums, claimed: &claimed) { return early }
+        if let early = await buildReviewSets(claimed: &claimed) { return early }
+        if let early = await compareSimilarPairs(pairs, claimed: &claimed) { return early }
         reporter.scanProgress(1)
         return .finished
     }
@@ -282,6 +281,24 @@ final class ScanEngine {
         return await Task.detached(priority: .utility) { Self.rank(close, hashes: hashes, burstIDs: burstIDs) }.value
     }
 
+    /// The digest queue: exact-bucket members plus near pairs that are near-identical (Hamming <= 2)
+    /// at the same pixel size. Pure and testable; `cap` is min(4,000, scopeCount).
+    nonisolated static func enqueueDigestCandidates(buckets: ExactBuckets, pairs: [CandidatePair],
+                                                    hashes: [String: UInt64], dimensions: [String: (width: Int, height: Int)],
+                                                    cap: Int) -> [String] {
+        var order: [String] = []
+        var queued: Set<String> = []
+        func enqueue(_ id: String) { if queued.insert(id).inserted { order.append(id) } }
+        buckets.buckets.sorted { $0.count < $1.count }.forEach { $0.forEach(enqueue) }
+        for pair in pairs {
+            guard let a = hashes[pair.first], let b = hashes[pair.second], CandidateIndex.hamming(a, b) <= 2,
+                  let da = dimensions[pair.first], let db = dimensions[pair.second],
+                  da.width == db.width, da.height == db.height else { continue }
+            enqueue(pair.first); enqueue(pair.second)
+        }
+        return cap < order.count ? Array(order.prefix(cap)) : order
+    }
+
     /// Bursts first, then the closest hashes; ties broken by id so the order is deterministic.
     nonisolated static func rank(_ pairs: [CandidatePair], hashes: [String: UInt64], burstIDs: [String: String]) -> [CandidatePair] {
         func key(_ pair: CandidatePair) -> (Int, Int, String, String) {
@@ -293,19 +310,19 @@ final class ScanEngine {
 
     // MARK: 4. Exact copies
 
-    private func verifyExactCopies(buckets: ExactBuckets, pairs: [CandidatePair], albums: Set<String>,
-                                   claimed: inout Set<String>) async -> Outcome? {
-        // Smaller buckets first (most likely real copies), then the best visual pairs. Capped per scan; the rest is reported.
-        var order: [String] = []
-        var queued: Set<String> = []
-        func enqueue(_ id: String) { if queued.insert(id).inserted { order.append(id) } }
-        buckets.buckets.sorted { $0.count < $1.count }.forEach { $0.forEach(enqueue) }
-        pairs.forEach { enqueue($0.first); enqueue($0.second) }
-        if order.count > Self.maximumFullHashesPerScan {
-            let skipped = order.count - Self.maximumFullHashesPerScan
-            reporter?.scanUpdate { $0.exactSkippedByLimit = skipped }
-            order = Array(order.prefix(Self.maximumFullHashesPerScan))
+    private func verifyExactCopies(buckets: ExactBuckets, pairs: [CandidatePair], claimed: inout Set<String>) async -> Outcome? {
+        // Smaller buckets first (most likely real copies), then the best visual pairs — narrowed to
+        // pairs that are near-identical (Hamming <= 2) at the same pixel size (likely re-saved copies).
+        // Capped per scan to min(4,000, scope); the rest is reported.
+        let members = Array(Set(buckets.buckets.flatMap { $0 } + pairs.flatMap { [$0.first, $0.second] }))
+        let hashes = await store.dhashes(ids: members, version: Self.featureVersion)
+        let dimensions = await store.dimensions(among: members)
+        let order = Self.enqueueDigestCandidates(buckets: buckets, pairs: pairs, hashes: hashes,
+                                                 dimensions: dimensions, cap: min(Self.maximumFullHashesPerScan, max(libraryItems, 1)))
+        if members.count > order.count {
+            reporter?.scanUpdate { $0.exactSkippedByLimit = members.count - order.count }
         }
+        let albums = await library.albumMemberIDs(among: order)
         let snapshots = await store.snapshots(ids: order)
         let fetcher = DigestFetcher(library: library, policy: networkPolicy)
         var digests: [String: [ResourceDigest]] = [:]
@@ -354,8 +371,9 @@ final class ScanEngine {
 
     // MARK: 5. Keeper-less lists
 
-    private func findStandaloneItems(albums: Set<String>) async -> Outcome? {
+    private func findStandaloneItems() async -> Outcome? {
         let candidates = await store.standaloneCandidates(limit: Self.maximumSizedItems)
+        let albums = await library.albumMemberIDs(among: candidates.map(\.id))
         var items: [StandaloneItem] = []
         for (n, photo) in candidates.enumerated() {
             if Task.isCancelled { return .cancelled }
@@ -372,7 +390,7 @@ final class ScanEngine {
 
     // MARK: 6a. Bursts and quick runs (review sets: several shots, you choose what to keep)
 
-    private func buildReviewSets(albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
+    private func buildReviewSets(claimed: inout Set<String>) async -> Outcome? {
         // Stream the sequence items through the grouping builder page by page (no whole-library array).
         var streamer = SequenceGrouping.Streamer()
         var afterTime: Int64? = nil
@@ -390,6 +408,7 @@ final class ScanEngine {
             await Task.yield()
         }
         let sets = streamer.finish()
+        let albums = await library.albumMemberIDs(among: sets.flatMap { $0 })
         reporter?.scanUpdate { $0.reviewSetsFound = sets.count }
         var pending: [PhotoReviewGroup] = []
         var visionUsable = true
@@ -436,12 +455,14 @@ final class ScanEngine {
 
     // MARK: 6b. Similar shots (Vision, manual review only)
 
-    private func compareSimilarPairs(_ pairs: [CandidatePair], albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
+    private func compareSimilarPairs(_ pairs: [CandidatePair], claimed: inout Set<String>) async -> Outcome? {
         // Similarity is uncalibrated, so it is strictly manual-review only. Pairwise groups prevent the
         // transitive A~B, B~C => A~C deletion bug.
         let limited = Array(pairs.prefix(limits.visionPairCap(scopeCount: libraryItems)))
         if pairs.count > limited.count { let skipped = pairs.count - limited.count; reporter?.scanUpdate { $0.visionPairsSkipped = skipped } }
         var pending: [PhotoReviewGroup] = []
+        var pendingMembers: Set<String> = []
+        var albums: Set<String> = []
         var consecutiveFailures = 0
         for (n, pair) in limited.enumerated() {
             if Task.isCancelled { return .cancelled }
@@ -489,7 +510,17 @@ final class ScanEngine {
                 evidence: [PairEvidence(first: keeper.id, second: candidate.id, relation: .visuallySimilar)],
                 verifiedCandidateBytes: [:]))
             claimed.insert(keeper.id); claimed.insert(candidate.id)
-            if pending.count >= 5 { reporter?.scanFound(groups: pending); pending = [] }      // progressive results
+            pendingMembers.formUnion([keeper.id, candidate.id])
+            if pending.count >= 5 {
+                // Targeted album lookup for just the groups found in this batch (no whole-library pass).
+                albums.formUnion(await library.albumMemberIDs(among: Array(pendingMembers)))
+                reporter?.scanFound(groups: pending.map { group in
+                    PhotoReviewGroup(id: group.id, kind: group.kind, keeper: Self.markAlbum(group.keeper, albums),
+                                     candidates: group.candidates.map { Self.markAlbum($0, albums) },
+                                     evidence: group.evidence, verifiedCandidateBytes: group.verifiedCandidateBytes)
+                })
+                pending = []; pendingMembers = []
+            }
             tick(done: n + 1, total: limited.count)
             if n % 10 == 0 { reporter?.scanProgress(0.90 + 0.10 * Double(n + 1) / Double(max(1, limited.count))); await Task.yield() }
         }

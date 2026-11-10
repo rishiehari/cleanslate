@@ -423,6 +423,21 @@ actor LibraryStore {
         return out
     }
 
+    /// Pixel dimensions for these assets only (chunked) — for the exact-enqueue narrowing.
+    func dimensions(among ids: [String]) -> [String: (width: Int, height: Int)] {
+        var out: [String: (width: Int, height: Int)] = [:]
+        for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
+            let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            let found = (try? rows("""
+                SELECT id, width, height FROM assets WHERE deleted=0 AND id IN (\(marks))
+                """, bind: { s in for (i, id) in chunk.enumerated() { text(s, Int32(i + 1), id) } },
+                                   map: { (String(cString: sqlite3_column_text($0, 0)),
+                                           (Int(sqlite3_column_int($0, 1)), Int(sqlite3_column_int($0, 2)))) })) ?? []
+            for (id, dims) in found { out[id] = dims }
+        }
+        return out
+    }
+
     func clearUnavailableFeatures() throws { try run("DELETE FROM features WHERE feature_version=0") }
 
     func dhash(id: String, revision: String) -> UInt64? {
