@@ -50,6 +50,7 @@ final class ScanInProgressMarkerTests: XCTestCase {
         XCTAssertEqual(model.phase, .finished)
         let marker = await ScanInProgressMarker.read(in: store)
         XCTAssertNil(marker)
+        XCTAssertEqual(model.scanCounters.snapshot.phase, .finished, "watchdog attribution after a finished scan")
         // The engine recorded into the injected log: the whole F02.3 wiring is live.
         // (Heartbeat emission itself is covered by ScanHeartbeatTests; a 5-asset scan can finish
         //  before the first 2 s beat, so no heartbeat assertion belongs here.)
@@ -80,6 +81,7 @@ final class ScanInProgressMarkerTests: XCTestCase {
         XCTAssertFalse(model.isScanning, "the cancelled scan unwound")
         let marker = await ScanInProgressMarker.read(in: store)
         XCTAssertNil(marker, "the cancel path cleared the marker")
+        XCTAssertEqual(model.scanCounters.snapshot.phase, .idle, "watchdog attribution after a paused scan")
     }
 
     func testEngineClearsMarkerWhenGovernorStopsTheScan() async {

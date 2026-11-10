@@ -60,6 +60,8 @@ final class ScanEngine {
         counters.reset(); libraryItems = 0; lastTickBucket = -1
         let outcome = await runPhases()
         endPhase()
+        // Leave the counters in an honest resting state for the watchdog's phase attribution.
+        counters.update { $0.phase = outcome == .finished ? .finished : .idle; $0.inFlight = 0 }
         // Any outcome means the run ended on its own; only a killed process leaves the marker behind.
         await ScanInProgressMarker.clear(in: store)
         return outcome

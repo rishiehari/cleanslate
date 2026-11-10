@@ -21,6 +21,7 @@ struct CleanSlateApp: App {
         // A leftover scan.inProgress marker means the previous process was killed mid-scan.
         let model = environment.model
         Task { await DiagnosticsLaunch.recordAppLaunch(store: model.store, log: model.diagnostics) }
+        DiagnosticsHooks.observeMemoryWarnings(log: model.diagnostics)
     }
 
     var body: some Scene {
@@ -38,7 +39,12 @@ struct CleanSlateApp: App {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 model.diagnostics.record(.scenePhase(state: DiagScene(newPhase)))
-                if newPhase == .background { DiagnosticsHooks.didEnterBackground(log: model.diagnostics) }
+                if newPhase == .background {
+                    DiagnosticsHooks.didEnterBackground(log: model.diagnostics)
+                    watchdog.stop()                     // no main-thread replies to measure while hidden
+                } else if newPhase == .active {
+                    watchdog.start()
+                }
             }
         }
     }

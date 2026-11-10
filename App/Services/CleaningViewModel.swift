@@ -67,6 +67,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         self.governor = governor ?? ResourceGovernor()
         self.diagnostics = diagnostics ?? DiagnosticsLog.shared
         self.scanCounters = scanCounters
+        self.governor.diagnostics = self.diagnostics
         self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy)
         self.authorization = library.authorization
         // @Published notifies before the value changes, so use the emitted value, not tray.standaloneEntries.
@@ -266,9 +267,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         // The heartbeat makes a stall visible in the on-device log (every 2 s) without Xcode attached.
         let heartbeat = ScanHeartbeat(log: diagnostics, counters: scanCounters)
         heartbeat.start()
+        defer { heartbeat.stop() }
         scanStartedAt = .now
         let outcome = await engine.run()
-        heartbeat.stop()
         finishScan(outcome)
         isScanning = false
         if changesArrivedDuringScan {              // the library moved while we were scanning: recheck what that touched

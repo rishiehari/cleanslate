@@ -26,6 +26,8 @@ final class ResourceGovernor: ObservableObject {
 
     @Published private(set) var pauseReason: String?
     @Published private(set) var isLowPower = false
+    /// Local diagnostics; decisions are logged on change only (checkpoint runs per item).
+    var diagnostics: DiagnosticsLog?
 
     private let inputs: Inputs
     private let cores: Int
@@ -50,27 +52,41 @@ final class ResourceGovernor: ObservableObject {
             switch inputs.thermalState() {
             case .critical:
                 pauseReason = nil
+                logDecision(.stop, .thermal)
                 return .stop(reason: "Stopped because your iPhone is very warm. Your progress is saved. Scan again when it has cooled down.")
             case .serious:
                 pauseReason = "Paused — your iPhone is warm"
+                logDecision(.pause, .thermal)
                 if waited >= maximumPauseSeconds {
                     pauseReason = nil
+                    logDecision(.stop, .thermal)
                     return .stop(reason: "Stopped because your iPhone stayed warm. Your progress is saved. Scan again later.")
                 }
                 await inputs.sleep(.seconds(2)); waited += 2
                 continue
             case .fair:
                 pauseReason = nil
+                logDecision(.shrink, .thermal)
                 return .proceed(concurrency: min(2, baseConcurrency))
             default:
                 break
             }
             if inputs.availableMemoryBytes() < Self.lowMemoryBytes {
                 pauseReason = nil
+                logDecision(.shrink, .lowMemory)
                 return .proceed(concurrency: 1)
             }
             pauseReason = nil
+            if isLowPower, baseConcurrency > 2 { logDecision(.shrink, .lowPower) }
             return .proceed(concurrency: isLowPower ? min(2, baseConcurrency) : baseConcurrency)
         }
+    }
+
+    private var lastLoggedDecision: (decision: DiagGovernorDecision, reason: DiagGovernorReason)?
+    /// One event per decision CHANGE: checkpoint runs per item, so unchanged decisions stay silent.
+    private func logDecision(_ decision: DiagGovernorDecision, _ reason: DiagGovernorReason) {
+        if let last = lastLoggedDecision, last.decision == decision, last.reason == reason { return }
+        lastLoggedDecision = (decision, reason)
+        diagnostics?.record(.governor(decision: decision, reason: reason))
     }
 }
