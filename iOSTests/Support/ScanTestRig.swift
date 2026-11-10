@@ -12,9 +12,10 @@ enum ScanTestRig {
 
     static func model(library: FakePhotoLibrary, visual: VisualAnalyzing = FakeVisualAnalyzer(),
                       tray: DeletionTray = DeletionTray(fileURL: nil), store: LibraryStore? = nil,
-                      governor: ResourceGovernor? = nil) throws -> CleaningViewModel {
+                      governor: ResourceGovernor? = nil, diagnostics: DiagnosticsLog? = nil) throws -> CleaningViewModel {
         CleaningViewModel(library: library, tray: tray,
                           networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "rig.\(UUID().uuidString)")!, pathCheck: { false }),
-                          store: try store ?? LibraryStore(path: nil), governor: governor ?? Self.governor(), visual: visual)
+                          store: try store ?? LibraryStore(path: nil), governor: governor ?? Self.governor(), visual: visual,
+                          diagnostics: diagnostics)
     }
 }
