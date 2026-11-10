@@ -34,12 +34,19 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     let store: LibraryStore
     let governor: ResourceGovernor
     let visual: VisualAnalyzing
+    /// Local diagnostics log; the engine records into it, the heartbeat and the watchdog read/write it.
+    let diagnostics: DiagnosticsLog
+    /// Lock-protected scan counters shared with the engine, the heartbeat and the main-thread watchdog.
+    let scanCounters: ScanCounters
     private lazy var engine: ScanEngine = {
-        let engine = ScanEngine(library: library, store: store, networkPolicy: networkPolicy, governor: governor, visual: visual)
+        let engine = ScanEngine(library: library, store: store, networkPolicy: networkPolicy, governor: governor,
+                                visual: visual, counters: scanCounters)
         engine.reporter = self
+        engine.diagnostics = diagnostics
         return engine
     }()
     private var scanTask: Task<Void, Never>?
+    private var scanStartedAt: ContinuousClock.Instant?
     private var changeSubscription: ChangeSubscription?
     /// Describes faces and text for the "different people / different text" warnings (replaced by a fake in UI tests).
     lazy var analyzer: PhotoAnalyzer = VisionPhotoAnalyzer(library: library)
@@ -49,13 +56,17 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
          networkPolicy: NetworkPolicy? = nil,
          store: LibraryStore? = nil,
          governor: ResourceGovernor? = nil,
-         visual: VisualAnalyzing = VisionVisualAnalyzer()) {
+         visual: VisualAnalyzing = VisionVisualAnalyzer(),
+         diagnostics: DiagnosticsLog? = nil,
+         scanCounters: ScanCounters = ScanCounters()) {
         self.visual = visual
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
         self.store = store ?? ((try? LibraryStore(path: LibraryStore.defaultPath())) ?? (try! LibraryStore(path: nil)))
         self.governor = governor ?? ResourceGovernor()
+        self.diagnostics = diagnostics ?? DiagnosticsLog.shared
+        self.scanCounters = scanCounters
         self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy)
         self.authorization = library.authorization
         // @Published notifies before the value changes, so use the emitted value, not tray.standaloneEntries.
@@ -252,7 +263,12 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         isScanning = true
         statistics = ScanStatistics(); statusMessage = nil; groups = []; standaloneItems = []; progress = 0
         networkPolicy.resetSessionBudget()          // the iCloud download limit is per scan
+        // The heartbeat makes a stall visible in the on-device log (every 2 s) without Xcode attached.
+        let heartbeat = ScanHeartbeat(log: diagnostics, counters: scanCounters)
+        heartbeat.start()
+        scanStartedAt = .now
         let outcome = await engine.run()
+        heartbeat.stop()
         finishScan(outcome)
         isScanning = false
         if changesArrivedDuringScan {              // the library moved while we were scanning: recheck what that touched
@@ -303,15 +319,19 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
 
     private func finishScan(_ outcome: ScanEngine.Outcome) {
         groups.sort { $0.kind == $1.kind ? $0.estimatedVerifiedBytes > $1.estimatedVerifiedBytes : $0.kind == .exact }
+        let seconds = scanStartedAt.map { Int($0.duration(to: .now).components.seconds) } ?? 0
         switch outcome {
         case .cancelled:
             phase = .cancelled
             statusMessage = "Scan paused. Your progress is saved, and the next scan picks up from here."
+            diagnostics.record(.scanEnded(outcome: .paused, seconds: seconds, groupsFound: groups.count))
         case .stopped(let reason):
             phase = .cancelled
             statusMessage = reason
+            diagnostics.record(.scanEnded(outcome: .stopped, seconds: seconds, groupsFound: groups.count))
         case .finished:
             phase = .finished; progress = 1
+            diagnostics.record(.scanEnded(outcome: .finished, seconds: seconds, groupsFound: groups.count))
             var message = "Looked through \(statistics.photosEnumerated.formatted()) photos."
             if statistics.exactAssetsUnverifiable > 0 { message += " Some originals live only in iCloud, so matches there may be missed." }
             if statistics.visionUnavailable { message += " Similar-photo comparison isn't available on this device, so only identical copies were checked." }

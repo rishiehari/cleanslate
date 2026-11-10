@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import UIKit
+import os
 import CleanSlateCore
 
 /// A decoded thumbnail is immutable once created, so handing it to a background task is safe.
@@ -38,28 +39,85 @@ final class ScanEngine {
     private let governor: ResourceGovernor
     private let visual: VisualAnalyzing
     weak var reporter: ScanReporting?
+    /// Local diagnostics (nil = off). Counts, durations and phase names only; never photo information.
+    var diagnostics: DiagnosticsLog?
+    /// Lock-protected live counters, owned by the view model and shared with the heartbeat/watchdog.
+    let counters: ScanCounters
+    private var phaseStartedAt: ContinuousClock.Instant?
+    private var signpost: OSSignpostIntervalState?
+    private var libraryItems = 0
+    private var lastTickBucket = -1
 
     init(library: PhotoLibraryClient, store: LibraryStore, networkPolicy: NetworkPolicy, governor: ResourceGovernor,
-         visual: VisualAnalyzing = VisionVisualAnalyzer()) {
+         visual: VisualAnalyzing = VisionVisualAnalyzer(), counters: ScanCounters = ScanCounters()) {
         self.library = library; self.store = store; self.networkPolicy = networkPolicy; self.governor = governor
-        self.visual = visual
+        self.visual = visual; self.counters = counters
     }
 
     // MARK: Entry point
 
     func run() async -> Outcome {
+        counters.reset(); libraryItems = 0; lastTickBucket = -1
+        let outcome = await runPhases()
+        endPhase()
+        // Any outcome means the run ended on its own; only a killed process leaves the marker behind.
+        await ScanInProgressMarker.clear(in: store)
+        return outcome
+    }
+
+    // MARK: Diagnostics hooks (all no-ops when `diagnostics` is nil)
+
+    /// Announces a stage to the UI, the log, Instruments and the "scan in progress" marker.
+    private func enter(_ phase: ScanPhase) async {
+        endPhase()
+        reporter?.scanDidEnter(phase)
+        let diag = DiagPhase(phase)
+        counters.update { $0 = ScanCounters.Snapshot(phase: diag, total: $0.total, thumbsTried: $0.thumbsTried, thumbsUnavailable: $0.thumbsUnavailable) }
+        lastTickBucket = -1
+        phaseStartedAt = .now
+        signpost = ScanSignposts.begin(diag)
+        diagnostics?.record(.phaseEntered(phase: diag, units: libraryItems))
+        await ScanInProgressMarker.set(diag, in: store)
+    }
+
+    private func endPhase() {
+        guard let started = phaseStartedAt else { return }
+        let s = counters.snapshot
+        let elapsed = started.duration(to: .now)
+        let millis = Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+        diagnostics?.record(.phaseEnded(phase: s.phase, millis: millis, done: s.done, total: s.total))
+        if s.phase == .thumbnails, s.thumbsTried > 0 {
+            diagnostics?.record(.thumbnailStats(tried: s.thumbsTried, unavailable: s.thumbsUnavailable, unavailablePercent: s.thumbnailUnavailablePercent))
+        }
+        if let signpost { ScanSignposts.end(signpost) }
+        signpost = nil; phaseStartedAt = nil
+    }
+
+    /// Progress inside a stage: always updates the live counters, and logs once per 25 items.
+    private func tick(done: Int, total: Int, inFlight: Int = 0) {
+        counters.update { $0.done = done; $0.total = total; $0.inFlight = inFlight }
+        let bucket = done / 25
+        if bucket != lastTickBucket {
+            lastTickBucket = bucket
+            diagnostics?.record(.progress(phase: counters.snapshot.phase, done: done, total: total))
+        }
+    }
+
+    private func runPhases() async -> Outcome {
         guard let reporter else { return .cancelled }
-        reporter.scanDidEnter(.inventory)
+        await enter(.inventory)
         await syncInventory()
         if Task.isCancelled { return .cancelled }
         let total = await store.assetCount()
         reporter.scanUpdate { $0.photosEnumerated = total }
+        diagnostics?.record(.scanStarted(scope: .all, items: total))
         if total == 0 { return .finished }
+        libraryItems = total
 
-        reporter.scanDidEnter(.thumbnails)
+        await enter(.thumbnails)
         if let early = await computeFeatures() { return early }
 
-        reporter.scanDidEnter(.candidates)
+        await enter(.candidates)
         reporter.scanProgress(0.60)
         let buckets = ExactCandidates.buckets(await store.exactKeys())
         reporter.scanUpdate { $0.exactBucketsFound = buckets.buckets.count; $0.bucketsOversized = buckets.oversizedBuckets }
@@ -67,15 +125,15 @@ final class ScanEngine {
         if Task.isCancelled { return .cancelled }
         reporter.scanUpdate { $0.candidatePairsConsidered = pairs.count }
 
-        reporter.scanDidEnter(.fullResources)
+        await enter(.fullResources)
         let albums = library.userAlbumAssetIDs()
         var claimed: Set<String> = []
         if let early = await verifyExactCopies(buckets: buckets, pairs: pairs, albums: albums, claimed: &claimed) { return early }
 
-        reporter.scanDidEnter(.sizing)
+        await enter(.sizing)
         if let early = await findStandaloneItems(albums: albums) { return early }
 
-        reporter.scanDidEnter(.vision)
+        await enter(.vision)
         if let early = await buildReviewSets(albums: albums, claimed: &claimed) { return early }
         if let early = await compareSimilarPairs(pairs, albums: albums, claimed: &claimed) { return early }
         reporter.scanProgress(1)
@@ -130,6 +188,7 @@ final class ScanEngine {
             offset += page.photos.count
             try? await store.setMeta(Meta.offset, Data(String(offset).utf8))
             reporter?.scanProgress(0.10 * Double(offset) / Double(max(1, page.total)))
+            tick(done: offset, total: page.total)
             await Task.yield()
             if offset >= page.total { break }
         }
@@ -167,6 +226,7 @@ final class ScanEngine {
                 index += slice.count
                 // The library is main-actor bound; every call below hops to the main actor, so sharing it is safe.
                 nonisolated(unsafe) let sharedLibrary = library
+                counters.update { $0.inFlight = slice.count }
                 let results = await withTaskGroup(of: (PhotoSnapshot, UInt64?).self) { group -> [(PhotoSnapshot, UInt64?)] in
                     for photo in slice {
                         group.addTask { @MainActor in
@@ -184,6 +244,9 @@ final class ScanEngine {
                     if let hash { hashed.append((photo.id, photo.record.revision, hash)) }
                     else { unavailable.append((photo.id, photo.record.revision)) }
                 }
+                let missing = results.filter { $0.1 == nil }.count
+                counters.update { $0.thumbsTried += results.count; $0.thumbsUnavailable += missing }
+                tick(done: processed + hashed.count + unavailable.count, total: pending)
             }
             try? await store.putFeatures(hashed, version: Self.featureVersion)
             try? await store.markFeaturesUnavailable(unavailable)
@@ -258,6 +321,7 @@ final class ScanEngine {
             } catch {
                 reporter?.scanUpdate { $0.exactAssetsUnverifiable += 1 }   // not local, incomplete or failed: never a match
             }
+            tick(done: n + 1, total: order.count, inFlight: 1)
             if n % 5 == 0 { reporter?.scanProgress(0.65 + 0.20 * Double(n + 1) / Double(max(1, order.count))); await Task.yield() }
         }
         let identified = Dictionary(grouping: digests.compactMap { id, items -> (String, String)? in
@@ -292,6 +356,7 @@ final class ScanEngine {
             if Task.isCancelled { return .cancelled }
             // Videos: size of the local file (no bytes read). Screenshots are measured when selected.
             items.append(StandaloneItem(snapshot: photo, verifiedBytes: photo.isVideo ? await library.verifiedSize(id: photo.id) : nil))
+            tick(done: n + 1, total: candidates.count)
             if n % 25 == 0 { reporter?.scanProgress(0.85 + 0.05 * Double(n + 1) / Double(max(1, candidates.count))); await Task.yield() }
         }
         reporter?.scanFoundStandalone(items, albumMembers: albums)
@@ -338,6 +403,7 @@ final class ScanEngine {
                                             keeper: keeper, candidates: rest, evidence: evidence, verifiedCandidateBytes: [:]))
             claimed.formUnion(photos.map(\.id))
             if pending.count >= 5 { reporter?.scanFound(groups: pending); pending = [] }
+            tick(done: n + 1, total: sets.count)
             if n % 10 == 0 { reporter?.scanProgress(0.90 + 0.05 * Double(n + 1) / Double(max(1, sets.count))); await Task.yield() }
         }
         reporter?.scanFound(groups: pending)
@@ -397,6 +463,7 @@ final class ScanEngine {
                 verifiedCandidateBytes: [:]))
             claimed.insert(keeper.id); claimed.insert(candidate.id)
             if pending.count >= 5 { reporter?.scanFound(groups: pending); pending = [] }      // progressive results
+            tick(done: n + 1, total: limited.count, inFlight: 1)
             if n % 10 == 0 { reporter?.scanProgress(0.90 + 0.10 * Double(n + 1) / Double(max(1, limited.count))); await Task.yield() }
         }
         reporter?.scanFound(groups: pending)
