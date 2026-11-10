@@ -22,6 +22,15 @@ final class ReviewFlowUITests: XCTestCase {
         app.descendants(matching: .any)["debug.probe"].value as? String ?? ""
     }
 
+    /// The photo grid is lazy and tiles are large, so a lower tile may not exist in the accessibility tree until it
+    /// is scrolled near the screen. Scrolling only brings it into view; it never changes any decision.
+    private func scrollToTile(_ app: XCUIApplication, _ id: String) {
+        let tile = app.buttons["tile.\(id)"]
+        var attempts = 0
+        while !tile.exists && attempts < 6 { app.swipeUp(); attempts += 1 }
+        XCTAssertTrue(tile.waitForExistence(timeout: 3), "tile \(id) never appeared")
+    }
+
     private func openGroup(_ app: XCUIApplication, category: String, id: String) {
         app.buttons["category.\(category)"].tap()
         let row = app.buttons["group.\(id)"]
@@ -58,8 +67,11 @@ final class ReviewFlowUITests: XCTestCase {
         openGroup(app, category: "similar", id: "test-sim1-a")
         XCTAssertTrue(app.buttons["tile.sim1-b"].label.hasPrefix("Not decided"), app.buttons["tile.sim1-b"].label)
         XCTAssertFalse(app.buttons["approval.approve"].isEnabled)
-        app.buttons["tile.sim1-b"].tap()
-        XCTAssertTrue(app.buttons["tile.sim1-b"].label.hasPrefix("Delete"))
+        // sim1-b shows an extra person, so tapping it asks first (testWarnedPhotoAsksBeforeItCanBeMarked...).
+        // The user's pick here is the unwarned sim1-c.
+        scrollToTile(app, "sim1-c")
+        app.buttons["tile.sim1-c"].tap()
+        XCTAssertTrue(app.buttons["tile.sim1-c"].label.hasPrefix("Delete"), app.buttons["tile.sim1-c"].label)
         XCTAssertTrue(app.buttons["approval.approve"].isEnabled)
     }
 
@@ -176,6 +188,7 @@ final class ReviewFlowUITests: XCTestCase {
         openGroup(app, category: "similar", id: "test-sim1-a")
         XCTAssertTrue(app.buttons["chip.differentPeople"].waitForExistence(timeout: 5))
         app.buttons["review.markrest"].tap()
+        scrollToTile(app, "sim1-c")
         XCTAssertTrue(app.buttons["tile.sim1-c"].label.hasPrefix("Delete"))
         XCTAssertTrue(app.buttons["tile.sim1-b"].label.hasPrefix("Not decided"), "the photo with an extra person still needs a look")
         XCTAssertTrue(probe(app).contains("deleteCalls=0"))
