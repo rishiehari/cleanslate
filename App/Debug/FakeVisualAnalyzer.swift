@@ -6,13 +6,15 @@ import os
 /// A stand-in for Vision. It reads the `RenderSpec` the fake library tagged onto the thumbnail, so results are deterministic,
 /// instant and countable. `failAll` simulates a device where Vision is unavailable.
 final class FakeVisualAnalyzer: VisualAnalyzing, @unchecked Sendable {
-    private struct State { var calls = 0, prints = 0, quality = 0; var failAll = false }
+    private struct State { var calls = 0, prints = 0, quality = 0; var failAll = false; var printsByPicture: [String: Int] = [:] }
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     /// Every request, of any kind.
     var calls: Int { state.withLock { $0.calls } }
     var printCalls: Int { state.withLock { $0.prints } }
     var qualityCalls: Int { state.withLock { $0.quality } }
+    /// The most times one and the same picture (by its render spec) was feature-printed. A cached engine keeps this at 1.
+    var maxPrintsOfOnePicture: Int { state.withLock { $0.printsByPicture.values.max() ?? 0 } }
     var failAll: Bool {
         get { state.withLock { $0.failAll } }
         set { state.withLock { $0.failAll = newValue } }
@@ -20,18 +22,18 @@ final class FakeVisualAnalyzer: VisualAnalyzing, @unchecked Sendable {
 
     struct Failure: Error {}
 
-    private func record(print: Bool) throws {
+    private func record(print: Bool, picture: String = "") throws {
         let fail = state.withLock { s -> Bool in
             s.calls += 1
-            if print { s.prints += 1 } else { s.quality += 1 }
+            if print { s.prints += 1; s.printsByPicture[picture, default: 0] += 1 } else { s.quality += 1 }
             return s.failAll
         }
         if fail { throw Failure() }
     }
 
     func featurePrint(_ image: UIImage) async throws -> VisualPrint {
-        try record(print: true)
         let token = await Self.token(of: image)
+        try record(print: true, picture: token)
         return VisualPrint(payload: token) { other in
             Self.distance(token, (other.payload as? String) ?? "")
         }

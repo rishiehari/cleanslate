@@ -144,6 +144,16 @@ final class FakeScenarioTests: XCTestCase {
         XCTAssertEqual(fake.calls, 5, "failed requests are still counted")
     }
 
+    func testFakeVisualTracksRepeatedPrintsOfOnePicture() async throws {
+        let fake = FakeVisualAnalyzer()
+        let a = FakePhotoLibrary.renderScene(spec: Spec(base: 1)), b = FakePhotoLibrary.renderScene(spec: Spec(base: 2))
+        XCTAssertEqual(fake.maxPrintsOfOnePicture, 0)
+        _ = try await fake.featurePrint(a); _ = try await fake.featurePrint(b)
+        XCTAssertEqual(fake.maxPrintsOfOnePicture, 1)
+        _ = try await fake.featurePrint(a)
+        XCTAssertEqual(fake.maxPrintsOfOnePicture, 2)
+    }
+
     func testFakeVisualCountsAreSafeUnderConcurrency() async {
         let fake = FakeVisualAnalyzer()
         let image = FakePhotoLibrary.renderScene(spec: Spec(base: 1))
