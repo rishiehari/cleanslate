@@ -3,7 +3,7 @@ PY := $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 DD := build/DerivedData
 XCB := xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -derivedDataPath $(DD) CODE_SIGNING_ALLOWED=NO
 
-.PHONY: eval core-test gen build ios-test seed fixtures-test ci verify screens lint
+.PHONY: eval core-test gen build ios-test seed fixtures-test ci verify screens lint budget
 core-test:
 	swift test --package-path Core
 gen:
@@ -33,3 +33,12 @@ screens:
 eval:
 	$(PY) fixtures/generate_synthetic_photos.py --out build/fixtures --scenes 40
 	swift run --package-path Core cleanslate-eval --manifest build/fixtures/manifest.csv --gate
+
+# Peak-memory budget on the iPhone SE (3rd gen) simulator, which stands in for a 4 GB (tier M) device. Creates SE-test if missing.
+# A simulator reports the Mac's RAM, so CLEANSLATE_TIER states which budget applies. Override: make budget BUDGET_TIER=L
+BUDGET_TIER ?= M
+budget: gen
+	@xcrun simctl list devices available | grep -q "SE-test" || xcrun simctl create SE-test com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation
+	@SE_ID=$$(xcrun simctl list devices available | awk -F'[()]' '/SE-test/{print $$2; exit}'); \
+	test -n "$$SE_ID" || { echo "Could not find or create the SE-test simulator."; exit 2; }; \
+	TEST_RUNNER_CLEANSLATE_TIER=$(BUDGET_TIER) $(XCB) -destination "platform=iOS Simulator,id=$$SE_ID" test -only-testing:CleanSlateTests/MemoryBudgetTests

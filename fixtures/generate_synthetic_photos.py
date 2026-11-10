@@ -2,12 +2,17 @@
 """Generate deterministic, original CC0-like fixtures from primitives (no real people).
 Run: python3 fixtures/generate_synthetic_photos.py --out /tmp/cleanslate-fixtures --scenes 20
 Requires Pillow. These are *mock* image cases, NOT representative human accuracy data.
+
+Burst mode (`--bursts N`): writes N bursts of 8 JPEG frames each (burst_000/frame0.jpg ...), one second apart in EXIF
+DateTimeOriginal. NOTE: simulator imports (`simctl addmedia`) cannot create real PhotoKit `burstIdentifier`s, so these frames
+exercise the TIME-WINDOW path only. True bursts exist only on the in-memory fake library used by the iOS tests.
 """
 import argparse
 import csv
 import hashlib
+from datetime import datetime, timedelta
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance
 
 CANVAS = (320, 224)
 
@@ -71,10 +76,57 @@ def generate(out: Path, scenes: int=20):
     (out/'README.txt').write_text('Deterministic synthetic photo test fixtures from Pillow primitives. No real faces or copyrighted photographs. Semantic ground truth is authored. NOT an ML evaluation result.\n')
     return rows
 
+BURST_FRAMES = 8
+BURST_EPOCH = datetime(2026, 1, 1, 12, 0, 0)
+EXIF_DATETIME_ORIGINAL = 36867           # Exif sub-IFD tag
+EXIF_IFD_POINTER = 0x8769
+
+def exif_for(moment: datetime) -> Image.Exif:
+    exif = Image.Exif()
+    exif.get_ifd(EXIF_IFD_POINTER)[EXIF_DATETIME_ORIGINAL] = moment.strftime('%Y:%m:%d %H:%M:%S')
+    return exif
+
+def burst_frame(burst: int, frame: int) -> tuple[Image.Image, str]:
+    """Frame `frame` (0-7) of burst `burst`: a slow pan (0-14 px), +-6% exposure, a changed expression on frame 5 and the
+    right-hand subject missing on frame 7. Returns the image and its manifest label."""
+    if frame == 5: img, label = scene_image(burst, expression='neutral'), 'unique_expression'
+    elif frame == 7: img, label = scene_image(burst, omit_right=True), 'unique_subject'
+    else: img, label = scene_image(burst), 'burst_redundant'
+    pan = round(frame * 14 / (BURST_FRAMES - 1))                       # 0, 2, 4, 6, 8, 10, 12, 14
+    if pan: img = ImageChops.offset(img, pan, 0)
+    exposure = (1.0, 1.04, 0.96, 1.06, 0.94, 1.02, 0.98, 1.0)[frame]     # within +-6%
+    return ImageEnhance.Brightness(img).enhance(exposure), label
+
+def generate_bursts(out: Path, bursts: int) -> list[dict]:
+    out.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for b in range(bursts):
+        group = f'burst_{b:03d}'
+        folder = out / group
+        folder.mkdir(parents=True, exist_ok=True)
+        start = BURST_EPOCH + timedelta(minutes=10 * b)
+        for frame in range(BURST_FRAMES):
+            image, label = burst_frame(b, frame)
+            path = folder / f'frame{frame}.jpg'
+            image.save(path, 'JPEG', quality=88, subsampling=0, optimize=False, exif=exif_for(start + timedelta(seconds=frame)))
+            rows.append({'asset_id': f'{group}/{path.name}', 'scene_id': group, 'variant': f'frame{frame}',
+                         'relation_to_base': label, 'is_native_burst_simulation': 'false',
+                         'timestamp_offset_ms': str(frame * 1000), 'protected': 'false', 'sha256': sha(path)})
+    return rows
+
+def write_manifest(out: Path, rows: list[dict]):
+    with (out/'manifest.csv').open('w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader(); w.writerows(rows)
+
 if __name__=='__main__':
     ap=argparse.ArgumentParser()
     ap.add_argument('--out',type=Path,required=True)
     ap.add_argument('--scenes',type=int,default=20)
+    ap.add_argument('--bursts',type=int,default=0,help='also write N bursts of 8 time-window frames (see header note)')
     args=ap.parse_args()
     rows=generate(args.out, args.scenes)
+    if args.bursts > 0:
+        rows += generate_bursts(args.out, args.bursts)
+        write_manifest(args.out, rows)       # one manifest; the eval tool skips scenes without a reference row
     print(f'Generated {len(rows)} synthetic image fixtures in {args.out}.')
