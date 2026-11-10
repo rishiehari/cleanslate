@@ -262,19 +262,23 @@ final class ScanEngine {
 
     /// Near-duplicate candidate pairs from LSH bands plus same-moment pairs, filtered by hash distance and
     /// ranked: bursts first, then closest hashes. Only proposals; nothing here proves similarity.
+    /// The assembly (union/filter/rank) runs in detached utility tasks over Sendable values only.
     private func rankedNearPairs() async -> [CandidatePair] {
         let near = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 256, maximumPairs: limits.candidatePairCap)
         let moments = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: limits.momentBucketCap,
                                               maximumPairs: limits.candidatePairCap)
         reporter?.scanUpdate { $0.lshBucketsSkipped = near.skippedBuckets }
-        let all = Array(Set(near.pairs).union(moments))
-        let hashes = await store.dhashes(ids: Array(Set(all.flatMap { [$0.first, $0.second] })), version: Self.featureVersion)
-        let close = all.filter { pair in
-            guard let a = hashes[pair.first], let b = hashes[pair.second] else { return false }
-            return CandidateIndex.hamming(a, b) <= 10
-        }
-        let burstIDs = await store.snapshots(ids: Array(Set(close.flatMap { [$0.first, $0.second] }))).compactMapValues(\.burstID)
-        // Sorting up to 200k pairs is pure computation: keep it off the main thread.
+        let members = Array(Set(near.pairs.flatMap { [$0.first, $0.second] } + moments.flatMap { [$0.first, $0.second] }))
+        let hashes = await store.dhashes(ids: members, version: Self.featureVersion)
+        // Union + Hamming filter off the main actor; pure Sendable data crosses (no self, no snapshots).
+        let close = await Task.detached(priority: .utility) {
+            Array(Set(near.pairs).union(moments)).filter { pair in
+                guard let a = hashes[pair.first], let b = hashes[pair.second] else { return false }
+                return CandidateIndex.hamming(a, b) <= 10
+            }
+        }.value
+        let burstIDs = await store.burstIDs(among: close.flatMap { [$0.first, $0.second] })
+        // Sorting up to the tier cap of pairs is pure computation: keep it off the main thread.
         return await Task.detached(priority: .utility) { Self.rank(close, hashes: hashes, burstIDs: burstIDs) }.value
     }
 
@@ -369,8 +373,23 @@ final class ScanEngine {
     // MARK: 6a. Bursts and quick runs (review sets: several shots, you choose what to keep)
 
     private func buildReviewSets(albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
-        let items = await store.sequenceItems(version: Self.featureVersion).filter { !claimed.contains($0.id) }
-        let sets = SequenceGrouping.groups(items)
+        // Stream the sequence items through the grouping builder page by page (no whole-library array).
+        var streamer = SequenceGrouping.Streamer()
+        var afterTime: Int64? = nil
+        var afterID = ""
+        var fed = 0
+        let totalImages = await store.imageAssetCount()
+        while true {
+            if Task.isCancelled { return .cancelled }
+            let page = await store.sequencePage(afterTime: afterTime, afterID: afterID, limit: 500, version: Self.featureVersion)
+            if page.items.isEmpty { break }
+            streamer.feed(page.items.filter { !claimed.contains($0.id) })
+            fed += page.items.count
+            afterTime = page.lastTime; afterID = page.lastID
+            tick(done: fed, total: totalImages)
+            await Task.yield()
+        }
+        let sets = streamer.finish()
         reporter?.scanUpdate { $0.reviewSetsFound = sets.count }
         var pending: [PhotoReviewGroup] = []
         var visionUsable = true

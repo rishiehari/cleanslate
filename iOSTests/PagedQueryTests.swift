@@ -29,7 +29,8 @@ final class PagedQueryTests: XCTestCase {
             guard !page.keys.isEmpty else { break }
             cursor = page.lastRowID
         }
-        XCTAssertEqual(collected, await store.exactKeys())
+        let allKeys = await store.exactKeys()
+        XCTAssertEqual(collected, allKeys)
         XCTAssertEqual(collected.count, 250)
     }
 
@@ -43,7 +44,7 @@ final class PagedQueryTests: XCTestCase {
                                     version: ScanEngine.featureVersion)
 
         let batch = await store.sequenceItems(version: ScanEngine.featureVersion)
-            .sorted { ($0.timeSeconds ?? .min, $1.id) < ($1.timeSeconds ?? .min, $0.id) }
+            .sorted { ($0.timeSeconds ?? .min, $0.id) < ($1.timeSeconds ?? .min, $1.id) }
         var paged: [SequenceItem] = []
         var time: Int64? = nil
         var id = ""
@@ -78,7 +79,9 @@ final class PagedQueryTests: XCTestCase {
     }
 
     func testMomentBucketCap30SkipsLargeBurstsAndCountsNothingSilently() async throws {
-        let burst = (0..<31).map { photo("big-\($0)", at: Int64($0), burst: "big") }
+        // Burst frames far apart in time, so ONLY the burst path could pair them: the cap must
+        // exclude the whole 31-frame burst (review sets still cover those photos).
+        let burst = (0..<31).map { photo("big-\($0)", at: Int64($0) * 3_600, burst: "big") }
         let small = (0..<3).map { photo("small-\($0)", at: Int64(100 + $0)) }
         try await store.upsert(burst + small)
         let pairs = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 30, maximumPairs: 1_000)

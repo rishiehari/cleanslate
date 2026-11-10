@@ -409,6 +409,20 @@ actor LibraryStore {
         return out
     }
 
+    /// Burst ids for these assets only (chunked; nil burst assets are absent).
+    func burstIDs(among ids: [String]) -> [String: String] {
+        var out: [String: String] = [:]
+        for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
+            let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            let found = (try? rows("""
+                SELECT id, burst_id FROM assets WHERE deleted=0 AND burst_id IS NOT NULL AND id IN (\(marks))
+                """, bind: { s in for (i, id) in chunk.enumerated() { text(s, Int32(i + 1), id) } },
+                                   map: { (String(cString: sqlite3_column_text($0, 0)), String(cString: sqlite3_column_text($0, 1))) })) ?? []
+            for (id, burst) in found { out[id] = burst }
+        }
+        return out
+    }
+
     func clearUnavailableFeatures() throws { try run("DELETE FROM features WHERE feature_version=0") }
 
     func dhash(id: String, revision: String) -> UInt64? {
@@ -465,6 +479,11 @@ actor LibraryStore {
                          burstID: str(s, 2),
                          hash: sqlite3_column_type(s, 3) == SQLITE_NULL ? nil : UInt64(bitPattern: sqlite3_column_int64(s, 3)))
         }) ?? []
+    }
+
+    /// Live image count (cheap progress total for the paged review-set phase).
+    func imageAssetCount() -> Int {
+        (try? rows("SELECT COUNT(*) FROM assets WHERE deleted=0 AND media_type=1", map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
     }
 
     /// Burst and time-window pairs for the same-moment candidates (images only).
