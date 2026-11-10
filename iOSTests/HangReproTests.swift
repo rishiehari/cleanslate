@@ -54,11 +54,9 @@ final class HangReproTests: XCTestCase {
         model.stop()
         let finishedWithinFiveSeconds = await waitUntil(timeout: 5) { !model.isScanning }
         print("HANGREPRO stuckThumbnail cancelFinished=\(finishedWithinFiveSeconds) waited=\(String(format: "%.1f", Date().timeIntervalSince(began)))s inFlight=\(library.thumbnailsInFlight)")
-        // Let the engine finish before the test returns whatever happens next.
+        // F03.1: thumbnail requests have a client-side deadline and honor cancellation, so Cancel finishes.
+        XCTAssertTrue(finishedWithinFiveSeconds, "Cancel did not finish the scan within 5 s")
         defer { library.releaseStuckThumbnails() }
-        XCTExpectFailure("fixed by F03: thumbnail requests have no timeout, so Cancel cannot finish", options: .strictForRemoval()) {
-            XCTAssertTrue(finishedWithinFiveSeconds, "Cancel did not finish the scan within 5 s")
-        }
         library.releaseStuckThumbnails()
         let ended = await waitUntil(timeout: 60) { !model.isScanning }
         XCTAssertTrue(ended, "once released, the scan ends (test hygiene)")

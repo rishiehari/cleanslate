@@ -223,7 +223,7 @@ final class StandaloneTests: XCTestCase {
 
     func testItemsInUserAlbumsAreNeverOffered() async {
         seedMedia()
-        library.albumMemberIDs = ["shotA", "bigVid"]
+        library.albumMemberTable = ["shotA", "bigVid"]
         let model = makeModel(); await model.runScan()
         XCTAssertFalse(model.standalone(in: .screenshots).contains { $0.id == "shotA" })
         XCTAssertFalse(model.standalone(in: .largeFiles).contains { $0.id == "bigVid" })

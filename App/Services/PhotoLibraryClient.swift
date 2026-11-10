@@ -31,6 +31,8 @@ protocol PhotoLibraryClient: AnyObject {
     func verifiedSize(id: String) async -> Int64?
     /// Identifiers of every asset that sits in one of the user's own albums (one pass, no per-asset lookups).
     func userAlbumAssetIDs() -> Set<String>
+    /// Album membership for THESE ids only (targeted lookup; no whole-library pass).
+    func albumMemberIDs(among ids: [String]) async -> Set<String>
     /// Asks the system to delete the assets. The system presents its own confirmation.
     /// Immediately before the change request, the implementation re-reads the very objects
     /// it is about to delete and throws `.changed` if any revision differs from
@@ -68,13 +70,14 @@ enum LibraryChangeResult: Sendable, Equatable {
 }
 
 enum LibraryResourceError: LocalizedError, Equatable {
-    case notAccessible, changed, empty, cancelled
+    case notAccessible, changed, empty, cancelled, timedOut
     var errorDescription: String? {
         switch self {
         case .notAccessible: "Original not available locally. No bytes were verified."
         case .changed: "Photo changed during verification."
         case .empty: "Photo has no accessible resources."
         case .cancelled: "Resource scan was cancelled."
+        case .timedOut: "Timed out while reading the photo. It was not checked."
         }
     }
 }

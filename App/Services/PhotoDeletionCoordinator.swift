@@ -125,7 +125,7 @@ final class PhotoDeletionCoordinator {
             switch error {
             case .cancelled: throw CancellationError()
             case .changed: throw DeletionError.changedResource
-            case .notAccessible, .empty: throw DeletionError.cannotVerify
+            case .notAccessible, .empty, .timedOut: throw DeletionError.cannotVerify
             }
         }
     }

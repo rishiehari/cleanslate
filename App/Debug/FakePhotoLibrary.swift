@@ -216,10 +216,14 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     var onInventoryPage: ((Int) -> Void)?
     var unavailableThumbnailIDs: Set<String> = []
 
-    /// Assets whose thumbnail request suspends until `releaseStuckThumbnails()` and ignores cancellation, like a PhotoKit
-    /// callback that never fires.
+    /// Assets whose thumbnail request suspends until `releaseStuckThumbnails()` and ignores plain
+    /// cancellation, like a PhotoKit callback that never fires. The shared Deadline helper still
+    /// ends the wait on scan Cancel (resume nil) and on `stuckThumbnailTimeout` (counted, nil).
     var stuckThumbnailIDs: Set<String> = []
-    private var stuckWaiters: [CheckedContinuation<Void, Never>] = []
+    private let stuckWaiters = WaiterList<UIImage?>()
+    /// Deadline for a stuck thumbnail, mirroring the real client's 10 s (tests may shorten it).
+    var stuckThumbnailTimeout: TimeInterval = 10
+    private(set) var thumbnailTimeouts = 0
     /// Thumbnail requests currently inside `thumbnail(_:target:)`, and the most there ever were at once.
     private(set) var thumbnailsInFlight = 0
     private(set) var maxThumbnailsInFlight = 0
@@ -228,9 +232,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 
     func releaseStuckThumbnails() {
         stuckThumbnailIDs = []
-        let waiters = stuckWaiters
-        stuckWaiters = []
-        waiters.forEach { $0.resume() }
+        stuckWaiters.drain().forEach { $0.resume(nil) }      // nil: fall through to normal rendering after release
     }
 
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage? {
@@ -239,8 +241,15 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         thumbnailsInFlight += 1
         maxThumbnailsInFlight = max(maxThumbnailsInFlight, thumbnailsInFlight)
         defer { thumbnailsInFlight -= 1 }
-        if stuckThumbnailIDs.contains(id) { await withCheckedContinuation { stuckWaiters.append($0) } }
-        else if yieldInThumbnails { await Task.yield() }
+        if stuckThumbnailIDs.contains(id) {
+            _ = await Deadline.withDeadline(stuckThumbnailTimeout, onExpire: {}) { (once: OneShotResume<UIImage?>) in
+                stuckWaiters.append(once)
+            }
+            if stuckThumbnailIDs.contains(id) {     // still stuck: the deadline gave up on us
+                thumbnailTimeouts += 1
+                return nil                            // "unavailable", exactly like a cancelled request
+            }
+        } else if yieldInThumbnails { await Task.yield() }
         guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
         if failsLikeOptimizedStorage(id) { thumbnailNoResourceFailures += 1; return nil }
         if let spec = asset.spec { return Self.renderScene(spec: spec) }
@@ -293,6 +302,16 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         digestCalls.append(id)
         digestRequests.append((id, allowNetwork))
         onDigests?(id)
+        if stuckDigestIDs.contains(id) {
+            // Suspends until released or the (test-configurable) deadline, like a PhotoKit callback that never fires.
+            _ = await Deadline.withDeadline(digestTimeout, onExpire: {}) { (once: OneShotResume<[ResourceDigest]>) in
+                stuckDigestWaiters.append(once)
+            }
+            if stuckDigestIDs.contains(id) {          // still stuck: the deadline gave up on us
+                digestTimeouts += 1
+                throw LibraryResourceError.timedOut
+            }
+        }
         await Task.yield()
         guard let asset = assets[id] else { throw LibraryResourceError.notAccessible }
         if let local = asset.digests { return local }
@@ -301,11 +320,48 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         throw LibraryResourceError.notAccessible
     }
 
-    func verifiedSize(id: String) async -> Int64? { sizes[id] }
+    /// Assets whose digest request suspends until released or `digestTimeout` expires (expires → `.timedOut`).
+    var stuckDigestIDs: Set<String> = []
+    private let stuckDigestWaiters = WaiterList<[ResourceDigest]>()
+    var digestTimeout: TimeInterval = 20
+    private(set) var digestTimeouts = 0
+    func releaseStuckDigests() {
+        stuckDigestIDs = []
+        stuckDigestWaiters.drain().forEach { $0.resume(nil) }
+    }
+
+    func verifiedSize(id: String) async -> Int64? {
+        if stuckSizeIDs.contains(id) {
+            _ = await Deadline.withDeadline(sizeTimeout, onExpire: {}) { (once: OneShotResume<Int64>) in
+                stuckSizeWaiters.append(once)
+            }
+            if stuckSizeIDs.contains(id) {
+                sizeTimeouts += 1
+                return nil                              // unknown size, like a cancelled PhotoKit request
+            }
+        }
+        return sizes[id]
+    }
+
+    /// Assets whose size request suspends until released or `sizeTimeout` expires (expires → nil/unknown).
+    var stuckSizeIDs: Set<String> = []
+    private let stuckSizeWaiters = WaiterList<Int64>()
+    var sizeTimeout: TimeInterval = 10
+    private(set) var sizeTimeouts = 0
+    func releaseStuckSizes() {
+        stuckSizeIDs = []
+        stuckSizeWaiters.drain().forEach { $0.resume(nil) }
+    }
 
     /// Assets placed in user albums (tests).
-    var albumMemberIDs: Set<String> = []
-    func userAlbumAssetIDs() -> Set<String> { albumMemberIDs }
+    var albumMemberTable: Set<String> = []
+    func userAlbumAssetIDs() -> Set<String> { albumMemberTable }
+    /// Every targeted album-membership lookup, in call order (tests assert the scan stays scoped).
+    private(set) var albumMemberAmongCalls: [[String]] = []
+    func albumMemberIDs(among ids: [String]) async -> Set<String> {
+        albumMemberAmongCalls.append(ids)
+        return Set(ids.filter { albumMemberTable.contains($0) })
+    }
 
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
         beforeDelete?()
@@ -516,7 +572,7 @@ extension FakePhotoLibrary {
             if !flags.isEmpty { library.update(id, flags: flags) }
             expectations.protected.append(id)
         }
-        library.albumMemberIDs = ["prot-album"]
+        library.albumMemberTable = ["prot-album"]
         let screenshotBit: UInt = 1 << 2
         for n in 0..<10 {
             let id = "shot\(n)"
@@ -531,6 +587,15 @@ extension FakePhotoLibrary {
         }
         return (library, expectations)
     }
+}
+
+/// Lock-protected list of deadline waiters: the deadline body appends from whatever executor it
+/// runs on; releases and timeouts resume from arbitrary queues.
+private final class WaiterList<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiters: [OneShotResume<Value>] = []
+    func append(_ waiter: OneShotResume<Value>) { lock.lock(); waiters.append(waiter); lock.unlock() }
+    func drain() -> [OneShotResume<Value>] { lock.lock(); let drained = waiters; waiters = []; lock.unlock(); return drained }
 }
 
 /// Deterministic faces/text for UI tests (the real analyzer needs a device).

@@ -10,6 +10,7 @@ import CleanSlateCore
 @MainActor
 final class PhotoKitLibraryClient: PhotoLibraryClient {
     static let shared = PhotoKitLibraryClient()
+    private static let resourceQueue = DispatchQueue(label: "org.cleanslate.resource-watchdog", qos: .userInitiated)
     private let imageManager = PHCachingImageManager()
     private let watcher = PhotoLibraryWatcher()
     private var handlers: [UUID: @MainActor () -> Void] = [:]
@@ -45,6 +46,14 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         return try await completeDigests(asset, allowNetwork: allowNetwork)
     }
 
+    /// The ORIGINAL file's size: a hard deadline (videos), or the streamed-bytes path below (images),
+    /// which carries the digest inactivity watchdog (20 s, reset per chunk).
+    nonisolated static let sizeTimeout: TimeInterval = 10
+    /// Local-only thumbnail deadline: a PhotoKit callback that never fires must not outlive this.
+    nonisolated static let thumbnailTimeout: TimeInterval = 10
+    /// Digest inactivity deadline: reset on every data chunk (a slow-but-moving read is not dead).
+    nonisolated static let digestInactivityTimeout: TimeInterval = 20
+
     func verifiedSize(id: String) async -> Int64? {
         guard let asset = fetchAsset(id) else { return nil }
         if asset.mediaType == .video {
@@ -54,9 +63,15 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
             options.isNetworkAccessAllowed = false
             options.version = .original
             options.deliveryMode = .highQualityFormat
-            return await withCheckedContinuation { (continuation: CheckedContinuation<Int64?, Never>) in
-                let once = OneShot(continuation)
-                PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+            let box = RequestIDBox()
+            return await Deadline.withDeadline(Self.sizeTimeout, onExpire: {
+                if let requestID = box.requestID {
+                    Task { @MainActor in PHImageManager.default().cancelImageRequest(requestID) }
+                }
+                DiagnosticsLog.shared.record(.requestTimedOut(kind: .videoSize, asset: DiagnosticsLog.shared.salted(id),
+                                                              seconds: Int(Self.sizeTimeout)))
+            }) { (once: OneShotResume<Int64>) in
+                let requestID = PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
                     // PhotoKit may call this more than once; only the first call may resume.
                     guard let url = (avAsset as? AVURLAsset)?.url,
                           let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
@@ -64,6 +79,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                     }
                     once.resume(Int64(size))
                 }
+                box.set(requestID)
             }
         }
         guard let digests = try? await completeDigests(asset, allowNetwork: false) else { return nil }
@@ -77,6 +93,19 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
             PHAsset.fetchAssets(in: collection, options: nil).enumerateObjects { asset, _, _ in ids.insert(asset.localIdentifier) }
         }
         return ids
+    }
+
+    /// Targeted album membership: only these ids are queried, and the loop yields every 50 assets.
+    func albumMemberIDs(among ids: [String]) async -> Set<String> {
+        var members: Set<String> = []
+        for (index, id) in ids.enumerated() {
+            guard let asset = fetchAsset(id) else { continue }
+            if PHAssetCollection.fetchAssetCollectionsContaining(asset, with: .album, options: nil).count > 0 {
+                members.insert(id)
+            }
+            if index % 50 == 49 { await Task.yield() }
+        }
+        return members
     }
 
     func delete(ids: [String], expectedRevisions: [String: String]) async throws {
@@ -119,7 +148,10 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         let upper = min(result.count, offset + limit)
         if offset < upper {
             photos.reserveCapacity(upper - offset)
-            for index in offset..<upper { photos.append(snapshot(result.object(at: index))) }
+            for index in offset..<upper {
+                // Per-asset pool: no UIImage / CGImage outlives its iteration (bounded memory).
+                autoreleasepool { photos.append(snapshot(result.object(at: index))) }
+            }
         }
         return (photos, result.count)
     }
@@ -201,23 +233,31 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                              subtypes: asset.mediaSubtypes.rawValue)
     }
 
-    /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable.
+    /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable,
+    /// and nil when the request outlives `thumbnailTimeout` (treated the same as "no local rendition").
     func thumbnail(_ id: String, target: CGFloat = 280) async -> UIImage? {
         guard let asset = fetchAsset(id) else { return nil }
         let opts = PHImageRequestOptions()
         opts.isNetworkAccessAllowed = false
         opts.deliveryMode = .fastFormat
         opts.resizeMode = .fast
-        return await withCheckedContinuation { continuation in
-            let once = OneShotImageContinuation(continuation)
-            imageManager.requestImage(for: asset,
-                                      targetSize: CGSize(width: target, height: target),
-                                      contentMode: .aspectFit,
-                                      options: opts) { image, _ in
+        let box = RequestIDBox()
+        return await Deadline.withDeadline(Self.thumbnailTimeout, onExpire: { [weak self] in
+            if let requestID = box.requestID {
+                Task { @MainActor in self?.imageManager.cancelImageRequest(requestID) }
+            }
+            DiagnosticsLog.shared.record(.requestTimedOut(kind: .thumbnail, asset: DiagnosticsLog.shared.salted(id),
+                                                          seconds: Int(Self.thumbnailTimeout)))
+        }) { (once: OneShotResume<UIImage>) in
+            let requestID = self.imageManager.requestImage(for: asset,
+                                                           targetSize: CGSize(width: target, height: target),
+                                                           contentMode: .aspectFit,
+                                                           options: opts) { image, _ in
                 // PhotoKit callbacks can be repeated or arrive from arbitrary queues.
                 // Only the first completion may resume the Swift continuation.
                 once.resume(image)
             }
+            box.set(requestID)
         }
     }
 
@@ -228,26 +268,50 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         var digests: [ResourceDigest] = []
         for resource in resources {
             try Task.checkCancellation()
-            let digest = try await digest(resource, allowNetwork: allowNetwork)
+            let digest = try await digest(resource, assetID: asset.localIdentifier, allowNetwork: allowNetwork)
             digests.append(digest)
         }
         return digests
     }
 
-    private func digest(_ resource: PHAssetResource, allowNetwork: Bool) async throws -> ResourceDigest {
+    private func digest(_ resource: PHAssetResource, assetID: String, allowNetwork: Bool) async throws -> ResourceDigest {
         let accumulator = LockedSHA256()
         let resourceType = "\(resource.type.rawValue):\(resource.uniformTypeIdentifier)"
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = allowNetwork
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ResourceDigest, Error>) in
-            PHAssetResourceManager.default().requestData(for: resource, options: options,
-                dataReceivedHandler: { data in accumulator.update(data) },
-                completionHandler: { error in
-                    if let error { continuation.resume(throwing: error); return }
-                    let result = accumulator.finish(type: resourceType)
-                    continuation.resume(returning: result)
+        let watchdog = InactivityWatchdog()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ResourceDigest, Error>) in
+                let once = OneShotThrow(continuation)
+                let timer = DispatchSource.makeTimerSource(queue: Self.resourceQueue)
+                timer.schedule(deadline: .now() + 1, repeating: 1)
+                timer.setEventHandler {
+                    guard watchdog.inactive(for: Self.digestInactivityTimeout) else { return }
+                    timer.cancel()
+                    watchdog.cancelRequest()
+                    DiagnosticsLog.shared.record(.requestTimedOut(kind: .digest,
+                                                                  asset: DiagnosticsLog.shared.salted(assetID),
+                                                                  seconds: Int(Self.digestInactivityTimeout)))
+                    once.resume(throwing: LibraryResourceError.timedOut)
                 }
-            )
+                timer.resume()
+                let requestID = PHAssetResourceManager.default().requestData(for: resource, options: options,
+                    dataReceivedHandler: { data in
+                        watchdog.touch()                 // inactivity clock resets per chunk
+                        accumulator.update(data)
+                    },
+                    completionHandler: { error in
+                        timer.cancel()
+                        if let error { once.resume(throwing: error); return }
+                        let result = accumulator.finish(type: resourceType)
+                        once.resume(returning: result)
+                    })
+                watchdog.setRequestID(requestID)
+            }
+        } onCancel: {
+            // The completion handler fires after cancelDataRequest and resumes via `once`;
+            // if it never does, the inactivity watchdog above still throws .timedOut.
+            watchdog.cancelRequest()
         }
     }
 }
@@ -269,26 +333,43 @@ private final class LockedSHA256 {
     }
 }
 
-/// Resumes a continuation at most once (PhotoKit handlers can fire repeatedly).
-private final class OneShot<Value: Sendable>: @unchecked Sendable {
+/// Holds a PhotoKit request id set after the request starts, readable from the timeout closure.
+private final class RequestIDBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Never>?
-    init(_ continuation: CheckedContinuation<Value, Never>) { self.continuation = continuation }
-    func resume(_ value: Value) {
-        lock.lock(); let current = continuation; continuation = nil; lock.unlock()
-        current?.resume(returning: value)
+    private var raw: PHImageRequestID?
+    var requestID: PHImageRequestID? { lock.lock(); defer { lock.unlock() }; return raw }
+    func set(_ id: PHImageRequestID) { lock.lock(); raw = id; lock.unlock() }
+}
+
+/// Digest inactivity watchdog: the deadline resets on every data chunk; on expiry the request
+/// itself is cancelled and `.timedOut` is thrown (fail-closed: "couldn't check", never a match).
+private final class InactivityWatchdog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastActivity = Date()
+    private var requestID: PHAssetResourceDataRequestID?
+    func touch() { lock.lock(); lastActivity = Date(); lock.unlock() }
+    func inactive(for seconds: TimeInterval) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return Date().timeIntervalSince(lastActivity) >= seconds
+    }
+    func setRequestID(_ id: PHAssetResourceDataRequestID) { lock.lock(); requestID = id; lock.unlock() }
+    func cancelRequest() {
+        lock.lock(); let id = requestID; lock.unlock()
+        if let id { PHAssetResourceManager.default().cancelDataRequest(id) }
     }
 }
 
-private final class OneShotImageContinuation {
+/// Resumes a throwing continuation at most once.
+private final class OneShotThrow<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<UIImage?, Never>?
-    init(_ continuation: CheckedContinuation<UIImage?, Never>) { self.continuation = continuation }
-    func resume(_ image: UIImage?) {
-        lock.lock()
-        let current = continuation
-        continuation = nil
-        lock.unlock()
-        current?.resume(returning: image)
+    private var continuation: CheckedContinuation<Value, Error>?
+    init(_ continuation: CheckedContinuation<Value, Error>) { self.continuation = continuation }
+    func resume(returning value: Value) {
+        lock.lock(); let current = continuation; continuation = nil; lock.unlock()
+        current?.resume(returning: value)
+    }
+    func resume(throwing error: Error) {
+        lock.lock(); let current = continuation; continuation = nil; lock.unlock()
+        current?.resume(throwing: error)
     }
 }

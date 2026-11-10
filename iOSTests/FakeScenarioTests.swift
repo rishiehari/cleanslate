@@ -51,7 +51,7 @@ final class FakeScenarioTests: XCTestCase {
         XCTAssertTrue(library.assets["prot-favorite"]!.snapshot.record.flags.contains(.favorite))
         XCTAssertTrue(library.assets["prot-edited"]!.snapshot.record.flags.contains(.edited))
         XCTAssertTrue(library.assets["prot-shared"]!.snapshot.record.flags.contains(.shared))
-        XCTAssertTrue(library.albumMemberIDs.contains("prot-album"))
+        XCTAssertTrue(library.albumMemberTable.contains("prot-album"))
         XCTAssertTrue(e.screenshots.allSatisfy { library.assets[$0]!.snapshot.isScreenshot })
     }
 
