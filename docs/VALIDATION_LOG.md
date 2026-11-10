@@ -281,3 +281,20 @@ Real-library **scan-only** run on a device (Instruments: time, memory, thermal);
 Done: receipts persisted in the index + History screen + free space before/after on the receipt; privacy manifest (`CA92.1`, `85F4.1`: **unverified**, Apple page unreadable by the fetch tool); `ITSAppUsesNonExemptEncryption=false` (**unverified**); placeholder app icon; string catalog stub; `site/` privacy and support drafts; `fastlane/metadata/en-US`; `docs/RELEASE_CHECKLIST.md`.
 Not done: accessibility audits beyond Home/Review, localization beyond the stub, final panel review, hallway test, TestFlight, identity checks.
 Final `make ci`: core 112 PASS, `make eval` GATE PASS, lint PASS, app build PASS; **iOS tests did not run** (simulator wedged at launch; see the checklist). Treat the iOS suite as "passed per step, final regression run pending".
+
+## F01 — Fixtures, E2E and low-memory harness — 2026-11-09 (executor)
+Commits: 87942fc F01.1 seam · 1ee05d9 F01.2 RenderSpec/FakeVisualAnalyzer/builders · 5d3733e F01.3 stuck thumbnails · 5c6a8cf F01.4 FootprintSampler + MemoryBudgetTests · b995e8a F01.5 HangReproTests · aac7232 F01.6 EndToEndRecent100Tests · 160916b F01.7 `--bursts` + `make budget` · 45f643d F01.8 device-log faults (3303-style thumbnail failures, blocking metadata; added at the coordinator's request).
+
+Observed results (real output, iPhone 17 Pro iOS 26.5 simulator unless noted):
+- `make ci`: core 112/112 PASS; fixtures-test 7/7 PASS (was 2; +5 burst tests); eval GATE PASS; lint PASS; build PASS; **iOS unit 176 run, 1 skipped (pre-existing), 0 failures** (148 before F01); **UI 27 run, 4 skipped, 2 failures** (`ReviewFlowUITests.testMarkTheRestLeavesWarnedPhotosAloneAndUndoRestores`, `...testSimilarGroupOpensWithNothingMarkedDeleteAndCannotApproveUntilUserPicks`). Both fail identically on pristine 254498d (checked in a clean worktree), so they are pre-existing and NOT caused by F01. Not fixed (out of scope; they look like UI-test breakage in Review, to investigate).
+- F01.8 tests (FakeDeviceFaultTests, 6) were run on their own after the full `make ci` and are not part of that 176 count (176 + 6 = 182 expected next run).
+- `make budget` on SE-test (CLEANSLATE_TIER=M, budget 160 MB): 2/2 PASS. scope 100 peak 40.3 MB; scope 10,000 peak 66.2 MB; growth 25.8 MB (target ≤ 15 is F03; recorded as non-strict expected failure). Soak 3x10,000: footprint after each run 41.1/41.2/41.2 MB (≤ 10 MB growth: PASS). Default simulator (tier H, 200 MB): peak 40.1 / 60.9 MB, growth 20.8 MB, soak 40.7 x3.
+- HangReproTests 2/2 (expected failures recorded): Cancel does not finish within 5 s when a thumbnail never returns (cancelFinished=false); on burst-heavy 7,000 (share 0.6, length 8) the fake scan finished by itself with 16,116 Vision calls (7,716 prints, 8,400 quality), 159,257 candidate pairs, and one picture was feature-printed up to 44 times.
+- EndToEndRecent100Tests 9/9: 5 exact groups pre-marked, 3 bursts + 2 overlap runs as unmarked similar sets, one `deleteCalls` of 5, receipt verifiedRemoved 5, 4 protected survive, 95 assets remain.
+- Safety: no Core test touched (`git diff 254498d -- Core/Tests` empty); `grep -rn deleteAssets App` = 1; no URLSession / isNetworkAccessAllowed=true; Release build SUCCEEDED (all fakes `#if DEBUG`).
+
+Not verified / limits:
+- Simulator hang: the first launch after a long idle failed with "Busy (Application failed preflight checks)"; `simctl shutdown all` alone did not help, `killall -9 com.apple.CoreSimulator.CoreSimulatorService` + boot of the target device did. Afterwards all runs were stable.
+- Stability gate items 3 (main-thread watchdog), 7 (a11y audit/screenshots) and 9 (device gates) are N/A or not run for F01. Items 1 is NOT fully green because of the 2 pre-existing UI failures above. Validator/gatekeeper reviews not yet done.
+- The fake does not reproduce the real stall at scale (fake Vision is instant); the repro tests assert work counts, not wall-clock hangs. Real-device confirmation remains the F02/F03 owner gates.
+- Footprint is of the whole test process on a simulator (not enforced by the OS); device numbers still need Instruments/MetricKit.
