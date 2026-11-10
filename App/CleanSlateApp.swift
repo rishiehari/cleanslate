@@ -4,6 +4,7 @@ import Photos
 @main
 struct CleanSlateApp: App {
     @StateObject private var model: CleaningViewModel
+    @Environment(\.scenePhase) private var scenePhase
     private let library: PhotoLibraryClient
     private let watchdog: MainThreadWatchdog
     @StateObject private var labels = LabelStore(fileURL: LabelStore.defaultURL())
@@ -14,19 +15,27 @@ struct CleanSlateApp: App {
         watchdog = environment.watchdog
         _model = StateObject(wrappedValue: environment.model)
         environment.watchdog.start()
+        // A leftover scan.inProgress marker means the previous process was killed mid-scan.
+        let model = environment.model
+        Task { await DiagnosticsLaunch.recordAppLaunch(store: model.store, log: model.diagnostics) }
     }
 
     var body: some Scene {
         WindowGroup {
-            #if DEBUG
-            if let variant = Self.prototypeVariant {
-                PrototypeHost(variant: variant)
-            } else {
+            Group {
+                #if DEBUG
+                if let variant = Self.prototypeVariant {
+                    PrototypeHost(variant: variant)
+                } else {
+                    root
+                }
+                #else
                 root
+                #endif
             }
-            #else
-            root
-            #endif
+            .onChange(of: scenePhase) { _, newPhase in
+                model.diagnostics.record(.scenePhase(state: DiagScene(newPhase)))
+            }
         }
     }
 
@@ -58,6 +67,17 @@ struct CleanSlateApp: App {
                 .environmentObject(labels)
                 .environment(\.photoLibraryOverride, library)
                 .tint(Color.actionPrimary)
+        }
+    }
+}
+
+extension DiagScene {
+    init(_ phase: ScenePhase) {
+        switch phase {
+        case .active: self = .active
+        case .background: self = .background
+        case .inactive: self = .inactive
+        @unknown default: self = .inactive
         }
     }
 }

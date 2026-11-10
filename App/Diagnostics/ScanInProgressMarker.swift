@@ -26,3 +26,19 @@ enum ScanInProgressMarker {
         try? await store.setMeta(metaKey, nil)
     }
 }
+
+// MARK: - Launch
+
+enum DiagnosticsLaunch {
+    /// Records the `appLaunch` event. A leftover `scan.inProgress` marker means the previous process was killed
+    /// mid-scan (force-quit, jetsam), so it is reported as not ended cleanly; the marker is consumed either way,
+    /// because it described the previous process, not this one.
+    static func recordAppLaunch(store: LibraryStore, log: DiagnosticsLog) async {
+        let marker = await ScanInProgressMarker.read(in: store)
+        await ScanInProgressMarker.clear(in: store)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        log.record(.appLaunch(version: version, build: build, tier: DeviceTier.current,
+                              previousRunEndedCleanly: marker == nil, lastPhase: marker?.phase))
+    }
+}
