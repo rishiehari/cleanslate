@@ -11,6 +11,24 @@ import CleanSlateCore
 final class FakePhotoLibrary: PhotoLibraryClient {
     enum DeleteOutcome { case success, userCancelled, failure }
 
+    /// How a fake photo is drawn. Shots with the same `base` are "the same scene"; the other fields model a small camera
+    /// pan, an exposure change and an extra person entering the frame. `FakeVisualAnalyzer` reads it back from the image.
+    struct RenderSpec: Hashable, Sendable {
+        var base: Int
+        var shiftX: Int = 0
+        var exposure: Double = 1
+        var extraSubject = false
+
+        /// Carried on the rendered `UIImage.accessibilityIdentifier` so a fake Vision can recover it.
+        var token: String { "spec|\(base)|\(shiftX)|\(exposure)|\(extraSubject)" }
+        static func parse(_ token: String) -> RenderSpec? {
+            let parts = token.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 5, parts[0] == "spec", let base = Int(parts[1]), let shift = Int(parts[2]),
+                  let exposure = Double(parts[3]), let extra = Bool(parts[4]) else { return nil }
+            return RenderSpec(base: base, shiftX: shift, exposure: exposure, extraSubject: extra)
+        }
+    }
+
     struct Asset {
         var snapshot: PhotoSnapshot
         /// nil = original not available locally (e.g. iCloud only).
@@ -21,6 +39,8 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         var look: String = ""
         /// Bulk (scale test) assets compute their digest on demand instead of storing millions of them.
         var lazyContent: String?
+        /// When set, the thumbnail is drawn from this spec instead of `look`.
+        var spec: RenderSpec?
     }
 
     var assets: [String: Asset] = [:] { didSet { sortedCache = nil } }
@@ -52,7 +72,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     /// same `at`; by default every asset gets its own timestamp so nothing is bucketed by accident.
     func add(_ id: String, revision: String = "v1", flags: Set<PreservationFlag> = [],
              content: String? = nil, bytes: Int64 = 1_000, at: Int64? = nil, resources: [ResourceDigest]? = nil,
-             subtypes: UInt = 0, isVideo: Bool = false, duration: Double = 0, size: Int64? = nil, burst: String? = nil, look: String? = nil) {
+             subtypes: UInt = 0, isVideo: Bool = false, duration: Double = 0, size: Int64? = nil, burst: String? = nil, look: String? = nil, spec: RenderSpec? = nil) {
         let record = AssetRecord(id: id, revision: revision, flags: flags)
         nextTimestamp += 1_000
         let time = at ?? nextTimestamp
@@ -61,6 +81,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
                                      isVideo: isVideo, durationSeconds: duration, subtypes: subtypes)
         if let size { sizes[id] = size }
         assets[id] = Asset(snapshot: snapshot, digests: resources ?? [Self.digest(content ?? id, bytes: bytes)], look: look ?? content ?? id)
+        assets[id]?.spec = spec
         recordChange(changed: [id])
     }
 
@@ -156,6 +177,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         thumbnailCalls += 1
         if target <= 300 { fingerprintThumbnailCalls += 1 }
         guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
+        if let spec = asset.spec { return Self.renderScene(spec: spec) }
         return Self.renderScene(look: asset.look)
     }
 
@@ -164,18 +186,40 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     /// A small deterministic "photo": sky gradient, sun and hills, tinted by `look`.
     static func renderScene(look: String) -> UIImage {
         let seed = look.utf8.reduce(7) { ($0 &* 31 &+ Int($1)) % 360 }
+        let image = draw(hueSeed: seed, shiftX: 0, exposure: 1, extraSubject: false, pixelScale: nil)
+        image.accessibilityIdentifier = "look|\(look)"
+        return image
+    }
+
+    /// The same scene, with the hills panned by `shiftX * 6` px, brightness scaled by `exposure` and an optional extra subject.
+    static func renderScene(spec: RenderSpec) -> UIImage {
+        let seed = (spec.base &* 2_654_435_761 &+ 12_345) % 360
+        let image = draw(hueSeed: abs(seed), shiftX: spec.shiftX, exposure: spec.exposure, extraSubject: spec.extraSubject, pixelScale: 1)
+        image.accessibilityIdentifier = spec.token
+        return image
+    }
+
+    private static func draw(hueSeed seed: Int, shiftX: Int, exposure: Double, extraSubject: Bool, pixelScale: CGFloat?) -> UIImage {
         let hue = CGFloat(seed) / 360
+        let level = CGFloat(exposure)
         let size = CGSize(width: 320, height: 240)
-        return UIGraphicsImageRenderer(size: size).image { ctx in
-            let colors = [UIColor(hue: hue, saturation: 0.45, brightness: 0.95, alpha: 1).cgColor,
-                          UIColor(hue: (hue + 0.08).truncatingRemainder(dividingBy: 1), saturation: 0.35, brightness: 0.75, alpha: 1).cgColor]
+        let format = UIGraphicsImageRendererFormat.default()
+        if let pixelScale { format.scale = pixelScale }
+        let pan = CGFloat(shiftX * 6)
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            let colors = [UIColor(hue: hue, saturation: 0.45, brightness: min(1, 0.95 * level), alpha: 1).cgColor,
+                          UIColor(hue: (hue + 0.08).truncatingRemainder(dividingBy: 1), saturation: 0.35, brightness: min(1, 0.75 * level), alpha: 1).cgColor]
             let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1])!
             ctx.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: size.height), options: [])
-            UIColor(white: 1, alpha: 0.9).setFill()
+            UIColor(white: min(1, level), alpha: 0.9).setFill()
             ctx.cgContext.fillEllipse(in: CGRect(x: 220, y: 30, width: 46, height: 46))
-            UIColor(hue: hue, saturation: 0.6, brightness: 0.35, alpha: 1).setFill()
-            ctx.cgContext.fillEllipse(in: CGRect(x: -40, y: 150, width: 260, height: 160))
-            ctx.cgContext.fillEllipse(in: CGRect(x: 120, y: 175, width: 260, height: 140))
+            UIColor(hue: hue, saturation: 0.6, brightness: min(1, 0.35 * level), alpha: 1).setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: -40 + pan, y: 150, width: 260, height: 160))
+            ctx.cgContext.fillEllipse(in: CGRect(x: 120 + pan, y: 175, width: 260, height: 140))
+            if extraSubject {
+                UIColor(hue: (hue + 0.5).truncatingRemainder(dividingBy: 1), saturation: 0.7, brightness: 0.8, alpha: 1).setFill()
+                ctx.cgContext.fillEllipse(in: CGRect(x: 60, y: 90, width: 56, height: 56))
+            }
         }
     }
 
@@ -290,6 +334,136 @@ extension FakePhotoLibrary {
             candidates: copies.map { assets[$0]!.snapshot },
             evidence: copies.map { PairEvidence(first: keeper, second: $0, relation: relation, completeResourceEquality: equal) },
             verifiedCandidateBytes: kind == .exact ? Dictionary(uniqueKeysWithValues: copies.map { ($0, bytes) }) : [:])
+    }
+}
+
+/// Which assets the Recent 100 scenario planted, so tests can assert exact outcomes.
+struct Recent100Expectations {
+    /// 5 byte-identical pairs (same time, same picture).
+    var exactPairs: [[String]] = []
+    /// 3 native bursts of 6 (same `burst` id).
+    var bursts: [[String]] = []
+    /// 2 quick runs of 5 shots, one second apart, panning 1-4 steps, with no burst id.
+    var overlapRuns: [[String]] = []
+    /// Favorite, album member, edited and shared: never deletable.
+    var protected: [String] = []
+    var screenshots: [String] = []
+    var uniques: [String] = []
+    var all: [String] { exactPairs.flatMap { $0 } + bursts.flatMap { $0 } + overlapRuns.flatMap { $0 } + protected + screenshots + uniques }
+}
+
+/// Small deterministic generator (SplitMix64) so scenario builders are reproducible from a seed.
+struct SeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+}
+
+extension FakePhotoLibrary {
+    /// A library dominated by bursts: `burstShare` of the photos sit in native bursts of `burstLength` frames (one second apart,
+    /// small pans and exposure changes); the rest are unique scenes hours apart. Exactly `count` assets.
+    static func burstHeavy(count: Int, burstShare: Double, burstLength: Int, seed: UInt64) -> FakePhotoLibrary {
+        let library = FakePhotoLibrary()
+        var rng = SeededGenerator(seed: seed)
+        let length = max(2, burstLength)
+        let burstCount = Int(Double(count) * min(1, max(0, burstShare))) / length
+        var table: [String: Asset] = [:]
+        table.reserveCapacity(count)
+        var clock: Int64 = 1_600_000_000
+        var made = 0
+        func make(_ id: String, at: Int64, burst: String?, spec: RenderSpec) {
+            let record = AssetRecord(id: id, revision: "v1", flags: [])
+            let snap = PhotoSnapshot(id: id, record: record, capturedAt: Date(timeIntervalSince1970: TimeInterval(at)), burstID: burst,
+                                     width: 4032, height: 3024, originalFilename: "IMG_\(id).HEIC")
+            var asset = Asset(snapshot: snap, digests: nil, look: "base\(spec.base)")
+            asset.lazyContent = "\(id)-\(spec.base)-\(spec.shiftX)-\(spec.exposure)"
+            asset.spec = spec
+            table[id] = asset
+            made += 1
+        }
+        for b in 0..<burstCount {
+            clock += 3_600 + Int64(rng.next() % 600)
+            for frame in 0..<length {
+                let shift = Int(rng.next() % 4)
+                let exposure = 1 + Double(Int(rng.next() % 13) - 6) / 100          // +-6%
+                make("b\(b)-\(frame)", at: clock + Int64(frame), burst: "burst-\(b)",
+                     spec: RenderSpec(base: b, shiftX: shift, exposure: exposure))
+            }
+        }
+        var unique = 0
+        while made < count {
+            clock += 3_600 + Int64(rng.next() % 600)
+            make("u\(unique)", at: clock, burst: nil, spec: RenderSpec(base: 100_000 + unique))
+            unique += 1
+        }
+        library.assets = table
+        return library
+    }
+
+    /// The 100-item end-to-end library: 5 exact pairs, 3 bursts of 6, 2 overlap runs of 5, 4 protected photos, 10 screenshots
+    /// and 48 other unique photos, all within the last 30 days.
+    static func recent100Scenario(now: Date = Date()) -> (library: FakePhotoLibrary, expectations: Recent100Expectations) {
+        let library = FakePhotoLibrary()
+        var expectations = Recent100Expectations()
+        let start = Int64(now.timeIntervalSince1970) - 29 * 86_400
+        var clock = start
+        var base = 0
+        func nextUnitStart() -> Int64 { clock += 20_000; return clock }
+        func nextBase() -> Int { base += 1; return base }
+
+        for n in 0..<5 {
+            let at = nextUnitStart(), scene = nextBase()
+            let ids = ["ex\(n)-a", "ex\(n)-b"]
+            for id in ids { library.add(id, content: "exact\(n)", bytes: 2_000_000 + Int64(n) * 100_000, at: at, spec: RenderSpec(base: scene)) }
+            expectations.exactPairs.append(ids)
+        }
+        for n in 0..<3 {
+            let at = nextUnitStart(), scene = nextBase()
+            var ids: [String] = []
+            for frame in 0..<6 {
+                let id = "burst\(n)-\(frame)"
+                library.add(id, content: id, at: at + Int64(frame), burst: "native-burst-\(n)",
+                            spec: RenderSpec(base: scene, shiftX: frame % 3, exposure: 1 + Double(frame % 3 - 1) * 0.03))
+                ids.append(id)
+            }
+            expectations.bursts.append(ids)
+        }
+        for n in 0..<2 {
+            let at = nextUnitStart(), scene = nextBase()
+            var ids: [String] = []
+            for frame in 0..<5 {
+                let id = "run\(n)-\(frame)"
+                library.add(id, content: id, at: at + Int64(frame), spec: RenderSpec(base: scene, shiftX: frame))
+                ids.append(id)
+            }
+            expectations.overlapRuns.append(ids)
+        }
+        let protectedSpecs: [(String, Set<PreservationFlag>)] = [("prot-favorite", [.favorite]), ("prot-album", []), ("prot-edited", [.edited]), ("prot-shared", [.shared])]
+        for (id, flags) in protectedSpecs {
+            library.add(id, content: id, at: nextUnitStart(), spec: RenderSpec(base: nextBase()))
+            if !flags.isEmpty { library.update(id, flags: flags) }
+            expectations.protected.append(id)
+        }
+        library.albumMemberIDs = ["prot-album"]
+        let screenshotBit: UInt = 1 << 2
+        for n in 0..<10 {
+            let id = "shot\(n)"
+            library.add(id, content: id, at: nextUnitStart(), subtypes: screenshotBit, size: 400_000 + Int64(n) * 50_000, spec: RenderSpec(base: nextBase()))
+            expectations.screenshots.append(id)
+        }
+        let used = expectations.all.count
+        for n in 0..<(100 - used) {
+            let id = "uniq\(n)"
+            library.add(id, content: id, at: nextUnitStart(), spec: RenderSpec(base: nextBase()))
+            expectations.uniques.append(id)
+        }
+        return (library, expectations)
     }
 }
 
