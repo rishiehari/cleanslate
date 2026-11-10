@@ -7,7 +7,7 @@ import CleanSlateCore
 @MainActor
 final class ExactNarrowingTests: XCTestCase {
     private let dims: [String: (width: Int, height: Int)] = ["a": (4032, 3024), "b": (4032, 3024), "c": (4032, 3024),
-                                                             "d": (4032, 3024), "e": (4000, 3000), "f": (4000, 3000)]
+                                                             "d": (4032, 3024), "e": (4000, 3000), "f": (4000, 2250)]
     private func hashes(_ pairs: [(String, UInt64)]) -> [String: UInt64] { Dictionary(uniqueKeysWithValues: pairs) }
 
     func testNearPairsAboveHamming2OrMismatchedSizeAreNeverEnqueued() {

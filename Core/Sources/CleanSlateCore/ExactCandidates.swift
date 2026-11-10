@@ -24,6 +24,9 @@ public struct ExactBuckets: Sendable, Equatable {
     /// Buckets skipped because they were too large to hash exhaustively (reported, never silently dropped).
     public let oversizedBuckets: Int
     public let oversizedAssets: Int
+    public init(buckets: [[String]], oversizedBuckets: Int, oversizedAssets: Int) {
+        self.buckets = buckets; self.oversizedBuckets = oversizedBuckets; self.oversizedAssets = oversizedAssets
+    }
 }
 
 public enum ExactCandidates {
