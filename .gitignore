@@ -20,3 +20,5 @@ CleanSlate.xcodeproj/
 .venv/
 build/
 *.xcresult
+__pycache__/
+*.pyc

@@ -36,7 +36,8 @@ final class VisionPhotoAnalyzer: PhotoAnalyzer {
             text = DifferenceAnalysis.normalizedText(lines)
         } catch { failures += 1 }
         let description = PhotoDescription(faceCount: faces, text: text)
-        cache[assetID] = description
+        // Only a complete answer is remembered; a partial one (a request failed) must be retried, never treated as final.
+        if faces != nil, text != nil { cache[assetID] = description }
         return description
     }
 }

@@ -295,7 +295,7 @@ Observed results (real output, iPhone 17 Pro iOS 26.5 simulator unless noted):
 
 Not verified / limits:
 - Simulator hang: the first launch after a long idle failed with "Busy (Application failed preflight checks)"; `simctl shutdown all` alone did not help, `killall -9 com.apple.CoreSimulator.CoreSimulatorService` + boot of the target device did. Afterwards all runs were stable.
-- Stability gate items 3 (main-thread watchdog), 7 (a11y audit/screenshots) and 9 (device gates) are N/A or not run for F01. Items 1 is NOT fully green because of the 2 pre-existing UI failures above. Validator/gatekeeper reviews not yet done.
+- Stability gate items 3 (main-thread watchdog), 7 (a11y audit/screenshots) and 9 (device gates) are N/A or not run for F01. Items 1 is NOT fully green because of the 2 pre-existing UI failures above. Validator/gatekeeper reviews not yet done. **[SUPERSEDED: the 2 UI failures were fixed in 5dd2db6 (full UI target 27 run, 0 failures) and the gatekeeper approved F01; see the entries below.]**
 - The fake does not reproduce the real stall at scale (fake Vision is instant); the repro tests assert work counts, not wall-clock hangs. Real-device confirmation remains the F02/F03 owner gates.
 - Footprint is of the whole test process on a simulator (not enforced by the OS); device numbers still need Instruments/MetricKit.
 
@@ -311,5 +311,5 @@ Classification: (b) test-infrastructure defects. The app behaviour is correct; n
 ## F01 fixes D1/D2 + minor cleanups — 2026-11-09 (executor)
 - D1: `GroupReviewModel` keeps non-exact photos unmarkable until `loadWarnings` completes (tap and `set(.delete)` show "Still checking this photo", Mark the rest is a no-op with that notice). When analysis completes, any mark on a photo that now needs a look is withdrawn to undecided; Undo re-applies the same withdrawal so it cannot restore an unacknowledged mark. Exact groups and groups with no analyzer configured are unaffected.
 - D2: a candidate whose own or keeper's description is entirely unknown (nil faces AND nil text) gets a fail-closed "We couldn't compare this photo closely" chip/sheet and needs the same acknowledgement. Implemented in the App layer (`couldntCompare`, `Evidence.couldntCompare`); Core `DifferenceAnalysis` is unchanged. Partial nil (faces known, text nil) keeps today's behaviour.
-- Tests added: iOSTests/AnalysisGateTests.swift (6 cases, incl. a gated analyzer for the pending window, model-level; no UI test since the fake analyzer is instant). M3 guards/assertions, M4 separate favorite-in-exact-pair test, M5 strict expected failures, M6 renamed Python test.
+- Tests added: iOSTests/AnalysisGateTests.swift (7 cases, incl. a gated analyzer for the pending window, model-level; no UI test since the fake analyzer is instant). M3 guards/assertions, M4 separate favorite-in-exact-pair test, M5 strict expected failures, M6 renamed Python test.
 - Results: core 112 PASS; fixtures-test 7 PASS; lint PASS; build PASS; iOS unit 189 run, 1 skipped, 0 failures; UI 27 run, 4 skipped, 0 failures; `make budget` 2/2 PASS.

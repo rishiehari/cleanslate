@@ -98,7 +98,6 @@ final class GroupReviewModel: ObservableObject {
     /// True while a similar photo cannot be marked yet because its comparison with the keeper has not finished.
     var isCheckingPhotos: Bool { !analysisComplete }
     static let stillCheckingNotice = "Still checking this photo. Try again in a moment."
-    static let couldntCompareText = "We couldn't compare this photo closely"
 
     /// Looks for faces/text that differ from the suggested keeper. Runs once, in the background.
     /// Until it completes nothing non-exact can be marked; when it completes, any mark on a photo that now needs a look is withdrawn.
@@ -186,10 +185,18 @@ final class GroupReviewModel: ObservableObject {
         }
     }
 
+    /// Defence in depth: a similar group cannot be approved while its analysis is incomplete, or while any marked photo still
+    /// needs a look (warning or "couldn't compare") that the user has not acknowledged. Exact groups are byte-verified.
+    private var approvalAllowedByAnalysis: Bool {
+        guard !isExact else { return true }
+        guard analysisComplete else { return false }
+        return !draft.deleteIDs.contains { isAwaitingAcknowledgement($0) }
+    }
+
     /// Moves the marked photos into the tray. Never deletes anything (U1).
     @discardableResult
     func approve() -> Bool {
-        guard draft.canApprove else { haptics.fire(.blocked); return false }
+        guard draft.canApprove, approvalAllowedByAnalysis else { haptics.fire(.blocked); return false }
         tray.approve(group: group, selected: draft.deleteIDs,
                      manuallyReviewed: isExact ? [] : draft.userMarkedDelete, keepers: draft.keepIDs)
         haptics.fire(.approve)
