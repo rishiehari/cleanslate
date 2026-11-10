@@ -94,8 +94,9 @@ final class ScanEngine {
     }
 
     /// Progress inside a stage: always updates the live counters, and logs once per 25 items.
-    private func tick(done: Int, total: Int, inFlight: Int = 0) {
-        counters.update { $0.done = done; $0.total = total; $0.inFlight = inFlight }
+    /// `inFlight` is managed separately at the request sites, so an honest count survives between ticks.
+    private func tick(done: Int, total: Int) {
+        counters.update { $0.done = done; $0.total = total }
         let bucket = done / 25
         if bucket != lastTickBucket {
             lastTickBucket = bucket
@@ -245,7 +246,7 @@ final class ScanEngine {
                     else { unavailable.append((photo.id, photo.record.revision)) }
                 }
                 let missing = results.filter { $0.1 == nil }.count
-                counters.update { $0.thumbsTried += results.count; $0.thumbsUnavailable += missing }
+                counters.update { $0.thumbsTried += results.count; $0.thumbsUnavailable += missing; $0.inFlight = 0 }
                 tick(done: processed + hashed.count + unavailable.count, total: pending)
             }
             try? await store.putFeatures(hashed, version: Self.featureVersion)
@@ -310,6 +311,8 @@ final class ScanEngine {
             if Task.isCancelled { return .cancelled }
             if case .stop(let reason) = await governor.checkpoint() { return .stopped(reason: reason) }
             guard let photo = snapshots[id] else { continue }
+            counters.update { $0.inFlight = 1 }
+            defer { counters.update { $0.inFlight = 0 } }
             do {
                 let result = try await fetcher.fetch(id: id, estimatedBytes: Self.estimatedOriginalBytes(photo))
                 digests[id] = result.digests
@@ -321,7 +324,7 @@ final class ScanEngine {
             } catch {
                 reporter?.scanUpdate { $0.exactAssetsUnverifiable += 1 }   // not local, incomplete or failed: never a match
             }
-            tick(done: n + 1, total: order.count, inFlight: 1)
+            tick(done: n + 1, total: order.count)
             if n % 5 == 0 { reporter?.scanProgress(0.65 + 0.20 * Double(n + 1) / Double(max(1, order.count))); await Task.yield() }
         }
         let identified = Dictionary(grouping: digests.compactMap { id, items -> (String, String)? in
@@ -355,6 +358,8 @@ final class ScanEngine {
         for (n, photo) in candidates.enumerated() {
             if Task.isCancelled { return .cancelled }
             // Videos: size of the local file (no bytes read). Screenshots are measured when selected.
+            counters.update { $0.inFlight = photo.isVideo ? 1 : 0 }
+            defer { counters.update { $0.inFlight = 0 } }
             items.append(StandaloneItem(snapshot: photo, verifiedBytes: photo.isVideo ? await library.verifiedSize(id: photo.id) : nil))
             tick(done: n + 1, total: candidates.count)
             if n % 25 == 0 { reporter?.scanProgress(0.85 + 0.05 * Double(n + 1) / Double(max(1, candidates.count))); await Task.yield() }
@@ -379,6 +384,8 @@ final class ScanEngine {
             guard photos.count >= 2 else { continue }
             var quality: [QualitySignals] = []
             for photo in photos {
+                counters.update { $0.inFlight = 1 }
+                defer { counters.update { $0.inFlight = 0 } }
                 guard let image = await library.thumbnail(photo.id, target: 512) else {
                     quality.append(QualitySignals(id: photo.id, pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))); continue
                 }
@@ -425,6 +432,8 @@ final class ScanEngine {
             if claimed.contains(pair.first) || claimed.contains(pair.second) { continue }
             let both = await store.snapshots(ids: [pair.first, pair.second])
             guard let a = both[pair.first].map({ Self.markAlbum($0, albums) }), let b = both[pair.second].map({ Self.markAlbum($0, albums) }) else { continue }
+            counters.update { $0.inFlight = 1 }
+            defer { counters.update { $0.inFlight = 0 } }
             guard let firstImage = await library.thumbnail(a.id, target: 512), let secondImage = await library.thumbnail(b.id, target: 512) else { continue }
             let distance: Double
             do {
@@ -463,7 +472,7 @@ final class ScanEngine {
                 verifiedCandidateBytes: [:]))
             claimed.insert(keeper.id); claimed.insert(candidate.id)
             if pending.count >= 5 { reporter?.scanFound(groups: pending); pending = [] }      // progressive results
-            tick(done: n + 1, total: limited.count, inFlight: 1)
+            tick(done: n + 1, total: limited.count)
             if n % 10 == 0 { reporter?.scanProgress(0.90 + 0.10 * Double(n + 1) / Double(max(1, limited.count))); await Task.yield() }
         }
         reporter?.scanFound(groups: pending)

@@ -32,7 +32,7 @@ final class ScanHeartbeat: @unchecked Sendable {
     private let counters: ScanCounters
     private let probes: Probes
     private let stallAfter: Int
-    private struct Progress { var lastDone = -1; var lastChange: Double = 0; var task: Task<Void, Never>? }
+    private struct Progress { var lastDone = -1; var lastInFlight = -1; var lastChange: Double = 0; var reported = false; var task: Task<Void, Never>? }
     private let progress = OSAllocatedUnfairLock(initialState: Progress())
 
     init(log: DiagnosticsLog, counters: ScanCounters, probes: Probes = Probes(), stallAfter: Int = 6) {
@@ -42,7 +42,7 @@ final class ScanHeartbeat: @unchecked Sendable {
     func start(interval: Duration = ScanHeartbeat.interval) {
         stop()
         let now = probes.seconds()
-        progress.withLock { $0.lastDone = -1; $0.lastChange = now }
+        progress.withLock { $0.lastDone = -1; $0.lastInFlight = -1; $0.lastChange = now; $0.reported = false }
         let task = Task.detached(priority: .utility) { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
@@ -63,9 +63,19 @@ final class ScanHeartbeat: @unchecked Sendable {
                               thumbsTried: s.thumbsTried, thumbsUnavailable: s.thumbsUnavailable))
         let now = probes.seconds()
         let stalledFor: Int? = progress.withLock { p in
-            if p.lastDone != s.done { p.lastDone = s.done; p.lastChange = now; return nil }
+            // Any movement (items done or requests in flight) re-arms the stall clock.
+            if p.lastDone != s.done || p.lastInFlight != s.inFlight {
+                p.lastDone = s.done; p.lastInFlight = s.inFlight; p.lastChange = now; p.reported = false
+                return nil
+            }
+            // A phase that has produced no measurable work yet (pure CPU, e.g. ranking pairs)
+            // must NOT stall-report: only report once work has started and then froze.
+            guard s.inFlight > 0 || s.done > 0 else { return nil }
+            guard !p.reported else { return nil }          // one event per stall episode
             let idle = Int(now - p.lastChange)
-            return idle >= stallAfter ? idle : nil
+            guard idle >= stallAfter else { return nil }
+            p.reported = true
+            return idle
         }
         if let stalledFor { log.record(.stalled(phase: s.phase, secondsSinceProgress: stalledFor, pendingRequests: s.inFlight)) }
     }
