@@ -20,12 +20,12 @@ final class MemoryBudgetTests: XCTestCase {
         let (peak, start) = sampler.stop()
         XCTAssertEqual(model.statistics.photosEnumerated, photos)
         XCTAssertGreaterThan(sampler.sampleCount, 1, "the sampler ran")
-        print("BUDGET tier=\(BudgetTier.current.rawValue) scope=\(label) photos=\(photos) peakMB=\(String(format: "%.1f", peak)) startMB=\(String(format: "%.1f", start)) seconds=\(String(format: "%.1f", seconds)) groups=\(model.groups.count)")
+        print("BUDGET tier=\(DeviceTier.current.letter) scope=\(label) photos=\(photos) peakMB=\(String(format: "%.1f", peak)) startMB=\(String(format: "%.1f", start)) seconds=\(String(format: "%.1f", seconds)) groups=\(model.groups.count)")
         return Measurement(peakMB: peak, startMB: start, seconds: seconds, groups: model.groups.count, photos: photos)
     }
 
     func testFootprintAtScope100AndScope10000() async throws {
-        let budget = BudgetTier.current.peakBudgetMB
+        let budget = DeviceTier.current.peakBudgetMB
         let small = try await measureScan(photos: 100, label: "100")
         let large = try await measureScan(photos: 10_000, label: "10000")
         let growth = large.peakMB - small.peakMB

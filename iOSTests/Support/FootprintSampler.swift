@@ -54,22 +54,3 @@ final class FootprintSampler: @unchecked Sendable {
     /// How many times the footprint was read (a sanity check that the sampler actually ran).
     var sampleCount: Int { state.withLock { $0.samples } }
 }
-
-/// Memory budgets from `docs/FEATURE_ROADMAP.md` ("Shared device-tier budgets"). F02's `DeviceTier` replaces this.
-enum BudgetTier: String {
-    case low = "L", medium = "M", high = "H"
-
-    /// Peak `phys_footprint` allowed during any scan, in MB.
-    var peakBudgetMB: Double {
-        switch self { case .low: 120; case .medium: 160; case .high: 200 }
-    }
-
-    /// `CLEANSLATE_TIER` (L/M/H) wins: a simulator reports the Mac's RAM, so `make budget` states the device it stands in for.
-    static var current: BudgetTier {
-        if let forced = ProcessInfo.processInfo.environment["CLEANSLATE_TIER"].flatMap({ BudgetTier(rawValue: $0.uppercased()) }) { return forced }
-        let bytes = ProcessInfo.processInfo.physicalMemory
-        if bytes < 3_758_096_384 { return .low }          // < 3.5 GB
-        if bytes < 5_905_580_032 { return .medium }       // < 5.5 GB
-        return .high
-    }
-}
