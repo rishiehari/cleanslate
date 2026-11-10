@@ -12,6 +12,7 @@ struct DashboardView: View {
     @State private var showTray = false
     @State private var showVerifySheet = false
     @State private var showHistory = false
+    @State private var showDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -34,6 +35,7 @@ struct DashboardView: View {
             }
             .background(Color.surfaceBackground)
             .navigationTitle("CleanSlate")
+            .navigationDestination(isPresented: $showDiagnostics) { DiagnosticsView() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     TrayButton(count: tray.photoCount) { showTray = true }
@@ -81,6 +83,8 @@ struct DashboardView: View {
         Menu {
             Toggle("Haptics", systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
             Button("History", systemImage: "clock.arrow.circlepath") { showHistory = true }
+            Button("Diagnostics", systemImage: "stethoscope") { showDiagnostics = true }
+                .accessibilityIdentifier("menu.diagnostics")
             Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }
             Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
             if labels.corrections > 0 {
