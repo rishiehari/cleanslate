@@ -49,4 +49,14 @@ final class DiagnosticsLaunchTests: XCTestCase {
         XCTAssertEqual(DiagScene(.inactive), .inactive)
         XCTAssertEqual(DiagScene(.background), .background)
     }
+
+    /// Spec: events flush every 5 s or on background. The background hook must push buffered
+    /// events to disk so a fresh log instance over the same directory sees them.
+    func testBackgroundHookFlushesBufferedEventsToDisk() {
+        let log = makeLog()
+        for n in 0..<10 { log.record(.progress(phase: .inventory, done: n, total: 10)) }
+        DiagnosticsHooks.didEnterBackground(log: log)
+        let onDisk = DiagnosticsLog(directory: dir).recent(limit: 20)   // a new instance reads only files
+        XCTAssertEqual(onDisk.count, 10, "the background hook flushed the buffer")
+    }
 }

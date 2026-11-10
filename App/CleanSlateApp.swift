@@ -38,6 +38,7 @@ struct CleanSlateApp: App {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 model.diagnostics.record(.scenePhase(state: DiagScene(newPhase)))
+                if newPhase == .background { DiagnosticsHooks.didEnterBackground(log: model.diagnostics) }
             }
         }
     }
