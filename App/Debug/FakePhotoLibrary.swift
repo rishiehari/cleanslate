@@ -137,7 +137,9 @@ final class FakePhotoLibrary: PhotoLibraryClient {
             sortedCache = all
         }
         guard offset < all.count else { return ([], all.count) }
-        return (Array(all[offset..<min(all.count, offset + limit)]), all.count)
+        let page = Array(all[offset..<min(all.count, offset + limit)])
+        blockMainThreadForMetadata(reads: page.count)
+        return (page, all.count)
     }
 
     // MARK: Change tracking (token = a counter into `changeLog`)
@@ -164,7 +166,48 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         return .changes(LibraryChangeSet(changedIDs: changed, deletedIDs: deleted, newToken: Data(String(changeLog.count).utf8)))
     }
 
-    func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? { assets[id]?.snapshot }
+    func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? {
+        blockMainThreadForMetadata(reads: 1)
+        return assets[id]?.snapshot
+    }
+
+    // MARK: Device-like faults (docs/HANG_RCA_DEVICE_LOG.md)
+
+    /// Real PhotoKit read per-asset metadata synchronously on the main queue ("Missing prefetched properties ... Fetching on
+    /// demand on the main queue"). A non-zero value makes every inventory/snapshot read block the calling thread this long
+    /// per asset, so main-thread watchdog tests can see it. Default 0 (no effect on existing tests).
+    var metadataBlockPerAsset: Duration = .zero
+    private(set) var mainThreadMetadataReads = 0
+    /// Total time the calling thread was blocked by `metadataBlockPerAsset`, and the longest single block (one page or snapshot).
+    private(set) var metadataBlockedSeconds = 0.0
+    private(set) var longestMetadataBlockSeconds = 0.0
+
+    private func blockMainThreadForMetadata(reads: Int) {
+        mainThreadMetadataReads += reads
+        guard metadataBlockPerAsset > .zero, reads > 0 else { return }
+        let parts = metadataBlockPerAsset.components
+        let perAsset = Double(parts.seconds) + Double(parts.attoseconds) / 1e18
+        let total = perAsset * Double(reads)
+        Thread.sleep(forTimeInterval: total)          // synchronous on purpose: that is the bug being modelled
+        metadataBlockedSeconds += total
+        longestMetadataBlockSeconds = max(longestMetadataBlockSeconds, total)
+    }
+
+    /// Fraction (0...1) of thumbnail requests that come back nil, as PhotoKit does with `PHPhotosErrorDomain 3303 "No resource
+    /// found matching image request spec"` for iCloud-optimized assets. Which assets fail is a stable function of the id, so runs
+    /// are reproducible and an asset always fails or always succeeds.
+    var thumbnailFailureFraction = 0.0
+    /// Requests that failed this way (every call counts, including repeats for the same asset).
+    private(set) var thumbnailNoResourceFailures = 0
+    /// The error PhotoKit would have reported for those nil results (for tests that classify failures).
+    static let noResourceErrorCode = 3303
+
+    func failsLikeOptimizedStorage(_ id: String) -> Bool {
+        guard thumbnailFailureFraction > 0 else { return false }
+        if thumbnailFailureFraction >= 1 { return true }
+        let h = id.utf8.reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1)) &* 1_099_511_628_211 }   // FNV-1a
+        return Double(h % 10_000) / 10_000 < thumbnailFailureFraction
+    }
 
     private(set) var thumbnailCalls = 0
     /// Fingerprint-size requests only (the Vision stage asks for larger thumbnails).
@@ -199,6 +242,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         if stuckThumbnailIDs.contains(id) { await withCheckedContinuation { stuckWaiters.append($0) } }
         else if yieldInThumbnails { await Task.yield() }
         guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
+        if failsLikeOptimizedStorage(id) { thumbnailNoResourceFailures += 1; return nil }
         if let spec = asset.spec { return Self.renderScene(spec: spec) }
         return Self.renderScene(look: asset.look)
     }
