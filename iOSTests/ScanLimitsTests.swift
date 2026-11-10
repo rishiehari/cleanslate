@@ -2,6 +2,7 @@ import XCTest
 @testable import CleanSlate
 
 /// Per-tier scan bounds (docs/features/F03 sub-task 2).
+@MainActor
 final class ScanLimitsTests: XCTestCase {
     func testTierCaps() {
         let low = ScanLimits(tier: .low), mid = ScanLimits(tier: .mid), high = ScanLimits(tier: .high)

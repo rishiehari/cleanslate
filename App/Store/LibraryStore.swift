@@ -258,6 +258,86 @@ actor LibraryStore {
         }) ?? []
     }
 
+    // MARK: Keyset-paged twins of the whole-library queries (F03: no whole-library arrays).
+    // The old APIs stay alongside for rollback; new code pages with `afterRowID`/`afterTime` cursors.
+
+    private static let exactKeyColumns = "id,media_type,width,height,created_s,duration_ms,original_filename"
+
+    /// Next page of exact keys after a rowid cursor (keyset: same cost no matter how much was done).
+    func exactKeyPage(afterRowID: Int64, limit: Int) -> (keys: [ExactKey], lastRowID: Int64) {
+        var last = afterRowID
+        let keys = (try? rows("""
+            SELECT rowid, \(Self.exactKeyColumns) FROM assets WHERE deleted=0 AND rowid > ?
+            ORDER BY rowid LIMIT ?
+            """, bind: { sqlite3_bind_int64($0, 1, afterRowID); sqlite3_bind_int($0, 2, Int32(limit)) },
+                               map: { s -> ExactKey in last = max(last, sqlite3_column_int64(s, 0)); return exactKey(from: s, offset: 1) })) ?? []
+        return (keys, last)
+    }
+
+    private func exactKey(from s: OpaquePointer?, offset: Int32) -> ExactKey {
+        ExactKey(id: String(cString: sqlite3_column_text(s, offset)), mediaType: Int(sqlite3_column_int(s, offset + 1)),
+                 pixelWidth: Int(sqlite3_column_int(s, offset + 2)), pixelHeight: Int(sqlite3_column_int(s, offset + 3)),
+                 creationSecond: sqlite3_column_type(s, offset + 4) == SQLITE_NULL ? nil : sqlite3_column_int64(s, offset + 4),
+                 durationMillis: sqlite3_column_int64(s, offset + 5), originalFilename: str(s, offset + 6))
+    }
+
+    /// Next page of sequence items in `byTimeThenID` order (NULL created_s sorts first, matching
+    /// SequenceGrouping). Pass `afterTime: nil, afterID: ""` for the first page.
+    func sequencePage(afterTime: Int64?, afterID: String, limit: Int, version: Int = 2) -> (items: [SequenceItem], lastTime: Int64?, lastID: String) {
+        let minTime = Int64.min
+        let order = "COALESCE(created_s, \(minTime)), id"
+        let paging = afterTime == nil && afterID.isEmpty ? "" : """
+            AND (COALESCE(created_s, \(minTime)) > ? OR (COALESCE(created_s, \(minTime)) = ? AND id > ?))
+            """
+        var items: [SequenceItem] = []
+        var lastTime: Int64? = afterTime
+        var lastID = afterID
+        let found = (try? rows("""
+            SELECT id, created_s, burst_id, f.dhash FROM assets a
+              LEFT JOIN features f ON f.asset_id=a.id AND f.revision=a.revision AND f.feature_version=?
+            WHERE a.deleted=0 AND a.media_type=1 \(paging)
+            ORDER BY \(order) LIMIT ?
+            """, bind: { s in
+                sqlite3_bind_int(s, 1, Int32(version))
+                if !paging.isEmpty {
+                    let t = afterTime ?? minTime
+                    sqlite3_bind_int64(s, 2, t); sqlite3_bind_int64(s, 3, t); text(s, 4, afterID)
+                    sqlite3_bind_int(s, 5, Int32(limit))
+                } else {
+                    sqlite3_bind_int(s, 2, Int32(limit))
+                }
+            }, map: { s -> SequenceItem? in
+                guard let id = sqlite3_column_text(s, 0).map({ String(cString: $0) }) else { return nil }
+                lastTime = sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1)
+                lastID = id
+                return SequenceItem(id: id, timeSeconds: lastTime, burstID: str(s, 2),
+                                    hash: sqlite3_column_type(s, 3) == SQLITE_NULL ? nil : UInt64(bitPattern: sqlite3_column_int64(s, 3)))
+            })) ?? []
+        items = found.compactMap { $0 }
+        return (items, lastTime, lastID)
+    }
+
+    /// Next page of burst rows (burst_id, id) after a (burstID, id) cursor, ordered by burst then id.
+    /// Bursts may straddle pages; the caller buffers per burst id.
+    func burstPage(afterBurstID: String, afterID: String, limit: Int) -> (rows: [(burstID: String, id: String)], lastBurstID: String, lastID: String) {
+        var lastBurst = afterBurstID, lastID = afterID
+        let fromStart = afterBurstID.isEmpty && afterID.isEmpty
+        let paging = fromStart ? "" : "AND (burst_id > ? OR (burst_id = ? AND id > ?))"
+        let rowsFound = (try? rows("""
+            SELECT burst_id, id FROM assets WHERE deleted=0 AND media_type=1 AND burst_id IS NOT NULL \(paging)
+            ORDER BY burst_id, id LIMIT ?
+            """, bind: { s in
+                if !fromStart { text(s, 1, afterBurstID); text(s, 2, afterBurstID); text(s, 3, afterID); sqlite3_bind_int(s, 4, Int32(limit)) }
+                else { sqlite3_bind_int(s, 1, Int32(limit)) }
+            }, map: { s -> (String, String)? in
+                guard let burst = sqlite3_column_text(s, 0).map({ String(cString: $0) }),
+                      let id = sqlite3_column_text(s, 1).map({ String(cString: $0) }) else { return nil }
+                lastBurst = burst; lastID = id
+                return (burst, id)
+            })) ?? []
+        return (rowsFound.compactMap { $0 }.map { (burstID: $0.0, id: $0.1) }, lastBurst, lastID)
+    }
+
     // MARK: Features (difference hash + LSH bands)
 
     /// Next batch of images that still need a fingerprint, resuming AFTER `afterRowID` (a keyset cursor), so each
