@@ -37,7 +37,7 @@ final class HangReproTests: XCTestCase {
         // F03: "every print computed once per asset". Today a photo that sits in several candidate pairs is printed again for each.
         let worst = visual.maxPrintsOfOnePicture
         print("HANGREPRO vision maxPrintsOfOnePicture=\(worst)")
-        XCTExpectFailure("fixed by F03: no per-asset feature-print cache, so a photo is re-printed for every pair") {
+        XCTExpectFailure("fixed by F03: no per-asset feature-print cache, so a photo is re-printed for every pair", options: .strictForRemoval()) {
             XCTAssertLessThanOrEqual(worst, 1, "one picture was feature-printed \(worst) times")
         }
     }
@@ -56,11 +56,21 @@ final class HangReproTests: XCTestCase {
         print("HANGREPRO stuckThumbnail cancelFinished=\(finishedWithinFiveSeconds) waited=\(String(format: "%.1f", Date().timeIntervalSince(began)))s inFlight=\(library.thumbnailsInFlight)")
         // Let the engine finish before the test returns whatever happens next.
         defer { library.releaseStuckThumbnails() }
-        XCTExpectFailure("fixed by F03: thumbnail requests have no timeout, so Cancel cannot finish") {
+        XCTExpectFailure("fixed by F03: thumbnail requests have no timeout, so Cancel cannot finish", options: .strictForRemoval()) {
             XCTAssertTrue(finishedWithinFiveSeconds, "Cancel did not finish the scan within 5 s")
         }
         library.releaseStuckThumbnails()
         let ended = await waitUntil(timeout: 60) { !model.isScanning }
         XCTAssertTrue(ended, "once released, the scan ends (test hygiene)")
+    }
+}
+
+extension XCTExpectedFailure.Options {
+    /// Strict: once the bug is fixed the assertion passes, and an expected failure that does not fail is itself a test failure,
+    /// so the fix forces this expectation to be removed.
+    static func strictForRemoval() -> XCTExpectedFailure.Options {
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = true
+        return options
     }
 }

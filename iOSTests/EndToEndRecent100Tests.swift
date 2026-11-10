@@ -105,6 +105,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         let tray = DeletionTray(fileURL: nil)
         let model = try ScanTestRig.model(library: library, tray: tray)
         await model.runScan()
+        XCTAssertFalse(model.groups.isEmpty, "the loop below must have groups to check")
         for group in model.groups {
             let review = GroupReviewModel(group: group, tray: tray)
             XCTAssertTrue(review.draft.deleteIDs.isEmpty, "nothing in a fully protected library is pre-marked")
@@ -182,5 +183,20 @@ final class EndToEndRecent100Tests: XCTestCase {
         let review = GroupReviewModel(group: group, tray: tray)
         XCTAssertTrue(review.draft.deleteIDs.isEmpty, "a frame with a person entering is never pre-marked")
         XCTAssertEqual(Set(group.all.map(\.id)), Set(ids))
+        XCTAssertFalse(model.groups.isEmpty)
+
+        // The warning path: the frame with the extra person shows a different face count, so it needs a look before it can be marked.
+        let analyzer = FakePhotoAnalyzer()
+        for id in ids { analyzer.descriptions[id] = .init(faceCount: id == "f4" ? 2 : 1, text: []) }
+        let checked = GroupReviewModel(group: group, tray: tray, haptics: HapticsService(), analyzer: analyzer)
+        await checked.loadWarnings()
+        if group.keeper.id == "f4" {
+            XCTAssertTrue(group.candidates.allSatisfy { checked.isAwaitingAcknowledgement($0.id) }, "every other frame differs from a keeper with an extra person")
+        } else {
+            XCTAssertTrue(checked.isAwaitingAcknowledgement("f4"))
+            XCTAssertEqual(checked.warnings["f4"], [.differentPeople])
+        }
+        checked.markEverythingElseForDeletion()
+        XCTAssertFalse(checked.draft.deleteIDs.contains("f4"), "Mark the rest never marks the frame with the extra person")
     }
 }

@@ -57,7 +57,7 @@ class BurstModeTests(unittest.TestCase):
             last_of_first = self.taken(Path(tmp)/rows[7]['asset_id'])
             self.assertGreater((first_of_second - last_of_first).total_seconds(), 60, 'bursts are far apart in time')
 
-    def test_frames_differ_but_stay_similar_and_are_deterministic(self):
+    def test_frames_are_distinct_files_and_deterministic(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             x = generate_bursts(Path(a), 1)
             y = generate_bursts(Path(b), 1)
