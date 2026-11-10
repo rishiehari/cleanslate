@@ -1,6 +1,46 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "We couldn't compare this photo closely" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "We couldn't compare this photo closely"
+          }
+        }
+      }
+    },
+    "Not compared closely" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not compared closely"
+          }
+        }
+      }
+    },
+    "Still checking this photo. Try again in a moment." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Still checking this photo. Try again in a moment."
+          }
+        }
+      }
+    },
+    "We couldn't compare this photo closely, so we can't tell what the suggested photo would lose. Look before you remove it." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "We couldn't compare this photo closely, so we can't tell what the suggested photo would lose. Look before you remove it."
+          }
+        }
+      }
+    },
     "%@" : {
 
     },

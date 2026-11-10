@@ -4,6 +4,7 @@ import SwiftUI
 enum Evidence: String, CaseIterable, Identifiable {
     case identicalFile, sameBurst, looksSimilar, inICloud
     case differentPeople, differentText
+    case couldntCompare
     var id: String { rawValue }
 
     var title: String {
@@ -14,6 +15,7 @@ enum Evidence: String, CaseIterable, Identifiable {
         case .inICloud: "In iCloud"
         case .differentPeople: "Different people"
         case .differentText: "Different text"
+        case .couldntCompare: "Not compared closely"
         }
     }
 
@@ -25,10 +27,11 @@ enum Evidence: String, CaseIterable, Identifiable {
         case .inICloud: "icloud"
         case .differentPeople: "person.2"
         case .differentText: "textformat"
+        case .couldntCompare: "questionmark.circle"
         }
     }
 
-    var isWarning: Bool { self == .differentPeople || self == .differentText }
+    var isWarning: Bool { self == .differentPeople || self == .differentText || self == .couldntCompare }
 
     var explanation: String {
         switch self {
@@ -38,6 +41,7 @@ enum Evidence: String, CaseIterable, Identifiable {
         case .inICloud: "The full photo is in iCloud and wasn't checked. Turn on iCloud verification to compare the originals."
         case .differentPeople: "The number of faces differs between these photos. The one you remove may be the only shot of someone."
         case .differentText: "The text in these photos differs. A sign, screen or note may only appear in one."
+        case .couldntCompare: "We couldn't compare this photo closely, so we can't tell what the suggested photo would lose. Look before you remove it."
         }
     }
 }

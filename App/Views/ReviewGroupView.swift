@@ -99,7 +99,7 @@ struct ReviewGroupView: View {
             EvidenceExplanation(evidence: evidence)
         }
         .sheet(item: Binding(get: { review.warningPromptFor.map(WarningPrompt.init) }, set: { review.warningPromptFor = $0?.id })) { prompt in
-            WarningSheet(warnings: review.warnings[prompt.id] ?? [],
+            WarningSheet(warnings: review.warnings[prompt.id] ?? [], couldntCompare: review.couldntCompare.contains(prompt.id),
                          onRemoveAnyway: { review.acknowledgeAndDelete(prompt.id) },
                          onCancel: { review.warningPromptFor = nil })
         }
@@ -150,6 +150,9 @@ struct ReviewGroupView: View {
                         EvidenceChip(evidence: warning == .differentPeople ? .differentPeople : .differentText) { review.warningPromptFor = photo.id }
                     }
                 }
+            }
+            if review.couldntCompare.contains(photo.id) {
+                EvidenceChip(evidence: .couldntCompare) { review.warningPromptFor = photo.id }
             }
         }
     }
@@ -215,6 +218,7 @@ private struct WarningPrompt: Identifiable { let id: String }
 
 private struct WarningSheet: View {
     let warnings: Set<DifferenceWarning>
+    var couldntCompare = false
     let onRemoveAnyway: () -> Void
     let onCancel: () -> Void
 
@@ -224,6 +228,7 @@ private struct WarningSheet: View {
             ForEach(warnings.sorted { $0.rawValue < $1.rawValue }, id: \.self) { warning in
                 Text(warning == .differentPeople ? Evidence.differentPeople.explanation : Evidence.differentText.explanation).appText(.body)
             }
+            if couldntCompare { Text(Evidence.couldntCompare.explanation).appText(.body) }
             Spacer()
             Button(action: onRemoveAnyway) { Text("I've looked, mark it for deletion").frame(maxWidth: .infinity, minHeight: 44) }
                 .buttonStyle(.glassProminent).tint(Color.deleteAccent)

@@ -31,6 +31,11 @@ final class GroupReviewModel: ObservableObject {
     @Published private(set) var warnings: [String: Set<DifferenceWarning>] = [:]
     /// Photos whose warnings the user has looked at and accepted.
     @Published private(set) var acknowledged: Set<String> = []
+    /// Photos we could not compare with the suggested keeper (analysis unavailable). They need the same acknowledgement as a
+    /// warning before they can be marked: fail closed.
+    @Published private(set) var couldntCompare: Set<String> = []
+    /// False while the warning analysis of a similar group is still running. Nothing non-exact can be marked until it is true.
+    @Published private(set) var analysisComplete: Bool
     /// The photo whose warning sheet is open (tapping it asked "are you sure?").
     @Published var warningPromptFor: String?
     /// Previous states, newest last (at most 20), for Undo.
@@ -46,6 +51,8 @@ final class GroupReviewModel: ObservableObject {
         self.tray = tray
         self.haptics = haptics
         self.analyzer = analyzer
+        // Exact copies are byte-verified, so they do not wait for analysis. With no analyzer configured there is nothing to wait for.
+        analysisComplete = group.kind == .exact || analyzer == nil
         let decision = SafetyPolicy.evaluate(group.coreCluster)
         var reasons: [String: String] = [:]
         for id in decision.blocked.keys {
@@ -58,6 +65,8 @@ final class GroupReviewModel: ObservableObject {
                             preMarkedDelete: group.kind == .exact ? decision.preselected : [],
                             protectedIDs: Set(decision.blocked.keys))
     }
+
+    private func protectedIDsContain(_ id: String) -> Bool { protectedReasons[id] != nil }
 
     var isExact: Bool { group.kind == .exact }
     var canApprove: Bool { draft.canApprove }
@@ -82,21 +91,51 @@ final class GroupReviewModel: ObservableObject {
     func undo() {
         guard let previous = history.popLast() else { return }
         draft = previous; notice = nil
+        withdrawUnacknowledgedMarks()
         haptics.fire(.undo)
     }
 
+    /// True while a similar photo cannot be marked yet because its comparison with the keeper has not finished.
+    var isCheckingPhotos: Bool { !analysisComplete }
+    static let stillCheckingNotice = "Still checking this photo. Try again in a moment."
+    static let couldntCompareText = "We couldn't compare this photo closely"
+
     /// Looks for faces/text that differ from the suggested keeper. Runs once, in the background.
+    /// Until it completes nothing non-exact can be marked; when it completes, any mark on a photo that now needs a look is withdrawn.
     func loadWarnings() async {
-        guard let analyzer, warnings.isEmpty else { return }
+        guard let analyzer, !analysisComplete else { return }
         let keeperDescription = await analyzer.describe(assetID: group.keeper.id)
+        var found: [String: Set<DifferenceWarning>] = [:]
+        var unverified: Set<String> = []
         for photo in group.candidates {
-            let found = DifferenceAnalysis.warnings(candidate: await analyzer.describe(assetID: photo.id), keeper: keeperDescription)
-            if !found.isEmpty { warnings[photo.id] = found }
+            let description = await analyzer.describe(assetID: photo.id)
+            let result = DifferenceAnalysis.warnings(candidate: description, keeper: keeperDescription)
+            if !result.isEmpty { found[photo.id] = result }
+            if Self.isUnavailable(description) || Self.isUnavailable(keeperDescription) { unverified.insert(photo.id) }
+        }
+        warnings = found
+        couldntCompare = unverified
+        withdrawUnacknowledgedMarks()
+        analysisComplete = true
+    }
+
+    /// Nothing at all was determined (not even a face count): the analysis did not really run for this photo.
+    private static func isUnavailable(_ d: PhotoDescription) -> Bool { d.faceCount == nil && d.text == nil }
+
+    /// A mark on a photo that still needs a look (and was not acknowledged) goes back to undecided. Never keep it silently.
+    private func withdrawUnacknowledgedMarks() {
+        guard !isExact else { return }
+        for photo in group.candidates where draft.mark(for: photo.id) == .delete && isAwaitingAcknowledgement(photo.id) {
+            _ = draft.set(photo.id, to: .undecided)
         }
     }
 
     func isAwaitingAcknowledgement(_ id: String) -> Bool {
-        !(warnings[id] ?? []).isEmpty && !acknowledged.contains(id)
+        (!(warnings[id] ?? []).isEmpty || couldntCompare.contains(id)) && !acknowledged.contains(id)
+    }
+
+    private func blockedWhileChecking(_ id: String) -> Bool {
+        !analysisComplete && draft.mark(for: id) != .delete
     }
 
     /// The user looked at the warning and still wants this photo removed.
@@ -109,6 +148,7 @@ final class GroupReviewModel: ObservableObject {
     /// "Keep the suggested photo, mark the rest": marks, it never approves. Photos with an unacknowledged
     /// warning stay undecided so nothing important is marked for deletion without a look.
     func markEverythingElseForDeletion() {
+        guard analysisComplete else { notice = Self.stillCheckingNotice; haptics.fire(.blocked); return }
         remember()
         var changed = false
         for photo in group.candidates where !isAwaitingAcknowledgement(photo.id) && draft.mark(for: photo.id) != .delete {
@@ -118,6 +158,7 @@ final class GroupReviewModel: ObservableObject {
     }
 
     func tap(_ id: String) {
+        if blockedWhileChecking(id), !protectedIDsContain(id) { notice = Self.stillCheckingNotice; haptics.fire(.blocked); return }
         if draft.mark(for: id) != .delete, isAwaitingAcknowledgement(id) {
             warningPromptFor = id; haptics.fire(.blocked); return
         }
@@ -133,6 +174,7 @@ final class GroupReviewModel: ObservableObject {
     }
 
     func set(_ id: String, to mark: ReviewDraft.Mark) {
+        if mark == .delete, blockedWhileChecking(id), !protectedIDsContain(id) { notice = Self.stillCheckingNotice; haptics.fire(.blocked); return }
         remember()
         let before = draft
         defer { if draft == before, !history.isEmpty { history.removeLast() } }
@@ -164,4 +206,9 @@ final class GroupReviewModel: ObservableObject {
         if let burst = group.keeper.burstID, group.candidates.contains(where: { $0.burstID == burst }) { items.append(.sameBurst) }
         return items
     }
+
+    #if DEBUG
+    /// Tests only: puts photos into the state the gate normally prevents (marked before the analysis finished).
+    func debugForceMark(_ ids: [String]) { for id in ids { _ = draft.set(id, to: .delete) } }
+    #endif
 }
