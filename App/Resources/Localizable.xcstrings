@@ -1,5 +1,188 @@
 {
   "sourceLanguage" : "en",
-  "strings" : { },
+  "strings" : {
+    "%@" : {
+
+    },
+    "%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
+    "%@ %@ to delete" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@ to delete"
+          }
+        }
+      }
+    },
+    "%@ couldn't be confirmed as removed." : {
+
+    },
+    "%@ GB" : {
+
+    },
+    "%@ of verified file sizes · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of verified file sizes · %2$@"
+          }
+        }
+      }
+    },
+    "%@ photos" : {
+
+    },
+    "%@ photos checked in full" : {
+
+    },
+    "%@ verified · you'll see the list first" : {
+
+    },
+    "%@ very large sets of look-alike photos were skipped." : {
+
+    },
+    "≈ %@ more, estimated" : {
+
+    },
+    "Approve all %@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Approve all %1$@ %2$@"
+          }
+        }
+      }
+    },
+    "Approve photos in a review and they'll wait here. Nothing is deleted until you confirm." : {
+
+    },
+    "Delete %@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete %1$@ %2$@"
+          }
+        }
+      }
+    },
+    "Delete %@ photos?" : {
+
+    },
+    "Deleted photos stay in Recently Deleted for 30 days. Space on your iPhone and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time." : {
+
+    },
+    "Deleting with iCloud Photos on also removes the photo from your other devices. Recently Deleted keeps it for 30 days." : {
+
+    },
+    "Done" : {
+
+    },
+    "Favorites, photos in your albums, and identical copies (see Exact copies and Videos) are left out. Nothing here is selected for you." : {
+
+    },
+    "File sizes shown are verified sizes. Actual free space can differ, especially with Optimize iPhone Storage." : {
+
+    },
+    "Free space on this iPhone right now: %@ → %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Free space on this iPhone right now: %1$@ → %2$@"
+          }
+        }
+      }
+    },
+    "Free space on this iPhone: %@ → %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Free space on this iPhone: %1$@ → %2$@"
+          }
+        }
+      }
+    },
+    "I've looked, mark it for deletion" : {
+
+    },
+    "Keep 1 · delete %@" : {
+
+    },
+    "Needs another look" : {
+
+    },
+    "Photos access is off. Turn it on in Settings to continue." : {
+
+    },
+    "Removed %@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Removed %1$@ %2$@"
+          }
+        }
+      }
+    },
+    "Removes CleanSlate's saved scan data. Your photos aren't touched." : {
+
+    },
+    "Skip" : {
+
+    },
+    "Some photos live only in iCloud to save space on your iPhone, so CleanSlate can't compare them. With this on, it downloads them temporarily to check for copies. Nothing is uploaded, and it only uses Wi-Fi." : {
+
+    },
+    "Swipe a group to take it out of the tray." : {
+
+    },
+    "That frees about %@ (verified file sizes)." : {
+
+    },
+    "These changed after you approved them, so they won't be deleted unless you review them again." : {
+
+    },
+    "This version checks part of your library at a time, and can't compare photos that only live in iCloud. Similar shots are never selected for you." : {
+
+    },
+    "To find copies, CleanSlate needs to look at your photos. It all happens on this iPhone, and nothing is deleted without your say-so." : {
+
+    },
+    "Verified file sizes removed from your library." : {
+
+    },
+    "Verified file sizes. Space on your iPhone and in iCloud is freed after you empty Recently Deleted." : {
+
+    },
+    "What to review" : {
+
+    },
+    "When you delete photos with CleanSlate, a record shows up here." : {
+
+    },
+    "You can free up" : {
+
+    },
+    "You choose what to remove" : {
+
+    },
+    "Your photos aren't touched. They just leave the tray." : {
+
+    }
+  },
   "version" : "1.0"
 }
