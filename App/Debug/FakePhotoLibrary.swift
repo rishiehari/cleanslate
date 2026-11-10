@@ -173,9 +173,31 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     var onInventoryPage: ((Int) -> Void)?
     var unavailableThumbnailIDs: Set<String> = []
 
+    /// Assets whose thumbnail request suspends until `releaseStuckThumbnails()` and ignores cancellation, like a PhotoKit
+    /// callback that never fires.
+    var stuckThumbnailIDs: Set<String> = []
+    private var stuckWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Thumbnail requests currently inside `thumbnail(_:target:)`, and the most there ever were at once.
+    private(set) var thumbnailsInFlight = 0
+    private(set) var maxThumbnailsInFlight = 0
+    /// When true, every thumbnail request yields once, so overlapping requests become observable in the counters above.
+    var yieldInThumbnails = false
+
+    func releaseStuckThumbnails() {
+        stuckThumbnailIDs = []
+        let waiters = stuckWaiters
+        stuckWaiters = []
+        waiters.forEach { $0.resume() }
+    }
+
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage? {
         thumbnailCalls += 1
         if target <= 300 { fingerprintThumbnailCalls += 1 }
+        thumbnailsInFlight += 1
+        maxThumbnailsInFlight = max(maxThumbnailsInFlight, thumbnailsInFlight)
+        defer { thumbnailsInFlight -= 1 }
+        if stuckThumbnailIDs.contains(id) { await withCheckedContinuation { stuckWaiters.append($0) } }
+        else if yieldInThumbnails { await Task.yield() }
         guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
         if let spec = asset.spec { return Self.renderScene(spec: spec) }
         return Self.renderScene(look: asset.look)
