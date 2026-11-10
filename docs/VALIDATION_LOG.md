@@ -313,3 +313,34 @@ Classification: (b) test-infrastructure defects. The app behaviour is correct; n
 - D2: a candidate whose own or keeper's description is entirely unknown (nil faces AND nil text) gets a fail-closed "We couldn't compare this photo closely" chip/sheet and needs the same acknowledgement. Implemented in the App layer (`couldntCompare`, `Evidence.couldntCompare`); Core `DifferenceAnalysis` is unchanged. Partial nil (faces known, text nil) keeps today's behaviour.
 - Tests added: iOSTests/AnalysisGateTests.swift (7 cases, incl. a gated analyzer for the pending window, model-level; no UI test since the fake analyzer is instant). M3 guards/assertions, M4 separate favorite-in-exact-pair test, M5 strict expected failures, M6 renamed Python test.
 - Results: core 112 PASS; fixtures-test 7 PASS; lint PASS; build PASS; iOS unit 189 run, 1 skipped, 0 failures; UI 27 run, 4 skipped, 0 failures; `make budget` 2/2 PASS.
+
+
+## F02.3–F02.6 — diagnostics heartbeat, watchdog, unexpected-termination, MetricKit — 2026-11-09 (implementer)
+Commits: bbdd929 F02.3 (engine hooks + ScanInProgressMarker + heartbeat wiring) · 4551a7c F02.4 (MainThreadWatchdog) · dfccc5a F02.5 (appLaunch previous-run check + scenePhase) · 27d3c08 F02.6 (MetricKitCollector). Base: a659f7e (F02.1/F02.2). Each commit verified with `build-for-testing` (app + test targets compile); no push.
+
+What was built:
+- F02.3: `ScanInProgressMarker` (`LibraryStore.meta["scan.inProgress"]` = {phase, at}) set at every engine phase boundary and cleared on **all** outcome paths (finished/paused/stopped), so only a killed process leaves it behind. Engine records scanStarted/phaseEntered/phaseEnded/progress(per 25)/thumbnailStats; CleaningViewModel starts a `ScanHeartbeat` around `runScan` and records scanEnded. **Deviation from spec (documented): heartbeat interval 2 s and stallAfter 6 s instead of the spec's 5 s** — HANG_RCA_DEVICE_LOG.md explicitly asks for a 2 s heartbeat, and the faster stall detection feeds F05's stall message.
+- F02.4: `MainThreadWatchdog` — utility-queue DispatchSourceTimer posts to main every 1 s; reply > 250 ms records `.mainThreadBlocked(ms:phase:)`, throttled to one event per 5 s. Latency/clock/phase are injected (`phase` reads the lock-protected ScanCounters, never main-actor state) so tests drive it without blocking a real main thread.
+- F02.5: `DiagnosticsLaunch.recordAppLaunch` — leftover marker → `appLaunch(previousRunEndedCleanly:false, lastPhase:)`; marker consumed either way. Wired in `CleanSlateApp.init`; `.scenePhase` recorded on active/inactive/background.
+- F02.6: `MetricKitCollector` — `MXMetricManagerSubscriber`; hang/cpuException diagnostics reduced per payload to counts + durations (ms) only; call stacks/symbol paths never stored. The soft-deprecated-in-27 MX* API (`API_TO_BE_DEPRECATED`, no warnings emitted on the 27.2 SDK) is confined to this one file for the later move to Swift `MetricManager`.
+
+Observed results (real output, iPhone 17 Pro simulator, iOS 27.2 SDK):
+- `make core-test`: 112/112 PASS. `make eval`: GATE PASS. `make fixtures-test`: 7/7 PASS. `make lint`: PASS (policy-separation script; swiftlint 0 violations). `make build`: BUILD SUCCEEDED, no code warnings.
+- iOS unit (`xcodebuild test -only-testing:CleanSlateTests`): **220 run, 1 skipped (pre-existing VisualFeatures skip), 0 failures** (~232 s). Was 189 after F01 → +31 (DiagnosticsLogTests/DeviceTierTests from F02.1/2 plus 14 new here).
+- New tests: ScanHeartbeatTests 3/3 (beat fields; stalled at ≥6 s with growing secondsSinceProgress; no stall while progress moves), ScanInProgressMarkerTests 4/4 (set/read/clear round-trip; cleared on clean end + scanStarted/scanEnded recorded; marker observed mid-scan then cleared on cancel; cleared on governor stop), MainThreadWatchdogTests 4/4 (>250 ms records with phase; ≤250 silent; 5 s throttle), DiagnosticsLaunchTests 3/3 (killed-scan → unclean launch + marker consumed; clean launch; scenePhase mapping). Spec's concurrency acceptance (1,000 concurrent records lose nothing) was already covered by DiagnosticsLogTests and still passes inside the 220.
+- Test-defect fixes (app code unchanged; folded into their sub-task commits when the branch was rebuilt so every commit builds): the probe helper captured a frozen Double instead of the live TestClock so `.stalled` could never fire; a heartbeat assertion was dropped from the 5-asset clean-end test (such a scan legitimately finishes before the first 2 s beat — heartbeat timing belongs to ScanHeartbeatTests); `await` inside XCTAssert autoclosures did not compile.
+- UITests NOT RUN (per orchestrator instruction; they run later).
+
+Self-review:
+- No SafetyPolicyTests assertion added/changed (`git diff a659f7e HEAD -- Core/` empty).
+- Single `deleteAssets` call site untouched (`grep -rn deleteAssets App` = 1); `scripts/check_policy_separation.sh` passes.
+- `grep -rn "URLSession\|isNetworkAccessAllowed = true" App` = 0 hits (unchanged).
+- No new PhotoKit/Vision/SQLite work on the main actor in a loop; diagnostics writes are synchronous lock-protected appends (the log is deliberately a class, not an actor, so the main-actor scan loop never hops and the watchdog can record while main is blocked).
+- Allow-list/privacy: no new event fields with free text; new store paths carry phase names + timestamps only; heartbeat/stalled/mainThreadBlocked/metricKit keys were already in `DiagnosticEvent.allowedKeys` from F02.1 and the allow-list test passes inside the 220.
+
+Human gate: N/A for these sub-tasks. The F02 definition-of-done owner device run (one scan on the 17 Pro with F02, share the diagnostics file to confirm/reject H1–H4) is still PENDING and is now unblocked.
+
+Known gaps carried forward:
+- MetricKit payloads cannot be constructed in unit tests (no public initializers), so `didReceive` reduction has no direct test; the code path is compile-verified and numbers-only by construction. Simulator also never delivers real hang diagnostics.
+- The UI surface (F02.7 DiagnosticsView + menu entry + UI test) is the next sub-task, not part of F02.3–6.
+- `appLaunch`/`scenePhase` fire in the UI-testing fake environment too (harmless local writes to the app container).

@@ -7,6 +7,7 @@
 | Design-system lint, policy-separation guard | PASS | `make lint` |
 | Synthetic eval canary | PASS | `make eval`, docs/ML_GATE.md |
 | Scale (252k fake assets, simulator) | PASS | 130.7 s, +178 MB; NOT measured on a device |
+| F02 diagnostics log (heartbeat, stall, watchdog, MetricKit) | SIMULATOR-VERIFIED | unit tests green incl. allow-list leak test, rotation, 1,000-record concurrency; owner device run on the 17 Pro (F02 definition of done) NOT DONE — it is what confirms/rejects H1–H4 |
 | Device runs (Steps 1,3,4,7,8 gates) | **NOT DONE** | needs owner + disposable library |
 | Real-library scan-only run | **NOT DONE** | Instruments report needed |
 | Background tasks | **NOT VERIFIED** | simulator unsupported |
