@@ -158,15 +158,24 @@ final class DiagnosticsLog: @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
         encoder.outputFormatting = [.sortedKeys]
-        // Chunks of `bufferLimit` keep every rotation decision small, so a file never exceeds its limit by more than one chunk.
-        for start in stride(from: 0, to: batch.count, by: Self.bufferLimit) {
-            var data = Data()
-            for record in batch[start..<min(start + Self.bufferLimit, batch.count)] {
-                guard let line = try? encoder.encode(record) else { continue }
-                data.append(line); data.append(0x0A)
-            }
-            guard !data.isEmpty, append(data, in: directory) else { return }
+        // Per-record fitting: a file never exceeds maxFileBytes (a single record is far smaller
+        // than the limit). Chunks of `bufferLimit` keep every rotation decision small.
+        var chunk = Data()
+        var chunkCount = 0
+        func flushChunk() {
+            guard !chunk.isEmpty else { return }
+            _ = append(chunk, in: directory)
+            chunk = Data(); chunkCount = 0
         }
+        for record in batch {
+            guard var line = try? encoder.encode(record) else { continue }
+            line.append(0x0A)
+            if chunkCount > 0, currentSize > 0, currentSize + chunk.count + line.count > maxFileBytes { flushChunk() }
+            chunk.append(line)
+            chunkCount += 1
+            if chunkCount >= Self.bufferLimit { flushChunk() }
+        }
+        flushChunk()
     }
 
     private func append(_ data: Data, in directory: URL) -> Bool {

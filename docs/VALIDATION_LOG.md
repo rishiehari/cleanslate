@@ -344,3 +344,26 @@ Known gaps carried forward:
 - MetricKit payloads cannot be constructed in unit tests (no public initializers), so `didReceive` reduction has no direct test; the code path is compile-verified and numbers-only by construction. Simulator also never delivers real hang diagnostics.
 - The UI surface (F02.7 DiagnosticsView + menu entry + UI test) is the next sub-task, not part of F02.3–6.
 - `appLaunch`/`scenePhase` fire in the UI-testing fake environment too (harmless local writes to the app container).
+
+
+## F02 fix round 1 — edge-tester findings — 2026-11-10 (implementer)
+Commits: 2445666 M1 leak test · b01c7e1 M2 background flush · beaae2e M3 honest stalls · 652e5c0 M4 phase reset + m8 + m11 + m7 · (this entry) m5/m6 bound + docs. Base: b1cef48 (F02.7). All gates re-run per commit: core 112/112, lint PASS, build zero warnings; diagnostics unit suites green (leak 1, launch 4, heartbeat 5, marker 4, governor 4, log 9, watchdog 4, summary 4, ScanEngineTests 21 incl. E2E scan paths).
+
+Fixed:
+- **M1 — acceptance leak test added.** `DiagnosticsLeakTests` runs the real `recent100Scenario` fake scan with the log pointed at a tmp dir, exports the `.jsonl`, byte-searches it for all 100 fixture ids, the `IMG_*.HEIC` filename pattern and every capture date (ISO-8601 strings AND seconds-since-1970 JSON number values — exact pairs share timestamps, 95 unique), and re-checks the JSON-key allow-list. The RELEASE_CHECKLIST row now names this test instead of overstating coverage.
+- **M2 — flush on background.** Spec says flush every 5 s or on background; only the timer existed. `DiagnosticsHooks.didEnterBackground` (testable static) now runs from the scenePhase observer on `.background`; test proves a fresh log instance over the same directory sees the events after the hook.
+- **M3 — honest stall detection.** (a) The heartbeat only stall-reports once a phase has measurable work (`inFlight > 0 || done > 0`), so pure-CPU phases (e.g. `rankedNearPairs` at done 0) no longer emit a stream of false `stalled` events — this was the finding that would have polluted the owner's RCA run. (b) The engine sets `inFlight` BEFORE each awaited request (digest fetches, video sizes, thumbnails+Vision) and decrements in `defer`; `tick` no longer overwrites it. (c) At most ONE `stalled` event per stall episode; the clock re-arms only when done or inFlight moves. Tests codify all three.
+- **M4 — phase reset at scan end.** `ScanEngine.run()` leaves `counters.phase` at `.finished` on success and `.idle` on cancel/stop (inFlight zeroed), so the watchdog's attribution after a scan is honest. Asserted via `model.scanCounters` in the marker tests.
+- **m8 — dead event cases wired.** `UIApplication.didReceiveMemoryWarningNotification` → `.memoryWarning(footprintMB:)` via `DiagnosticsHooks.observeMemoryWarnings` (wired in app init, token kept by the process). `ResourceGovernor` now logs `.governor(decision:reason:)` — stop/thermal, pause/thermal, shrink for thermal/low-memory/low-power — on decision CHANGE only, because `checkpoint()` runs per item and unchanged decisions must stay silent. The existing (F02.1) `memoryWarning` case has no `level:` field, unlike the spec sketch; the source is unambiguous (system notification), so no level was added.
+- **m11 — heartbeat leak-proofed.** `CleaningViewModel.runScan` stops the heartbeat in a `defer`.
+- **m7 — watchdog lifecycle.** Stops on `.background`, restarts on `.active` (init still starts it once the UI exists).
+
+Deviations documented (edge findings m5/m6):
+- **m6 tightened:** writes now fit per record, so a single file can never exceed `maxFileBytes` (previously one flush chunk could overshoot; asserted per file in the rotation test). ≤ 1 MB on disk is now strict, not approximate.
+- **m5 documented:** the in-memory buffer keeps its 1,024-record hard cap (spec sketch says 64) so a burst that outruns the 5 s flush timer is not dropped; at ~200–600 B/record that is ≤ ~600 KB RAM worst case, bounded and short-lived. The 5 s timer + background flush keep typical buffering far below that.
+
+Known limitations carried forward (edge findings m9/m10 and unverifiable-by-construction items):
+- **MetricKit `didReceive` has no unit test** (MXDiagnosticPayload has no public initializers and the simulator never delivers real hang/CPU diagnostics); the reduction is compile-verified and numbers-only by construction. The earlier m9/m10 numbers in the edge report map to these simulator/device limits.
+- **Owner device run still pending** — the F02 definition-of-done run on the iPhone 17 Pro (one scan, share the file, confirm/reject H1–H4) is the only way to verify heartbeat/stall/MetricKit behavior against the real hang class; everything here is simulator-verified.
+- Simulator footprint/watchdog numbers are of the test process on a Mac (not jetsam-enforced); device numbers need the owner's run.
+- The accessibility audit's one unattributed elementDetection artifact on the pushed Diagnostics screen remains a documented, narrowly-scoped test exemption (see DiagnosticsUITests).

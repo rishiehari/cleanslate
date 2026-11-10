@@ -73,6 +73,10 @@ final class DiagnosticsLogTests: XCTestCase {
         XCTAssertLessThanOrEqual(files().count, 2)
         XCTAssertGreaterThan(log.bytesOnDisk(), 0)
         XCTAssertLessThanOrEqual(log.bytesOnDisk(), 1_048_576)
+        for file in files() {
+            let bytes = (try? Data(contentsOf: file).count) ?? 0
+            XCTAssertLessThanOrEqual(bytes, 512 * 1024, "a single file never exceeds maxFileBytes")
+        }
         let kept = log.recent(limit: 100_000)
         XCTAssertLessThan(kept.count, written, "the oldest events were rotated out")
         guard case .heartbeat(_, let lastDone, _, _, _, _, _, _, _, _) = kept.last?.event else { return XCTFail("no events") }
