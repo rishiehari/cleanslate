@@ -33,8 +33,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     let networkPolicy: NetworkPolicy
     let store: LibraryStore
     let governor: ResourceGovernor
+    let visual: VisualAnalyzing
     private lazy var engine: ScanEngine = {
-        let engine = ScanEngine(library: library, store: store, networkPolicy: networkPolicy, governor: governor)
+        let engine = ScanEngine(library: library, store: store, networkPolicy: networkPolicy, governor: governor, visual: visual)
         engine.reporter = self
         return engine
     }()
@@ -47,7 +48,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
          tray: DeletionTray? = nil,
          networkPolicy: NetworkPolicy? = nil,
          store: LibraryStore? = nil,
-         governor: ResourceGovernor? = nil) {
+         governor: ResourceGovernor? = nil,
+         visual: VisualAnalyzing = VisionVisualAnalyzer()) {
+        self.visual = visual
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())

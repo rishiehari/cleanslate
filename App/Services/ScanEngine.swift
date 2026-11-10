@@ -36,10 +36,13 @@ final class ScanEngine {
     private let store: LibraryStore
     private let networkPolicy: NetworkPolicy
     private let governor: ResourceGovernor
+    private let visual: VisualAnalyzing
     weak var reporter: ScanReporting?
 
-    init(library: PhotoLibraryClient, store: LibraryStore, networkPolicy: NetworkPolicy, governor: ResourceGovernor) {
+    init(library: PhotoLibraryClient, store: LibraryStore, networkPolicy: NetworkPolicy, governor: ResourceGovernor,
+         visual: VisualAnalyzing = VisionVisualAnalyzer()) {
         self.library = library; self.store = store; self.networkPolicy = networkPolicy; self.governor = governor
+        self.visual = visual
     }
 
     // MARK: Entry point
@@ -317,7 +320,7 @@ final class ScanEngine {
                 let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
                 var face: Double?, aesthetics: Double?
                 if visionUsable {
-                    do { face = try await VisualFeatures.faceQuality(image); aesthetics = try await VisualFeatures.aesthetics(image) }
+                    do { face = try await visual.faceQuality(image); aesthetics = try await visual.aesthetics(image) }
                     catch { visionUsable = false; reporter?.scanUpdate { $0.visionFailures += 1; $0.visionUnavailable = true } }
                 }
                 quality.append(QualitySignals(id: photo.id, sharpness: sharpness, faceQuality: face, aesthetics: aesthetics, exposure: exposure,
@@ -359,9 +362,9 @@ final class ScanEngine {
             guard let firstImage = await library.thumbnail(a.id, target: 512), let secondImage = await library.thumbnail(b.id, target: 512) else { continue }
             let distance: Double
             do {
-                let firstPrint = try await VisualFeatures.printFeature(firstImage)
-                let secondPrint = try await VisualFeatures.printFeature(secondImage)
-                distance = try VisualFeatures.distance(firstPrint, secondPrint)
+                let firstPrint = try await visual.featurePrint(firstImage)
+                let secondPrint = try await visual.featurePrint(secondImage)
+                distance = try firstPrint.distanceTo(secondPrint)
             } catch {
                 reporter?.scanUpdate { $0.visionFailures += 1 }
                 consecutiveFailures += 1
@@ -378,11 +381,11 @@ final class ScanEngine {
             guard distance < 0.32 else { continue }
             let (sharpA, exposeA) = VisualFeatures.sharpnessAndExposure(firstImage)
             let (sharpB, exposeB) = VisualFeatures.sharpnessAndExposure(secondImage)
-            let qa = QualitySignals(id: a.id, sharpness: sharpA, faceQuality: (try? await VisualFeatures.faceQuality(firstImage)) ?? nil,
-                                    aesthetics: try? await VisualFeatures.aesthetics(firstImage), exposure: exposeA,
+            let qa = QualitySignals(id: a.id, sharpness: sharpA, faceQuality: (try? await visual.faceQuality(firstImage)) ?? nil,
+                                    aesthetics: try? await visual.aesthetics(firstImage), exposure: exposeA,
                                     pixelCount: a.pixelCount, isFavorite: a.record.flags.contains(.favorite))
-            let qb = QualitySignals(id: b.id, sharpness: sharpB, faceQuality: (try? await VisualFeatures.faceQuality(secondImage)) ?? nil,
-                                    aesthetics: try? await VisualFeatures.aesthetics(secondImage), exposure: exposeB,
+            let qb = QualitySignals(id: b.id, sharpness: sharpB, faceQuality: (try? await visual.faceQuality(secondImage)) ?? nil,
+                                    aesthetics: try? await visual.aesthetics(secondImage), exposure: exposeB,
                                     pixelCount: b.pixelCount, isFavorite: b.record.flags.contains(.favorite))
             let bestID = KeeperRanker.sorted([qa, qb]).first?.id ?? a.id
             let keeper = bestID == a.id ? a : b
