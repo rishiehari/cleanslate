@@ -7,14 +7,17 @@ struct CleanSlateApp: App {
     @Environment(\.scenePhase) private var scenePhase
     private let library: PhotoLibraryClient
     private let watchdog: MainThreadWatchdog
+    private let metrics: MetricKitCollector
     @StateObject private var labels = LabelStore(fileURL: LabelStore.defaultURL())
 
     init() {
         let environment = AppEnvironment.make()
         library = environment.library
         watchdog = environment.watchdog
+        metrics = environment.metrics
         _model = StateObject(wrappedValue: environment.model)
         environment.watchdog.start()
+        environment.metrics.start()
         // A leftover scan.inProgress marker means the previous process was killed mid-scan.
         let model = environment.model
         Task { await DiagnosticsLaunch.recordAppLaunch(store: model.store, log: model.diagnostics) }
@@ -89,6 +92,7 @@ enum AppEnvironment {
         let model: CleaningViewModel
         let library: PhotoLibraryClient
         let watchdog: MainThreadWatchdog
+        let metrics: MetricKitCollector
     }
 
     static func make() -> Built {
@@ -124,7 +128,7 @@ enum AppEnvironment {
         let log = model.diagnostics
         let counters = model.scanCounters
         let watchdog = MainThreadWatchdog(log: log, probes: .init(phase: { counters.snapshot.phase }))
-        return Built(model: model, library: library, watchdog: watchdog)
+        return Built(model: model, library: library, watchdog: watchdog, metrics: MetricKitCollector(log: log))
     }
 }
 
