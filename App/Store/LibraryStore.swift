@@ -313,15 +313,16 @@ actor LibraryStore {
             """, bind: { sqlite3_bind_int($0, 1, Int32(version)) }, map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
     }
 
-    /// Current-revision hashes for these assets (assets without a usable hash are simply absent).
-    func dhashes(ids: [String]) -> [String: UInt64] {
+    /// Current-revision hashes for these assets, for one feature version (v1 and v2 hashes never
+    /// mix during the transition scan). Assets without a usable hash are simply absent.
+    func dhashes(ids: [String], version: Int = 2) -> [String: UInt64] {
         var out: [String: UInt64] = [:]
         for chunk in stride(from: 0, to: ids.count, by: 500).map({ Array(ids[$0..<min($0 + 500, ids.count)]) }) {
             let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
             let found = (try? rows("""
                 SELECT f.asset_id, f.dhash FROM features f JOIN assets a ON a.id=f.asset_id AND a.revision=f.revision
-                WHERE f.feature_version>0 AND f.asset_id IN (\(marks))
-                """, bind: { s in for (i, id) in chunk.enumerated() { text(s, Int32(i + 1), id) } },
+                WHERE f.feature_version=? AND f.asset_id IN (\(marks))
+                """, bind: { s in sqlite3_bind_int(s, 1, Int32(version)); for (i, id) in chunk.enumerated() { text(s, Int32(i + 2), id) } },
                                    map: { (String(cString: sqlite3_column_text($0, 0)), UInt64(bitPattern: sqlite3_column_int64($0, 1))) })) ?? []
             for (id, hash) in found { out[id] = hash }
         }
@@ -339,18 +340,19 @@ actor LibraryStore {
 
     /// Candidate near pairs from the four 16-bit LSH bands. A candidate is only a proposal.
     /// Buckets bigger than `maximumBucketSize` are skipped and counted, never silently dropped.
-    func nearHashPairs(maxHamming: Int, maximumBucketSize: Int, maximumPairs: Int) -> (pairs: [CandidatePair], skippedBuckets: Int) {
+    /// Only the given feature version participates (v1/v2 hashes never mix).
+    func nearHashPairs(maxHamming: Int, maximumBucketSize: Int, maximumPairs: Int, version: Int = 2) -> (pairs: [CandidatePair], skippedBuckets: Int) {
         var pairs: Set<CandidatePair> = []
         var skipped = 0
         for band in 0..<4 {
             let column = "band\(band)"
             let sql = """
                 SELECT f.\(column), f.asset_id, f.dhash FROM features f JOIN assets a ON a.id=f.asset_id AND a.deleted=0
-                WHERE f.feature_version>0
-                  AND f.\(column) IN (SELECT \(column) FROM features WHERE feature_version>0 GROUP BY \(column) HAVING COUNT(*) BETWEEN 2 AND ?)
+                WHERE f.feature_version=?
+                  AND f.\(column) IN (SELECT \(column) FROM features WHERE feature_version=? GROUP BY \(column) HAVING COUNT(*) BETWEEN 2 AND ?)
                 ORDER BY f.\(column)
                 """
-            let bucketed = (try? rows(sql, bind: { sqlite3_bind_int($0, 1, Int32(maximumBucketSize)) }, map: { s in
+            let bucketed = (try? rows(sql, bind: { sqlite3_bind_int($0, 1, Int32(version)); sqlite3_bind_int($0, 2, Int32(version)); sqlite3_bind_int($0, 3, Int32(maximumBucketSize)) }, map: { s in
                 (sqlite3_column_int64(s, 0), String(cString: sqlite3_column_text(s, 1)), UInt64(bitPattern: sqlite3_column_int64(s, 2)))
             })) ?? []
             var start = 0
@@ -363,20 +365,21 @@ actor LibraryStore {
                 }}
                 start = end
             }
-            let oversized = (try? rows("SELECT COUNT(*) FROM (SELECT \(column) FROM features WHERE feature_version>0 GROUP BY \(column) HAVING COUNT(*) > ?)",
-                                       bind: { sqlite3_bind_int($0, 1, Int32(maximumBucketSize)) }, map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
+            let oversized = (try? rows("SELECT COUNT(*) FROM (SELECT \(column) FROM features WHERE feature_version=? GROUP BY \(column) HAVING COUNT(*) > ?)",
+                                       bind: { sqlite3_bind_int($0, 1, Int32(version)); sqlite3_bind_int($0, 2, Int32(maximumBucketSize)) }, map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
             skipped += oversized
         }
         return (pairs.sorted(), skipped)
     }
 
     /// Every live image with its time, burst and (if available) difference hash, for building review sets.
-    func sequenceItems() -> [SequenceItem] {
+    /// Only the given feature version participates (v1/v2 hashes never mix).
+    func sequenceItems(version: Int = 2) -> [SequenceItem] {
         (try? rows("""
             SELECT a.id, a.created_s, a.burst_id, f.dhash FROM assets a
-              LEFT JOIN features f ON f.asset_id=a.id AND f.revision=a.revision AND f.feature_version>0
+              LEFT JOIN features f ON f.asset_id=a.id AND f.revision=a.revision AND f.feature_version=?
             WHERE a.deleted=0 AND a.media_type=1
-            """) { s in
+            """, bind: { sqlite3_bind_int($0, 1, Int32(version)) }) { s in
             SequenceItem(id: String(cString: sqlite3_column_text(s, 0)),
                          timeSeconds: sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : sqlite3_column_int64(s, 1),
                          burstID: str(s, 2),

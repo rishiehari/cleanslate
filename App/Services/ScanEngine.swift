@@ -23,7 +23,7 @@ protocol ScanReporting: AnyObject {
 final class ScanEngine {
     enum Outcome: Equatable { case finished, cancelled, stopped(reason: String) }
 
-    static let featureVersion = 1
+    static let featureVersion = 2
     static let pageSize = 1_000
     static let maximumFullHashesPerScan = 4_000
     static let maximumSizedItems = 5_000
@@ -38,6 +38,7 @@ final class ScanEngine {
     private let networkPolicy: NetworkPolicy
     private let governor: ResourceGovernor
     private let visual: VisualAnalyzing
+    private let limits: ScanLimits
     weak var reporter: ScanReporting?
     /// Local diagnostics (nil = off). Counts, durations and phase names only; never photo information.
     var diagnostics: DiagnosticsLog?
@@ -49,9 +50,10 @@ final class ScanEngine {
     private var lastTickBucket = -1
 
     init(library: PhotoLibraryClient, store: LibraryStore, networkPolicy: NetworkPolicy, governor: ResourceGovernor,
-         visual: VisualAnalyzing = VisionVisualAnalyzer(), counters: ScanCounters = ScanCounters()) {
+         visual: VisualAnalyzing = VisionVisualAnalyzer(), counters: ScanCounters = ScanCounters(),
+         limits: ScanLimits = ScanLimits()) {
         self.library = library; self.store = store; self.networkPolicy = networkPolicy; self.governor = governor
-        self.visual = visual; self.counters = counters
+        self.visual = visual; self.counters = counters; self.limits = limits
     }
 
     // MARK: Entry point
@@ -211,44 +213,37 @@ final class ScanEngine {
         var cursor: Int64 = 0
         while true {
             if Task.isCancelled { return .cancelled }
-            let concurrency: Int
             switch await governor.checkpoint() {
             case .stop(let reason): return .stopped(reason: reason)
-            case .proceed(let width): concurrency = width
+            case .proceed: break      // width is clamped by ScanLimits.maxInFlight (one asset at a time)
             }
-            let next = await store.imageAssetsNeedingFeatures(afterRowID: cursor, limit: 200, version: Self.featureVersion)
+            let next = await store.imageAssetsNeedingFeatures(afterRowID: cursor, limit: limits.featurePage, version: Self.featureVersion)
             let batch = next.photos
             if batch.isEmpty { break }
             cursor = next.lastRowID
             var hashed: [(id: String, revision: String, dhash: UInt64)] = []
             var unavailable: [(id: String, revision: String)] = []
-            var index = 0
-            while index < batch.count {
+            // Strictly one asset in flight (F03): per-asset autoreleasepool via a detached hash task,
+            // no task group of main-actor children.
+            for photo in batch {
                 if Task.isCancelled { break }
-                let slice = Array(batch[index..<min(index + concurrency, batch.count)])
-                index += slice.count
-                // The library is main-actor bound; every call below hops to the main actor, so sharing it is safe.
-                nonisolated(unsafe) let sharedLibrary = library
-                counters.update { $0.inFlight = slice.count }
-                let results = await withTaskGroup(of: (PhotoSnapshot, UInt64?).self) { group -> [(PhotoSnapshot, UInt64?)] in
-                    for photo in slice {
-                        group.addTask { @MainActor in
-                            guard let image = await sharedLibrary.thumbnail(photo.id, target: 280) else { return (photo, nil) }
-                            let box = ImageBox(image: image)
-                            let hash = await Task.detached(priority: .utility) { VisualFeatures.differenceHash(box.image) }.value
-                            return (photo, hash)
-                        }
+                counters.update { $0.inFlight = 1 }
+                let image = await library.thumbnail(photo.id, target: limits.fingerprintSide)
+                counters.update { $0.inFlight = 0 }
+                if let image {
+                    let box = ImageBox(image: image)
+                    let hash = await Task.detached(priority: .utility) { autoreleasepool { VisualFeatures.differenceHash(box.image) } }.value
+                    if let hash {
+                        hashed.append((photo.id, photo.record.revision, hash))
+                        counters.update { $0.thumbsTried += 1 }
+                    } else {
+                        unavailable.append((photo.id, photo.record.revision))
+                        counters.update { $0.thumbsTried += 1; $0.thumbsUnavailable += 1 }
                     }
-                    var collected: [(PhotoSnapshot, UInt64?)] = []
-                    for await item in group { collected.append(item) }
-                    return collected
+                } else {
+                    unavailable.append((photo.id, photo.record.revision))
+                    counters.update { $0.thumbsTried += 1; $0.thumbsUnavailable += 1 }
                 }
-                for (photo, hash) in results {
-                    if let hash { hashed.append((photo.id, photo.record.revision, hash)) }
-                    else { unavailable.append((photo.id, photo.record.revision)) }
-                }
-                let missing = results.filter { $0.1 == nil }.count
-                counters.update { $0.thumbsTried += results.count; $0.thumbsUnavailable += missing; $0.inFlight = 0 }
                 tick(done: processed + hashed.count + unavailable.count, total: pending)
             }
             try? await store.putFeatures(hashed, version: Self.featureVersion)
@@ -268,11 +263,12 @@ final class ScanEngine {
     /// Near-duplicate candidate pairs from LSH bands plus same-moment pairs, filtered by hash distance and
     /// ranked: bursts first, then closest hashes. Only proposals; nothing here proves similarity.
     private func rankedNearPairs() async -> [CandidatePair] {
-        let near = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 256, maximumPairs: Self.maximumCandidatePairs)
-        let moments = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 256, maximumPairs: Self.maximumCandidatePairs)
+        let near = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 256, maximumPairs: limits.candidatePairCap)
+        let moments = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: limits.momentBucketCap,
+                                              maximumPairs: limits.candidatePairCap)
         reporter?.scanUpdate { $0.lshBucketsSkipped = near.skippedBuckets }
         let all = Array(Set(near.pairs).union(moments))
-        let hashes = await store.dhashes(ids: Array(Set(all.flatMap { [$0.first, $0.second] })))
+        let hashes = await store.dhashes(ids: Array(Set(all.flatMap { [$0.first, $0.second] })), version: Self.featureVersion)
         let close = all.filter { pair in
             guard let a = hashes[pair.first], let b = hashes[pair.second] else { return false }
             return CandidateIndex.hamming(a, b) <= 10
@@ -373,7 +369,7 @@ final class ScanEngine {
     // MARK: 6a. Bursts and quick runs (review sets: several shots, you choose what to keep)
 
     private func buildReviewSets(albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
-        let items = await store.sequenceItems().filter { !claimed.contains($0.id) }
+        let items = await store.sequenceItems(version: Self.featureVersion).filter { !claimed.contains($0.id) }
         let sets = SequenceGrouping.groups(items)
         reporter?.scanUpdate { $0.reviewSetsFound = sets.count }
         var pending: [PhotoReviewGroup] = []
@@ -388,7 +384,7 @@ final class ScanEngine {
             for photo in photos {
                 counters.update { $0.inFlight = 1 }
                 defer { counters.update { $0.inFlight = 0 } }
-                guard let image = await library.thumbnail(photo.id, target: 512) else {
+                guard let image = await library.thumbnail(photo.id, target: limits.visionSide) else {
                     quality.append(QualitySignals(id: photo.id, pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))); continue
                 }
                 let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
@@ -424,7 +420,7 @@ final class ScanEngine {
     private func compareSimilarPairs(_ pairs: [CandidatePair], albums: Set<String>, claimed: inout Set<String>) async -> Outcome? {
         // Similarity is uncalibrated, so it is strictly manual-review only. Pairwise groups prevent the
         // transitive A~B, B~C => A~C deletion bug.
-        let limited = Array(pairs.prefix(Self.maximumVisionPairs))
+        let limited = Array(pairs.prefix(limits.visionPairCap(scopeCount: libraryItems)))
         if pairs.count > limited.count { let skipped = pairs.count - limited.count; reporter?.scanUpdate { $0.visionPairsSkipped = skipped } }
         var pending: [PhotoReviewGroup] = []
         var consecutiveFailures = 0
@@ -436,7 +432,8 @@ final class ScanEngine {
             guard let a = both[pair.first].map({ Self.markAlbum($0, albums) }), let b = both[pair.second].map({ Self.markAlbum($0, albums) }) else { continue }
             counters.update { $0.inFlight = 1 }
             defer { counters.update { $0.inFlight = 0 } }
-            guard let firstImage = await library.thumbnail(a.id, target: 512), let secondImage = await library.thumbnail(b.id, target: 512) else { continue }
+            guard let firstImage = await library.thumbnail(a.id, target: limits.visionSide),
+                  let secondImage = await library.thumbnail(b.id, target: limits.visionSide) else { continue }
             let distance: Double
             do {
                 let firstPrint = try await visual.featurePrint(firstImage)

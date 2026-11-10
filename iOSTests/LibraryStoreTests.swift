@@ -117,7 +117,7 @@ final class LibraryStoreTests: XCTestCase {
         let base: UInt64 = 0x0123_4567_89AB_CDEF
         try await store.putFeatures([("a", "r1", base), ("b", "r1", base ^ 0b111),            // 3 bits apart
                                      ("far", "r1", base ^ 0xFFFF_0000_0000_FFFF),               // shares no band
-                                     ("alone", "r1", ~base)], version: 1)
+                                     ("alone", "r1", ~base)], version: ScanEngine.featureVersion)
         let result = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 256, maximumPairs: 1_000)
         XCTAssertEqual(result.pairs, [CandidatePair("a", "b")])
         XCTAssertEqual(result.skippedBuckets, 0)
@@ -127,7 +127,7 @@ final class LibraryStoreTests: XCTestCase {
         let store = try LibraryStore(path: nil)
         let ids = (0..<30).map { "p\($0)" }
         try await store.upsert(ids.map { photo($0, at: nil) })
-        try await store.putFeatures(ids.map { ($0, "r1", UInt64(0)) }, version: 1)      // all identical hashes: one huge bucket per band
+        try await store.putFeatures(ids.map { ($0, "r1", UInt64(0)) }, version: ScanEngine.featureVersion)   // all identical hashes: one huge bucket per band
         let result = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 10, maximumPairs: 10_000)
         XCTAssertTrue(result.pairs.isEmpty)
         XCTAssertEqual(result.skippedBuckets, 4, "one oversized bucket in each of the four bands")

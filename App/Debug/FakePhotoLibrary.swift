@@ -212,6 +212,8 @@ final class FakePhotoLibrary: PhotoLibraryClient {
     private(set) var thumbnailCalls = 0
     /// Fingerprint-size requests only (the Vision stage asks for larger thumbnails).
     private(set) var fingerprintThumbnailCalls = 0
+    /// Every requested thumbnail target size, in call order (tests assert the 128 px fingerprints).
+    private(set) var requestedThumbnailTargets: [CGFloat] = []
     /// Called with the offset of every inventory page request (lets a test interrupt a scan mid-inventory).
     var onInventoryPage: ((Int) -> Void)?
     var unavailableThumbnailIDs: Set<String> = []
@@ -237,6 +239,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage? {
         thumbnailCalls += 1
+        requestedThumbnailTargets.append(target)
         if target <= 300 { fingerprintThumbnailCalls += 1 }
         thumbnailsInFlight += 1
         maxThumbnailsInFlight = max(maxThumbnailsInFlight, thumbnailsInFlight)
