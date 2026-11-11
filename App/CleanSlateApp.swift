@@ -11,7 +11,9 @@ struct CleanSlateApp: App {
     @StateObject private var labels = LabelStore(fileURL: LabelStore.defaultURL())
 
     init() {
+        BackgroundScanning.register()               // handlers must exist before the first launch completes
         let environment = AppEnvironment.make()
+        BackgroundScanning.model = environment.model
         library = environment.library
         watchdog = environment.watchdog
         metrics = environment.metrics

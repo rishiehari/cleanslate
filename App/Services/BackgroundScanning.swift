@@ -14,8 +14,18 @@ enum BackgroundScanning {
     /// The scan the background tasks should drive. Set once at launch.
     static weak var model: CleaningViewModel?
 
+    /// True once `register()` ran (the real app). Unit tests never register, so the BG submit
+    /// stays inert there — BGTaskScheduler asserts on submissions without registration.
+    static var didRegister = false
+
+    #if DEBUG
+    /// Test seam: the simulator has no BG runtime; tests assert the request/registration logic instead.
+    static var continuedProcessingRequestCount = 0
+    #endif
+
     /// Registers handlers. Must be called before the app finishes launching.
     static func register() {
+        didRegister = true
         BGTaskScheduler.shared.register(forTaskWithIdentifier: processingIdentifier, using: nil) { task in
             guard let task = task as? BGProcessingTask else { return }
             let work = Task { @MainActor in
@@ -58,6 +68,12 @@ enum BackgroundScanning {
 
     /// Called when the user starts a scan, so it can continue after they leave the app (iOS 26+).
     static func requestContinuedProcessing() {
+        #if DEBUG
+        continuedProcessingRequestCount += 1
+        #endif
+        // Only the launched app submits: the unit-test host also runs init, and BGTaskScheduler
+        // asserts on submits without a working registration (its plist entries are device-only).
+        guard didRegister, NSClassFromString("XCTestCase") == nil else { return }
         guard #available(iOS 26.0, *) else { return }
         let request = BGContinuedProcessingTaskRequest(identifier: continuedIdentifier, title: "Looking for copies",
                                                        subtitle: "CleanSlate is scanning your photos on this iPhone")
