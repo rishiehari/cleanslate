@@ -77,6 +77,9 @@ final class ScanEngine {
     /// Set by `skipCurrentStage()`; the next phase checkpoint ends the current phase early
     /// (recorded in statistics.stagesSkipped). Skipping never marks anything as matched.
     private var skipRequested = false
+    /// Set when the skip was consumed inside the inventory: the scan ends as cancelled (a partial
+    /// inventory must not report "finished over zero photos").
+    private var inventorySkipped = false
 
     init(library: PhotoLibraryClient, store: LibraryStore, networkPolicy: NetworkPolicy, governor: ResourceGovernor,
          visual: VisualAnalyzing = VisionVisualAnalyzer(), counters: ScanCounters = ScanCounters(),
@@ -106,6 +109,7 @@ final class ScanEngine {
         guard skipRequested else { return false }
         skipRequested = false
         reporter?.scanUpdate { $0.stagesSkipped.append(phase) }
+        if phase == .inventory { inventorySkipped = true }
         return true
     }
 
@@ -152,6 +156,7 @@ final class ScanEngine {
         guard let reporter else { return .cancelled }
         await enter(.inventory)
         await syncInventory()
+        if inventorySkipped { inventorySkipped = false; return .cancelled }
         if Task.isCancelled { return .cancelled }
         let total = await store.assetCount()
         reporter.scanUpdate { $0.photosEnumerated = total }

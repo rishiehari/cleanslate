@@ -28,6 +28,8 @@ final class EngineSkipTests: XCTestCase {
                                                     seconds: { clock.now }),
                                       stallAfter: 6)
         heartbeat.onStall = { stalls.values.append($0) }
+        let stallEnds = StallBox()
+        heartbeat.onStallEnd = { stallEnds.values.append(0) }
         heartbeat.beat()
         XCTAssertFalse(heartbeat.isStalled)
         clock.now = 7; heartbeat.beat()
@@ -65,14 +67,30 @@ final class EngineSkipTests: XCTestCase {
         XCTAssertTrue(model.groups.filter { $0.kind == .similar }.isEmpty, "skipping Comparing marked nothing")
     }
 
-    func testSkipBeforeScanEndsTheFirstPhaseEarly() async throws {
+    func testSkipWhileIdleIsIgnoredAndNotConsumed() async throws {
         let library = FakePhotoLibrary()
         for i in 0..<20 { library.add("p\(i)", content: "c\(i)") }
         let model = try ScanTestRig.model(library: library)
-        model.skipCurrentStage()
+        model.skipCurrentStage()                    // no scan running: ignored, NOT consumed
         await model.runScan()
-        XCTAssertEqual(model.statistics.stagesSkipped.first, .inventory, "the first phase checkpoint consumes the skip")
-        XCTAssertTrue(model.statistics.photosEnumerated < 20 || !model.statistics.stagesSkipped.isEmpty)
+        XCTAssertEqual(model.statistics.photosEnumerated, 20, "the scan ran normally")
+        XCTAssertTrue(model.statistics.stagesSkipped.isEmpty, "an idle skip must not be consumed by the next scan")
+        XCTAssertEqual(model.phase, .finished)
+    }
+
+    func testSkipMidInventoryEndsAsCancelledNotFinishedOverZero() async throws {
+        let library = FakePhotoLibrary()
+        for i in 0..<2_500 { library.add("p\(i)", content: "c\(i)") }
+        let model = try ScanTestRig.model(library: library)
+        var skipped = false
+        library.onInventoryPage = { offset in
+            if offset == 1_000, !skipped { skipped = true; model.skipCurrentStage() }
+        }
+        await model.runScan()          // deterministic: the hook fires inside the awaited scan
+        XCTAssertEqual(model.statistics.stagesSkipped, [.inventory])
+        XCTAssertEqual(model.phase, .cancelled, "a skipped inventory ends as paused, not finished")
+        XCTAssertLessThan(model.statistics.photosEnumerated, 2_500, "no finished-over-partial claim")
+        XCTAssertTrue(model.statusMessage?.lowercased().contains("paused") ?? false, "the message says the progress is saved")
     }
 
     private final class StallBox: @unchecked Sendable { var values: [Int] = [] }

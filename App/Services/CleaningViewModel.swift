@@ -358,6 +358,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         heartbeat.onStall = { [weak self] _ in
             Task { @MainActor in self?.isScanStalled = true }
         }
+        heartbeat.onStallEnd = { [weak self] in
+            Task { @MainActor in self?.isScanStalled = false }
+        }
         heartbeat.start()
         defer { heartbeat.stop() }
         if isScanStalled { isScanStalled = false }
@@ -394,8 +397,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
 
     func stop() { scanTask?.cancel() }
 
-    /// Ends the current scan stage early and moves on (F03.8). Skipping never marks anything as matched.
-    func skipCurrentStage() { engine.skipCurrentStage() }
+    /// Ends the current scan stage early and moves on (F03.8). Skipping never marks anything as
+    /// matched. A skip requested while no scan is running is ignored (never consumed).
+    func skipCurrentStage() { guard isScanning else { return }; engine.skipCurrentStage() }
 
     func clearIndex() {
         guard !isScanning else { return }

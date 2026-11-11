@@ -16,6 +16,9 @@ final class ScanCounters: Sendable {
     func reset() { state.withLock { $0 = Snapshot() } }
 }
 
+/// Box for the "did the stall episode just end" signal across the lock boundary.
+private final class StallFlag: @unchecked Sendable { var value = false }
+
 /// Writes a `heartbeat` event every 2 s during a scan (HANG_RCA_DEVICE_LOG: a stall must be visible without Xcode), and a
 /// `stalled` event when `done` has not moved for `stallAfter` seconds. Runs off the main actor on purpose.
 final class ScanHeartbeat: @unchecked Sendable {
@@ -37,6 +40,8 @@ final class ScanHeartbeat: @unchecked Sendable {
 
     /// Called when a stall episode opens (one event per episode), with the seconds since progress.
     var onStall: (@Sendable (Int) -> Void)?
+    /// Called when a stall episode ends (progress or in-flight movement re-armed the clock).
+    var onStallEnd: (@Sendable () -> Void)?
 
     init(log: DiagnosticsLog, counters: ScanCounters, probes: Probes = Probes(), stallAfter: Int = 6) {
         self.log = log; self.counters = counters; self.probes = probes; self.stallAfter = stallAfter
@@ -72,10 +77,12 @@ final class ScanHeartbeat: @unchecked Sendable {
                               thermal: probes.thermal(), lowPower: probes.lowPower(), inFlight: s.inFlight,
                               thumbsTried: s.thumbsTried, thumbsUnavailable: s.thumbsUnavailable))
         let now = probes.seconds()
+        let stallEnded = StallFlag()
         let stalledFor: Int? = progress.withLock { p in
             // Any movement (items done or requests in flight) re-arms the stall clock.
             if p.lastDone != s.done || p.lastInFlight != s.inFlight {
-                p.lastDone = s.done; p.lastInFlight = s.inFlight; p.lastChange = now; p.reported = false
+                p.lastDone = s.done; p.lastInFlight = s.inFlight; p.lastChange = now
+                if p.reported { p.reported = false; stallEnded.value = true }
                 return nil
             }
             // A phase that has produced no measurable work yet (pure CPU, e.g. ranking pairs)
@@ -87,6 +94,7 @@ final class ScanHeartbeat: @unchecked Sendable {
             p.reported = true
             return idle
         }
+        if stallEnded.value { onStallEnd?() }
         if let stalledFor {
             log.record(.stalled(phase: s.phase, secondsSinceProgress: stalledFor, pendingRequests: s.inFlight))
             onStall?(stalledFor)
