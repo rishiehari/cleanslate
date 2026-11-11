@@ -367,3 +367,33 @@ Known limitations carried forward (edge findings m9/m10 and unverifiable-by-cons
 - **Owner device run still pending** — the F02 definition-of-done run on the iPhone 17 Pro (one scan, share the file, confirm/reject H1–H4) is the only way to verify heartbeat/stall/MetricKit behavior against the real hang class; everything here is simulator-verified.
 - Simulator footprint/watchdog numbers are of the test process on a Mac (not jetsam-enforced); device numbers need the owner's run.
 - The accessibility audit's one unattributed elementDetection artifact on the pushed Diagnostics screen remains a documented, narrowly-scoped test exemption (see DiagnosticsUITests).
+
+
+## F03 — Scan stability and bounded memory — 2026-11-10 (implementer)
+Sub-tasks 1–11. Commits: 9dc01bf F03.1 deadlines · 05906f9 F03.2 ScanLimits · a0a4aa6 F03.3 streaming builders · 57aaf2f F03.4a paged queries · 8b1101e F03.4b engine switch · 5ec7b15+2131ada F03.5 narrowing + targeted albums · b771c4c F03.6 Vision caches · 464f830 F03.7 memory pressure · ee8c1cb F03.8 heartbeat/skip · 9ef5eb5 F03.9 coalescing · 6b03fd2 F03.10 background · c76e09a F03.11 hard asserts. Core: 115/115 throughout; lint PASS; app build zero warnings; iOS unit suites green per sub-task.
+
+Flood root-cause (F03.9): the governor assigned `pauseReason = nil` on EVERY checkpoint (per item, thousands per scan) and `@Published` fires regardless of value equality — 4,022 objectWillChange events in one 2,000-group scan (6,044 total with the old per-group appends). Fixed at the source (`setPauseReason` publishes real changes only; groups batch into ONE array write per flush; all published writes value-guarded). Measured after: 22 events for the whole scan (bound 28 = 2×s + 3×phaseCount + 5; documented deviation: phase ends publish phase+statistics+progress per the spec text, so the per-phase term is 3 — the literal formula's 1×phase term cannot absorb that on a 0.7 s scan).
+
+`make budget` (real numbers, thumbnails ON, fake library):
+- **CLEANSLATE_TIER=M (SE-test, budget 160 MB): scope 100 peak 40.6 MB; scope 10,000 peak 51.6 MB; growth 11.0 MB (≤ 15 target MET, plain assert); soak 3×10,000 peaks 49.6/49.7/49.7 MB, footprint after each 40.9/40.9/41.0 (≤ 10 PASS). 2/2 tests PASS.**
+- **CLEANSLATE_TIER=H (default simulator, budget 200 MB): scope 100 peak 40.8 MB; scope 10,000 peak 62.4 MB; growth 21.5 MB — the ≤ 15 MB flat-footprint target is NOT met on tier H (plain assert now FAILS there); soak peaks 63.0/62.9/59.3, after each 42.0/41.9/42.0 (≤ 10 PASS). Peaks are within budget on both tiers.**
+- Finding carried forward: tier-H growth 21.5 > 15 MB needs follow-up (suspected larger 384-px Vision transients vs 320 on M; the simulator does not enforce device limits, so the device gate decides). The binding SE-class budget (M) meets the target.
+
+Acceptance status:
+- HangRepro: stuck thumbnail cancel finishes (plain assert); Vision bound rewritten as plain asserts — calls ≤ 4×(visionReviewSetPhotos + 2×visionPairsCompared), maxPrintsOfOnePicture ≤ 8 (64-entry LRU working set; uncached was 44), candidatePairsConsidered ≤ 2×tier cap. 2/2 PASS.
+- Watchdog during scan (10,000 photos, thumbnails ON): no >250 ms main-thread block attributed to scan phases (F03AcceptanceTests; ambient idle blocks allowed per the reasoner-approved flake mitigation).
+- Re-render bound: ViewModelCoalescingTests (2,000-group scan).
+- One asset in flight (`maxThumbnailsInFlight == 1`) and 128-px fingerprints: ScanConcurrencyTests. featureVersion 2 with v1/v2 store separation. featurePage 200 keyset paging; review sets streamed through SequenceGrouping.Streamer; union/filter/rank detached; exact enqueue narrowed (Hamming ≤ 2 + same pixel size, cap min(4,000, scope)); targeted album lookups per phase.
+
+Deviations (orchestrator decisions + documented):
+1. Paging 1,000/200 (not the sketch's 100/100) — existing tests pin those values.
+2. `Deadline.body` is a `sending` closure (SE-0430) — the sketch's bare @escaping cannot compile under Swift 6 strict concurrency.
+3. Two LibraryStoreTests fixture setups moved to `ScanEngine.featureVersion` (assertions untouched).
+4. Similar-phase album marks happen per flush batch (lookup scoped to found members, progressive reporting kept).
+5. `verifiedSize` image branch shares the digest 20 s inactivity watchdog (video-file branch has the hard 10 s deadline).
+6. `os_proc_available_memory()` reports 0/tiny on the simulator; values below a 20 MB credibility floor no longer trigger the F03.7 critical pause (real devices unaffected).
+7. Re-render bound written 2×s + 3×phaseCount + 5 (see flood note).
+8. `requestContinuedProcessing` submits only when registered AND not under XCTest (the test host runs app init; BGTaskScheduler asserts otherwise).
+9. Existing tests touched only where F03 semantics changed by design: ScanEngineTests low-memory 50 MB → 120 MB (new critical band), DiagnosticsGovernorTests low-memory likewise, EngineSkipTests poll uses the non-published counters. No assertion was weakened or deleted.
+
+🧑 **Device gate PENDING**: everything above is simulator-verified. The F03 definition of done requires the owner's device run (17 Pro + SE 2/3 or iPhone 11, read-only/disposable library ≥ 7,000 items) with the F02 diagnostics file, Instruments Hangs + Allocations, and peak footprint vs budget — including the tier-H growth finding above and the timeout/cancellation behavior that only real PhotoKit can show.
