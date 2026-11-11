@@ -317,26 +317,7 @@ actor LibraryStore {
         return (items, lastTime, lastID)
     }
 
-    /// Next page of burst rows (burst_id, id) after a (burstID, id) cursor, ordered by burst then id.
-    /// Bursts may straddle pages; the caller buffers per burst id.
-    func burstPage(afterBurstID: String, afterID: String, limit: Int) -> (rows: [(burstID: String, id: String)], lastBurstID: String, lastID: String) {
-        var lastBurst = afterBurstID, lastID = afterID
-        let fromStart = afterBurstID.isEmpty && afterID.isEmpty
-        let paging = fromStart ? "" : "AND (burst_id > ? OR (burst_id = ? AND id > ?))"
-        let rowsFound = (try? rows("""
-            SELECT burst_id, id FROM assets WHERE deleted=0 AND media_type=1 AND burst_id IS NOT NULL \(paging)
-            ORDER BY burst_id, id LIMIT ?
-            """, bind: { s in
-                if !fromStart { text(s, 1, afterBurstID); text(s, 2, afterBurstID); text(s, 3, afterID); sqlite3_bind_int(s, 4, Int32(limit)) }
-                else { sqlite3_bind_int(s, 1, Int32(limit)) }
-            }, map: { s -> (String, String)? in
-                guard let burst = sqlite3_column_text(s, 0).map({ String(cString: $0) }),
-                      let id = sqlite3_column_text(s, 1).map({ String(cString: $0) }) else { return nil }
-                lastBurst = burst; lastID = id
-                return (burst, id)
-            })) ?? []
-        return (rowsFound.compactMap { $0 }.map { (burstID: $0.0, id: $0.1) }, lastBurst, lastID)
-    }
+
 
     // MARK: Features (difference hash + LSH bands)
 
@@ -449,10 +430,12 @@ actor LibraryStore {
 
     /// Candidate near pairs from the four 16-bit LSH bands. A candidate is only a proposal.
     /// Buckets bigger than `maximumBucketSize` are skipped and counted, never silently dropped.
-    /// Only the given feature version participates (v1/v2 hashes never mix).
-    func nearHashPairs(maxHamming: Int, maximumBucketSize: Int, maximumPairs: Int, version: Int = 2) -> (pairs: [CandidatePair], skippedBuckets: Int) {
+    /// Only the given feature version participates (v1/v2 hashes never mix). The cap is enforced
+    /// and the overflow reported (`truncatedPairs`, exact for the band being cut, a lower bound
+    /// for the unexamined bands — documented as approximate).
+    func nearHashPairs(maxHamming: Int, maximumBucketSize: Int, maximumPairs: Int, version: Int = 2) -> (pairs: [CandidatePair], skippedBuckets: Int, truncatedPairs: Int) {
         var pairs: Set<CandidatePair> = []
-        var skipped = 0
+        var skipped = 0, truncated = 0
         for band in 0..<4 {
             let column = "band\(band)"
             let sql = """
@@ -468,17 +451,26 @@ actor LibraryStore {
             while start < bucketed.count {
                 var end = start
                 while end < bucketed.count && bucketed[end].0 == bucketed[start].0 { end += 1 }
-                for i in start..<end { for j in (i + 1)..<end where CandidateIndex.hamming(bucketed[i].2, bucketed[j].2) <= maxHamming {
+                var capped = false
+                for i in start..<end where !capped { for j in (i + 1)..<end where !capped {
+                    guard CandidateIndex.hamming(bucketed[i].2, bucketed[j].2) <= maxHamming else { continue }
+                    if pairs.count >= maximumPairs {
+                        // Count what this bucket would still have produced (exact for this bucket),
+                        // then stop: the remaining bands are a lower bound, reported as approximate.
+                        truncated += ((end - i) * (end - i - 1)) / 2
+                        capped = true
+                        break
+                    }
                     pairs.insert(CandidatePair(bucketed[i].1, bucketed[j].1))
-                    if pairs.count >= maximumPairs { return (pairs.sorted(), skipped) }
                 }}
                 start = end
+                if capped { return (pairs.sorted(), skipped, truncated) }
             }
             let oversized = (try? rows("SELECT COUNT(*) FROM (SELECT \(column) FROM features WHERE feature_version=? GROUP BY \(column) HAVING COUNT(*) > ?)",
                                        bind: { sqlite3_bind_int($0, 1, Int32(version)); sqlite3_bind_int($0, 2, Int32(maximumBucketSize)) }, map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
             skipped += oversized
         }
-        return (pairs.sorted(), skipped)
+        return (pairs.sorted(), skipped, truncated)
     }
 
     /// Every live image with its time, burst and (if available) difference hash, for building review sets.
@@ -501,17 +493,32 @@ actor LibraryStore {
         (try? rows("SELECT COUNT(*) FROM assets WHERE deleted=0 AND media_type=1", map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
     }
 
-    /// Burst and time-window pairs for the same-moment candidates (images only).
-    func momentPairs(maxSecondsApart: Int64, maximumBucketSize: Int, maximumPairs: Int) -> [CandidatePair] {
+    /// Burst and time-window pairs for the same-moment candidates (images only). The cap is
+    /// enforced in BOTH sections; overflow and oversized burst buckets are reported, never
+    /// silently dropped (`pairsDroppedByCap` is exact per section before Set dedup overlaps).
+    func momentPairs(maxSecondsApart: Int64, maximumBucketSize: Int, maximumPairs: Int) -> (pairs: [CandidatePair], oversizedBuckets: Int, pairsDroppedByCap: Int) {
         var pairs: Set<CandidatePair> = []
+        var oversized = 0, droppedByCap = 0
+        var remaining = maximumPairs
         let bursts = (try? rows("SELECT burst_id, id FROM assets WHERE deleted=0 AND media_type=1 AND burst_id IS NOT NULL ORDER BY burst_id, id",
                                 map: { (String(cString: sqlite3_column_text($0, 0)), String(cString: sqlite3_column_text($0, 1))) })) ?? []
         var start = 0
         while start < bursts.count {
             var end = start
             while end < bursts.count && bursts[end].0 == bursts[start].0 { end += 1 }
-            if end - start <= maximumBucketSize {
-                for i in start..<end { for j in (i + 1)..<end { pairs.insert(CandidatePair(bursts[i].1, bursts[j].1)) } }
+            let n = end - start
+            let potential = n * (n - 1) / 2
+            if n > maximumBucketSize {
+                oversized += 1
+            } else if remaining <= 0 {
+                droppedByCap += potential
+            } else {
+                var made = 0
+                outer: for i in start..<end { for j in (i + 1)..<end {
+                    if made >= remaining { droppedByCap += potential - made; break outer }
+                    pairs.insert(CandidatePair(bursts[i].1, bursts[j].1)); made += 1
+                }}
+                remaining -= made
             }
             start = end
         }
@@ -520,11 +527,15 @@ actor LibraryStore {
         var left = 0
         for right in timed.indices {
             while timed[left].1 < timed[right].1 - maxSecondsApart { left += 1 }
-            if right - left > maximumBucketSize { continue }
-            for other in left..<right { pairs.insert(CandidatePair(timed[other].0, timed[right].0)) }
-            if pairs.count >= maximumPairs { break }
+            let potential = right - left
+            if potential > maximumBucketSize { continue }
+            if remaining <= 0 { droppedByCap += potential; continue }
+            let generated = min(potential, remaining)
+            for other in left..<(left + generated) { pairs.insert(CandidatePair(timed[other].0, timed[right].0)) }
+            droppedByCap += potential - generated
+            remaining -= generated
         }
-        return pairs.sorted()
+        return (pairs.sorted(), oversized, droppedByCap)
     }
 
     // MARK: Receipts (history of what was deleted)

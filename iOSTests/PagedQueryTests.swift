@@ -59,36 +59,35 @@ final class PagedQueryTests: XCTestCase {
         XCTAssertEqual(paged.prefix(2).map(\.id), ["nil-a", "nil-b"])
     }
 
-    func testBurstPageCollectsStraddlingBursts() async throws {
-        let assets = ["B2-a", "B2-b", "B1-a", "B1-b", "B1-c", "B2-c", "solo"].map { id in
-            photo(id, at: 1, burst: id.hasPrefix("B") ? String(id.prefix(2)) : nil)
-        }
-        try await store.upsert(assets)
-        var rows: [(burstID: String, id: String)] = []
-        var burst = "", id = ""
-        while true {
-            let page = await store.burstPage(afterBurstID: burst, afterID: id, limit: 3)   // smaller than a burst
-            rows += page.rows
-            guard !page.rows.isEmpty else { break }
-            burst = page.lastBurstID; id = page.lastID
-        }
-        let expected: [(burstID: String, id: String)] = [("B1", "B1-a"), ("B1", "B1-b"), ("B1", "B1-c"), ("B2", "B2-a"), ("B2", "B2-b"), ("B2", "B2-c")]
-        XCTAssertEqual(rows.map(\.burstID), expected.map(\.burstID), "whole bursts stay grouped even across pages")
-        XCTAssertEqual(rows.map(\.id).sorted(), expected.map(\.id).sorted())
-        XCTAssertEqual(rows.count, 6, "no burst row lost to the page cursor")
-    }
-
     func testMomentBucketCap30SkipsLargeBurstsAndCountsNothingSilently() async throws {
         // Burst frames far apart in time, so ONLY the burst path could pair them: the cap must
         // exclude the whole 31-frame burst (review sets still cover those photos).
         let burst = (0..<31).map { photo("big-\($0)", at: Int64($0) * 3_600, burst: "big") }
         let small = (0..<3).map { photo("small-\($0)", at: Int64(100 + $0)) }
         try await store.upsert(burst + small)
-        let pairs = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 30, maximumPairs: 1_000)
-        for pair in pairs {
+        let result = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 30, maximumPairs: 1_000)
+        for pair in result.pairs {
             XCTAssertFalse(pair.first.hasPrefix("big-") && pair.second.hasPrefix("big-"), "the 31-frame burst exceeds the cap and must not pair")
         }
-        XCTAssertEqual(pairs.count, 3, "only the 3-pair small window remains (C(3,2)=3)")
+        XCTAssertEqual(result.pairs.count, 3, "only the 3-pair small window remains (C(3,2)=3)")
+        XCTAssertEqual(result.oversizedBuckets, 1, "the oversized burst bucket is reported (m9)")
+        XCTAssertEqual(result.pairsDroppedByCap, 0)
+    }
+
+    /// M5: the burst section honors maximumPairs and reports the overflow (m9).
+    func testMomentPairsBurstSectionEnforcesTheCapAndReportsOverflow() async throws {
+        // 40 bursts of 25 frames (<= bucket cap 30) -> 40 x C(25,2) = 12,000 potential burst pairs.
+        var assets: [PhotoSnapshot] = []
+        for b in 0..<40 {
+            for f in 0..<25 {
+                assets.append(photo("b\(b)-\(f)", at: Int64(b) * 86_400 + Int64(f), burst: "burst-\(b)"))
+            }
+        }
+        try await store.upsert(assets)
+        let result = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 30, maximumPairs: 5_000)
+        XCTAssertLessThanOrEqual(result.pairs.count, 5_000, "the cap holds in the burst section")
+        XCTAssertGreaterThan(result.pairsDroppedByCap, 0, "the ungenerated pairs are reported, never silent")
+        XCTAssertEqual(result.oversizedBuckets, 0)
     }
 
     func testNearPairCapTruncatesAndSkipsAreCounted() async throws {

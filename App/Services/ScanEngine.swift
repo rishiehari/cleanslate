@@ -180,7 +180,17 @@ final class ScanEngine {
 
         await enter(.candidates)
         reporter.scanProgress(0.60)
-        let buckets = ExactCandidates.buckets(await store.exactKeys())
+        // Stream the exact keys through the bucket builder page by page (F03 keyset paging).
+        var bucketBuilder = ExactCandidates.ExactBucketBuilder()
+        var keyCursor: Int64 = 0
+        while true {
+            if Task.isCancelled { return .cancelled }
+            let page = await store.exactKeyPage(afterRowID: keyCursor, limit: 1_000)
+            if page.keys.isEmpty { break }
+            bucketBuilder.add(page.keys)
+            keyCursor = page.lastRowID
+        }
+        let buckets = bucketBuilder.finish()
         reporter.scanUpdate { $0.exactBucketsFound = buckets.buckets.count; $0.bucketsOversized = buckets.oversizedBuckets }
         let pairs = await rankedNearPairs()
         if Task.isCancelled { return .cancelled }
@@ -337,12 +347,17 @@ final class ScanEngine {
         let near = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 256, maximumPairs: limits.candidatePairCap)
         let moments = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: limits.momentBucketCap,
                                               maximumPairs: limits.candidatePairCap)
-        reporter?.scanUpdate { $0.lshBucketsSkipped = near.skippedBuckets }
-        let members = Array(Set(near.pairs.flatMap { [$0.first, $0.second] } + moments.flatMap { [$0.first, $0.second] }))
+        reporter?.scanUpdate { s in
+            s.lshBucketsSkipped = near.skippedBuckets
+            s.nearPairsDroppedByCap = near.truncatedPairs
+            s.momentBucketsOversized = moments.oversizedBuckets
+            s.momentPairsDroppedByCap = moments.pairsDroppedByCap
+        }
+        let members = Array(Set(near.pairs.flatMap { [$0.first, $0.second] } + moments.pairs.flatMap { [$0.first, $0.second] }))
         let hashes = await store.dhashes(ids: members, version: Self.featureVersion)
         // Union + Hamming filter off the main actor; pure Sendable data crosses (no self, no snapshots).
         let close = await Task.detached(priority: .utility) {
-            Array(Set(near.pairs).union(moments)).filter { pair in
+            Array(Set(near.pairs).union(moments.pairs)).filter { pair in
                 guard let a = hashes[pair.first], let b = hashes[pair.second] else { return false }
                 return CandidateIndex.hamming(a, b) <= 10
             }
@@ -353,10 +368,12 @@ final class ScanEngine {
     }
 
     /// The digest queue: exact-bucket members plus near pairs that are near-identical (Hamming <= 2)
-    /// at the same pixel size. Pure and testable; `cap` is min(4,000, scopeCount).
+    /// at the same pixel size. Pure and testable; `cap` is min(4,000, scopeCount). Reports cap
+    /// truncation separately from narrowing exclusions (m7) so only true truncation is
+    /// 'left for next scan'.
     nonisolated static func enqueueDigestCandidates(buckets: ExactBuckets, pairs: [CandidatePair],
                                                     hashes: [String: UInt64], dimensions: [String: (width: Int, height: Int)],
-                                                    cap: Int) -> [String] {
+                                                    cap: Int) -> (order: [String], droppedByCap: Int, excludedByNarrowing: Int) {
         var order: [String] = []
         var queued: Set<String> = []
         func enqueue(_ id: String) { if queued.insert(id).inserted { order.append(id) } }
@@ -367,7 +384,10 @@ final class ScanEngine {
                   da.width == db.width, da.height == db.height else { continue }
             enqueue(pair.first); enqueue(pair.second)
         }
-        return cap < order.count ? Array(order.prefix(cap)) : order
+        let capped = max(0, order.count - max(0, cap))
+        let pairMembers = pairs.reduce(into: Set<String>()) { $0.insert($1.first); $0.insert($1.second) }
+        let excluded = pairMembers.subtracting(queued).count
+        return (cap < order.count ? Array(order.prefix(cap)) : order, capped, excluded)
     }
 
     /// Bursts first, then the closest hashes; ties broken by id so the order is deterministic.
@@ -388,11 +408,13 @@ final class ScanEngine {
         let members = Array(Set(buckets.buckets.flatMap { $0 } + pairs.flatMap { [$0.first, $0.second] }))
         let hashes = await store.dhashes(ids: members, version: Self.featureVersion)
         let dimensions = await store.dimensions(among: members)
-        let order = Self.enqueueDigestCandidates(buckets: buckets, pairs: pairs, hashes: hashes,
-                                                 dimensions: dimensions, cap: min(Self.maximumFullHashesPerScan, max(libraryItems, 1)))
-        if members.count > order.count {
-            reporter?.scanUpdate { $0.exactSkippedByLimit = members.count - order.count }
+        let enqueue = Self.enqueueDigestCandidates(buckets: buckets, pairs: pairs, hashes: hashes,
+                                                   dimensions: dimensions, cap: min(Self.maximumFullHashesPerScan, max(libraryItems, 1)))
+        reporter?.scanUpdate { s in
+            s.exactSkippedByLimit = enqueue.droppedByCap          // true cap truncation only (m7)
+            s.exactExcludedByNarrowing = enqueue.excludedByNarrowing
         }
+        let order = enqueue.order
         let albums = await library.albumMemberIDs(among: order)
         let snapshots = await store.snapshots(ids: order)
         let fetcher = DigestFetcher(library: library, policy: networkPolicy)

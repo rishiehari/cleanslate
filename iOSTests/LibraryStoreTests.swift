@@ -137,8 +137,8 @@ final class LibraryStoreTests: XCTestCase {
         let store = try LibraryStore(path: nil)
         try await store.upsert([photo("a", at: 100, burst: "B"), photo("b", at: 90_000, burst: "B"),   // same burst, far apart
                                 photo("c", at: 500), photo("d", at: 505), photo("e", at: 9_999)])
-        let pairs = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 64, maximumPairs: 1_000)
-        XCTAssertEqual(Set(pairs), [CandidatePair("a", "b"), CandidatePair("c", "d")])
+        let result = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: 64, maximumPairs: 1_000)
+        XCTAssertEqual(Set(result.pairs), [CandidatePair("a", "b"), CandidatePair("c", "d")])
     }
 
     func testMetaRoundTripAndDelete() async throws {

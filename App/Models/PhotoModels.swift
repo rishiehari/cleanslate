@@ -85,6 +85,14 @@ struct ScanStatistics: Equatable {
     var visionReviewSetPhotos = 0
     /// Candidate pairs that reached the Vision distance computation — the F03.11 bound counts 2 per pair.
     var visionPairsCompared = 0
+    /// Moment buckets skipped for exceeding the bucket cap (F03 fix round 2 / m9).
+    var momentBucketsOversized = 0
+    /// Same-moment pairs not generated because the tier cap was reached (m9; exact per section before dedup).
+    var momentPairsDroppedByCap = 0
+    /// Near-candidate pairs not examined because the tier cap was reached (m9; lower bound).
+    var nearPairsDroppedByCap = 0
+    /// Near-pair members excluded by the Hamming<=2 / same-size narrowing — NOT 'left for next scan' (m7).
+    var exactExcludedByNarrowing = 0
     var lastError: String?
 }
 
