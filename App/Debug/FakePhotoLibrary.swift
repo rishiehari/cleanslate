@@ -255,8 +255,10 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         } else if yieldInThumbnails { await Task.yield() }
         guard !disableThumbnails, !unavailableThumbnailIDs.contains(id), let asset = assets[id] else { return nil }
         if failsLikeOptimizedStorage(id) { thumbnailNoResourceFailures += 1; return nil }
-        if let spec = asset.spec { return Self.renderScene(spec: spec) }
-        return Self.renderScene(look: asset.look)
+        // Per-asset pool (F03): the renderer's autoreleased bitmap data must not survive the
+        // iteration — this models the per-asset autoreleasepool the spec requires of image steps.
+        if let spec = asset.spec { return autoreleasepool { Self.renderScene(spec: spec) } }
+        return autoreleasepool { Self.renderScene(look: asset.look) }
     }
 
     var disableThumbnails = false
