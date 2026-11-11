@@ -376,7 +376,7 @@ Flood root-cause (F03.9): the governor assigned `pauseReason = nil` on EVERY che
 
 `make budget` (real numbers, thumbnails ON, fake library):
 - **CLEANSLATE_TIER=M (SE-test, budget 160 MB): scope 100 peak 40.6 MB; scope 10,000 peak 51.6 MB; growth 11.0 MB (≤ 15 target MET, plain assert); soak 3×10,000 peaks 49.6/49.7/49.7 MB, footprint after each 40.9/40.9/41.0 (≤ 10 PASS). 2/2 tests PASS.**
-- **CLEANSLATE_TIER=H (default simulator, budget 200 MB): scope 100 peak 40.8 MB; scope 10,000 peak 62.4 MB; growth 21.5 MB — the ≤ 15 MB flat-footprint target is NOT met on tier H (plain assert now FAILS there); soak peaks 63.0/62.9/59.3, after each 42.0/41.9/42.0 (≤ 10 PASS). Peaks are within budget on both tiers.**
+- **CLEANSLATE_TIER=H (default simulator, budget 200 MB): scope 100 peak 40.8 MB; scope 10,000 peak 62.4 MB; growth 21.5 MB — the ≤ 15 MB flat-footprint target is NOT met on tier H (plain assert now FAILS there); soak peaks 63.0/62.9/59.3, after each 42.0/41.9/42.0 (≤ 10 PASS). A second full-suite H run measured growth 15.3 MB and 20.3 MB across the two attempts — borderline-to-over on H (run variance ±5 MB). Peaks are within budget on both tiers.**
 - Finding carried forward: tier-H growth 21.5 > 15 MB needs follow-up (suspected larger 384-px Vision transients vs 320 on M; the simulator does not enforce device limits, so the device gate decides). The binding SE-class budget (M) meets the target.
 
 Acceptance status:
