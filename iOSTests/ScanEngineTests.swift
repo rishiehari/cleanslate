@@ -153,7 +153,7 @@ final class ScanEngineTests: XCTestCase {
                           memory: @escaping @Sendable () -> Int = { 1_000_000_000 },
                           lowPower: @escaping @Sendable () -> Bool = { false },
                           maxPause: Int = 600) -> ResourceGovernor {
-        ResourceGovernor(inputs: .init(thermalState: thermal, availableMemoryBytes: memory, lowPowerMode: lowPower, sleep: { _ in }),
+        ResourceGovernor(inputs: .init(thermalState: thermal, availableMemoryBytes: memory, lowPowerMode: lowPower, memoryPressure: { .normal }, sleep: { _ in }),
                          cores: 8, maximumPauseSeconds: maxPause)
     }
 
@@ -162,8 +162,8 @@ final class ScanEngineTests: XCTestCase {
         XCTAssertEqual(nominal, .proceed(concurrency: 4))
         let fair = await governor(thermal: { .fair }).checkpoint()
         XCTAssertEqual(fair, .proceed(concurrency: 2))
-        let lowMemory = await governor(thermal: { .nominal }, memory: { 50_000_000 }).checkpoint()
-        XCTAssertEqual(lowMemory, .proceed(concurrency: 1))
+        let lowMemory = await governor(thermal: { .nominal }, memory: { 120_000_000 }).checkpoint()
+        XCTAssertEqual(lowMemory, .proceed(concurrency: 1), "the legacy 100-150 MB band still narrows to width 1; below 100 MB pauses instead (F03.7)")
         let lowPower = await governor(thermal: { .nominal }, lowPower: { true }).checkpoint()
         XCTAssertEqual(lowPower, .proceed(concurrency: 2))
     }

@@ -7,7 +7,8 @@ import XCTest
 enum ScanTestRig {
     static func governor(cores: Int = 8) -> ResourceGovernor {
         ResourceGovernor(inputs: .init(thermalState: { .nominal }, availableMemoryBytes: { 1_000_000_000 },
-                                       lowPowerMode: { false }, sleep: { _ in }), cores: cores, maximumPauseSeconds: 0)
+                                       lowPowerMode: { false }, memoryPressure: { .normal }, sleep: { _ in }),
+                         cores: cores, maximumPauseSeconds: 0)
     }
 
     static func model(library: FakePhotoLibrary, visual: VisualAnalyzing = FakeVisualAnalyzer(),

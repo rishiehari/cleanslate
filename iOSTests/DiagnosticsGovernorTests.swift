@@ -20,7 +20,7 @@ final class DiagnosticsGovernorTests: XCTestCase {
     private func governor(thermal: ProcessInfo.ThermalState, memoryBytes: Int = 1_000_000_000,
                           lowPower: Bool = false, maximumPauseSeconds: Int = 0) -> ResourceGovernor {
         ResourceGovernor(inputs: .init(thermalState: { thermal }, availableMemoryBytes: { memoryBytes },
-                                       lowPowerMode: { lowPower }, sleep: { _ in }),
+                                       lowPowerMode: { lowPower }, memoryPressure: { .normal }, sleep: { _ in }),
                          cores: 8, maximumPauseSeconds: maximumPauseSeconds)
     }
 
@@ -45,7 +45,7 @@ final class DiagnosticsGovernorTests: XCTestCase {
 
     func testLowMemoryAndLowPowerShrinkDecisions() async {
         let log = makeLog()
-        let lowMemory = governor(thermal: .nominal, memoryBytes: 1)
+        let lowMemory = governor(thermal: .nominal, memoryBytes: 120 * 1024 * 1024)   // legacy <150 MB band, above the 100 MB critical floor
         lowMemory.diagnostics = log
         _ = await lowMemory.checkpoint()
         let lowPower = governor(thermal: .nominal, lowPower: true)

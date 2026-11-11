@@ -9,12 +9,14 @@ final class ResourceGovernor: ObservableObject {
         var thermalState: @Sendable () -> ProcessInfo.ThermalState
         var availableMemoryBytes: @Sendable () -> Int
         var lowPowerMode: @Sendable () -> Bool
+        var memoryPressure: @Sendable () -> MemoryPressure
         var sleep: @Sendable (Duration) async -> Void
 
         static let live = Inputs(
             thermalState: { ProcessInfo.processInfo.thermalState },
             availableMemoryBytes: { os_proc_available_memory() },
             lowPowerMode: { ProcessInfo.processInfo.isLowPowerModeEnabled },
+            memoryPressure: { MemoryPressureMonitor.shared.currentLevel },
             sleep: { try? await Task.sleep(for: $0) })
     }
 
@@ -26,12 +28,24 @@ final class ResourceGovernor: ObservableObject {
 
     @Published private(set) var pauseReason: String?
     @Published private(set) var isLowPower = false
+    /// Feature commits per batch under memory pressure (base 100; `.warning` quarters it).
+    @Published private(set) var batchSize = ResourceGovernor.baseBatchSize
+    /// Called once when pressure rises to `.warning` or above: the engine drops its caches.
+    var dropCachesRequested: (@Sendable () -> Void)?
     /// Local diagnostics; decisions are logged on change only (checkpoint runs per item).
     var diagnostics: DiagnosticsLog?
 
     private let inputs: Inputs
     private let cores: Int
     static let lowMemoryBytes = 150 * 1024 * 1024
+    /// Below this, the scan pauses to free memory regardless of tier (F03).
+    static let criticalMemoryBytes = 100 * 1024 * 1024
+    /// `os_proc_available_memory()` is known to report 0 on the simulator; a value this small
+    /// is physically implausible for a running process, so the memory floor is ignored there.
+    static let minimumCredibleBytes = 20 * 1024 * 1024
+    /// How long memory pressure may pause the scan before it stops with progress saved.
+    static let memoryPauseSeconds = 60
+    static let baseBatchSize = 100
     /// How long to wait for a warm phone to cool before giving up (seconds).
     private let maximumPauseSeconds: Int
 
@@ -43,12 +57,37 @@ final class ResourceGovernor: ObservableObject {
 
     private var baseConcurrency: Int { max(1, min(4, cores / 2)) }
 
-    /// Call between batches. Returns how wide to work, waits while the device is warm, or says stop.
+    /// Call between batches. Returns how wide to work, waits while the device is warm or short
+    /// of memory, or says stop. Memory: `.warning` shrinks batches and width; `.critical` (or
+    /// < 100 MB available) pauses up to 60 s, then stops with progress saved.
     func checkpoint() async -> Decision {
         var waited = 0
+        var memoryPauseAnnounced = false
         while true {
             if Task.isCancelled { pauseReason = nil; return .proceed(concurrency: 1) }
             isLowPower = inputs.lowPowerMode()
+            let pressure = inputs.memoryPressure()
+            batchSize = pressure >= .warning ? max(1, Self.baseBatchSize / 4) : Self.baseBatchSize
+            if pressure >= .warning {
+                if !cachesDroppedForEpisode { cachesDroppedForEpisode = true; dropCachesRequested?() }   // once per episode
+            } else {
+                cachesDroppedForEpisode = false
+            }
+            let credibleAvailable = Int(inputs.availableMemoryBytes())
+            let lowMemory = credibleAvailable >= Self.minimumCredibleBytes && credibleAvailable < Self.criticalMemoryBytes
+            if pressure == .critical || lowMemory {
+                pauseReason = "Paused to free memory. Your progress is saved."
+                logDecision(.pause, .lowMemory)
+                if !memoryPauseAnnounced { memoryPauseAnnounced = true }
+                if waited >= Self.memoryPauseSeconds {
+                    pauseReason = nil
+                    logDecision(.stop, .lowMemory)
+                    return .stop(reason: "Paused to free memory. Your progress is saved.")
+                }
+                await inputs.sleep(.seconds(2)); waited += 2
+                continue
+            }
+            memoryPauseAnnounced = false
             switch inputs.thermalState() {
             case .critical:
                 pauseReason = nil
@@ -71,6 +110,11 @@ final class ResourceGovernor: ObservableObject {
             default:
                 break
             }
+            if pressure >= .warning {
+                pauseReason = nil
+                logDecision(.shrink, .lowMemory)
+                return .proceed(concurrency: 1)
+            }
             if inputs.availableMemoryBytes() < Self.lowMemoryBytes {
                 pauseReason = nil
                 logDecision(.shrink, .lowMemory)
@@ -83,6 +127,7 @@ final class ResourceGovernor: ObservableObject {
     }
 
     private var lastLoggedDecision: (decision: DiagGovernorDecision, reason: DiagGovernorReason)?
+    private var cachesDroppedForEpisode = false
     /// One event per decision CHANGE: checkpoint runs per item, so unchanged decisions stay silent.
     private func logDecision(_ decision: DiagGovernorDecision, _ reason: DiagGovernorReason) {
         if let last = lastLoggedDecision, last.decision == decision, last.reason == reason { return }

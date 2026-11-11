@@ -74,6 +74,9 @@ final class ScanEngine {
     private var signpost: OSSignpostIntervalState?
     private var libraryItems = 0
     private var lastTickBucket = -1
+    /// Set by `skipCurrentStage()`; the next phase checkpoint ends the current phase early
+    /// (recorded in statistics.stagesSkipped). Skipping never marks anything as matched.
+    private var skipRequested = false
 
     init(library: PhotoLibraryClient, store: LibraryStore, networkPolicy: NetworkPolicy, governor: ResourceGovernor,
          visual: VisualAnalyzing = VisionVisualAnalyzer(), counters: ScanCounters = ScanCounters(),
@@ -93,6 +96,17 @@ final class ScanEngine {
         // Any outcome means the run ended on its own; only a killed process leaves the marker behind.
         await ScanInProgressMarker.clear(in: store)
         return outcome
+    }
+
+    /// Ends the current stage at its next checkpoint and moves on to the next phase.
+    func skipCurrentStage() { skipRequested = true }
+
+    /// Consumes a pending skip request for `phase`; returns true when the phase must end now.
+    private func shouldSkip(_ phase: ScanPhase) -> Bool {
+        guard skipRequested else { return false }
+        skipRequested = false
+        reporter?.scanUpdate { $0.stagesSkipped.append(phase) }
+        return true
     }
 
     // MARK: Diagnostics hooks (all no-ops when `diagnostics` is nil)
@@ -211,7 +225,7 @@ final class ScanEngine {
             reporter?.scanUpdate { $0.inventoryMode = .full }
         }
         while true {
-            if Task.isCancelled { return }
+            if Task.isCancelled || shouldSkip(.inventory) { return }
             let page = library.inventoryPage(offset: offset, limit: Self.pageSize)
             if page.photos.isEmpty { break }
             try? await store.upsert(page.photos)
@@ -238,6 +252,7 @@ final class ScanEngine {
         var cursor: Int64 = 0
         while true {
             if Task.isCancelled { return .cancelled }
+            if shouldSkip(.thumbnails) { return nil }
             switch await governor.checkpoint() {
             case .stop(let reason): return .stopped(reason: reason)
             case .proceed: break      // width is clamped by ScanLimits.maxInFlight (one asset at a time)
@@ -248,6 +263,15 @@ final class ScanEngine {
             cursor = next.lastRowID
             var hashed: [(id: String, revision: String, dhash: UInt64)] = []
             var unavailable: [(id: String, revision: String)] = []
+            var pendingSinceCommit = 0
+            var pageHashed = 0, pageUnavailable = 0
+            func commitIfDue(force: Bool = false) async {
+                guard pendingSinceCommit > 0, (force || pendingSinceCommit >= governor.batchSize) else { return }
+                try? await store.putFeatures(hashed, version: Self.featureVersion)
+                try? await store.markFeaturesUnavailable(unavailable)
+                hashed.removeAll(keepingCapacity: true); unavailable.removeAll(keepingCapacity: true)
+                pendingSinceCommit = 0
+            }
             // Strictly one asset in flight (F03): per-asset autoreleasepool via a detached hash task,
             // no task group of main-actor children.
             for photo in batch {
@@ -260,22 +284,26 @@ final class ScanEngine {
                     let hash = await Task.detached(priority: .utility) { autoreleasepool { VisualFeatures.differenceHash(box.image) } }.value
                     if let hash {
                         hashed.append((photo.id, photo.record.revision, hash))
+                        pageHashed += 1
                         counters.update { $0.thumbsTried += 1 }
                     } else {
                         unavailable.append((photo.id, photo.record.revision))
+                        pageUnavailable += 1
                         counters.update { $0.thumbsTried += 1; $0.thumbsUnavailable += 1 }
                     }
                 } else {
                     unavailable.append((photo.id, photo.record.revision))
+                    pageUnavailable += 1
                     counters.update { $0.thumbsTried += 1; $0.thumbsUnavailable += 1 }
                 }
-                tick(done: processed + hashed.count + unavailable.count, total: pending)
+                tick(done: processed + pageHashed + pageUnavailable, total: pending)
+                pendingSinceCommit += 1
+                await commitIfDue()                 // every governor.batchSize within the page
             }
-            try? await store.putFeatures(hashed, version: Self.featureVersion)
-            try? await store.markFeaturesUnavailable(unavailable)
-            processed += hashed.count + unavailable.count
+            await commitIfDue(force: true)
+            processed += pageHashed + pageUnavailable
             let done = processed
-            reporter?.scanUpdate { $0.thumbnailsAnalyzed += hashed.count; $0.cloudOnlyOrUnavailable += unavailable.count }
+            reporter?.scanUpdate { $0.thumbnailsAnalyzed += pageHashed; $0.cloudOnlyOrUnavailable += pageUnavailable }
             reporter?.scanProgress(0.10 + 0.50 * Double(done) / Double(max(1, pending)))
             if Task.isCancelled { return .cancelled }
             await Task.yield()
@@ -289,6 +317,7 @@ final class ScanEngine {
     /// ranked: bursts first, then closest hashes. Only proposals; nothing here proves similarity.
     /// The assembly (union/filter/rank) runs in detached utility tasks over Sendable values only.
     private func rankedNearPairs() async -> [CandidatePair] {
+        if shouldSkip(.candidates) { return [] }
         let near = await store.nearHashPairs(maxHamming: 10, maximumBucketSize: 256, maximumPairs: limits.candidatePairCap)
         let moments = await store.momentPairs(maxSecondsApart: 12, maximumBucketSize: limits.momentBucketCap,
                                               maximumPairs: limits.candidatePairCap)
@@ -354,6 +383,7 @@ final class ScanEngine {
         var digests: [String: [ResourceDigest]] = [:]
         for (n, id) in order.enumerated() {
             if Task.isCancelled { return .cancelled }
+            if shouldSkip(.fullResources) { return nil }          // partial digests are never matched
             if case .stop(let reason) = await governor.checkpoint() { return .stopped(reason: reason) }
             guard let photo = snapshots[id] else { continue }
             counters.update { $0.inFlight = 1 }
@@ -403,6 +433,7 @@ final class ScanEngine {
         var items: [StandaloneItem] = []
         for (n, photo) in candidates.enumerated() {
             if Task.isCancelled { return .cancelled }
+            if shouldSkip(.sizing) { reporter?.scanFoundStandalone([], albumMembers: []); return nil }
             // Videos: size of the local file (no bytes read). Screenshots are measured when selected.
             counters.update { $0.inFlight = photo.isVideo ? 1 : 0 }
             defer { counters.update { $0.inFlight = 0 } }
@@ -466,6 +497,7 @@ final class ScanEngine {
         let totalImages = await store.imageAssetCount()
         while true {
             if Task.isCancelled { return .cancelled }
+            if shouldSkip(.vision) { return nil }
             let page = await store.sequencePage(afterTime: afterTime, afterID: afterID, limit: 500, version: Self.featureVersion)
             if page.items.isEmpty { break }
             streamer.feed(page.items.filter { !claimed.contains($0.id) })
@@ -481,6 +513,7 @@ final class ScanEngine {
         var visionUsable = true
         for (n, ids) in sets.enumerated() {
             if Task.isCancelled { return .cancelled }
+            if shouldSkip(.vision) { reporter?.scanFound(groups: []); return nil }
             if n % 10 == 0, case .stop(let reason) = await governor.checkpoint() { reporter?.scanFound(groups: pending); return .stopped(reason: reason) }
             let found = await store.snapshots(ids: ids)
             let photos = ids.compactMap { found[$0] }.map { Self.markAlbum($0, albums) }
@@ -530,6 +563,7 @@ final class ScanEngine {
         var consecutiveFailures = 0
         for (n, pair) in limited.enumerated() {
             if Task.isCancelled { return .cancelled }
+            if shouldSkip(.vision) { reporter?.scanFound(groups: []); return nil }
             if n % 10 == 0, case .stop(let reason) = await governor.checkpoint() { reporter?.scanFound(groups: pending); return .stopped(reason: reason) }
             if claimed.contains(pair.first) || claimed.contains(pair.second) { continue }
             let both = await store.snapshots(ids: [pair.first, pair.second])

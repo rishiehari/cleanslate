@@ -103,6 +103,7 @@ enum AppEnvironment {
     }
 
     static func make() -> Built {
+        MemoryPressureMonitor.shared.start()
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         // Real writes (not argument-domain overrides) so the app can record onboarding as seen.
