@@ -31,7 +31,7 @@ final class ResourceGovernor: ObservableObject {
     /// Feature commits per batch under memory pressure (base 100; `.warning` quarters it).
     @Published private(set) var batchSize = ResourceGovernor.baseBatchSize
     /// Called once when pressure rises to `.warning` or above: the engine drops its caches.
-    var dropCachesRequested: (@Sendable () -> Void)?
+    var dropCachesRequested: (@MainActor () -> Void)?
     /// Local diagnostics; decisions are logged on change only (checkpoint runs per item).
     var diagnostics: DiagnosticsLog?
 

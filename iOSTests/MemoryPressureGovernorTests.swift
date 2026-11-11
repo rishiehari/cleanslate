@@ -8,6 +8,7 @@ import UIKit
 final class MemoryPressureGovernorTests: XCTestCase {
     /// Sendable counter for closures that the compiler cannot prove are isolated.
     final class Counter: @unchecked Sendable { var value = 0 }
+    final class PressureBox: @unchecked Sendable { var value = MemoryPressure.normal }
     private func governor(pressure: MemoryPressure, memoryBytes: Int = 1_000_000_000,
                           maximumPauseSeconds: Int = 600) -> ResourceGovernor {
         ResourceGovernor(inputs: .init(thermalState: { .nominal }, availableMemoryBytes: { memoryBytes },
@@ -70,6 +71,25 @@ final class MemoryPressureGovernorTests: XCTestCase {
         XCTAssertEqual(decision, .proceed(concurrency: 1))
         XCTAssertEqual(sleeps.value, 0, "the legacy <150 MB path still proceeds immediately")
         XCTAssertEqual(governor.batchSize, 100)
+    }
+
+    func testWarningDropCachesReachesTheEngineCaches() async throws {
+        let pressure = PressureBox()
+        let governor = ResourceGovernor(inputs: .init(thermalState: { .nominal }, availableMemoryBytes: { 1_000_000_000 },
+                                                      lowPowerMode: { false }, memoryPressure: { pressure.value }, sleep: { _ in }),
+                                        cores: 8, maximumPauseSeconds: 600)
+        let library = FakePhotoLibrary()
+        let spec = FakePhotoLibrary.RenderSpec(base: 31)
+        library.add("dc-a", content: "a", at: 1_000_000, spec: spec)
+        library.add("dc-b", content: "b", at: 9_000_000, spec: spec)
+        let model = try ScanTestRig.model(library: library, governor: governor)
+        await model.runScan()
+        XCTAssertGreaterThan(model.debugEngineCacheCounts.quality, 0, "the scan filled the quality cache")
+        pressure.value = .warning
+        _ = await governor.checkpoint()
+        XCTAssertEqual(model.debugEngineCacheCounts.prints, 0, "dropCachesRequested cleared the print cache")
+        XCTAssertEqual(model.debugEngineCacheCounts.quality, 0, "dropCachesRequested cleared the quality cache")
+        XCTAssertEqual(governor.batchSize, 25)
     }
 
     func testEngineEffectiveWidthIsOneAtFair() async {

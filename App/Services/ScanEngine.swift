@@ -25,6 +25,8 @@ private struct LRUCache<Key: Hashable, Value> {
         order.append(key)
         while order.count > capacity { storage[order.removeFirst()] = nil }
     }
+    mutating func removeAll() { storage.removeAll(); order.removeAll() }
+    var count: Int { storage.count }
 }
 
 @MainActor
@@ -68,6 +70,15 @@ final class ScanEngine {
     private var printCache = LRUCache<String, VisualPrint>(capacity: 64)
     /// One quality pass per asset per scan, shared by review sets and similar pairs; 2,000 entries by spec.
     private var qualityCache = LRUCache<String, QualitySignals>(capacity: 2_000)
+
+    /// The governor's memory-pressure hook: drop the Vision caches (F03 fix round 2 / M4).
+    func dropCaches() {
+        printCache.removeAll()
+        qualityCache.removeAll()
+    }
+
+    /// Test observability for the cache contents.
+    var debugCacheCounts: (prints: Int, quality: Int) { (printCache.count, qualityCache.count) }
     /// Lock-protected live counters, owned by the view model and shared with the heartbeat/watchdog.
     let counters: ScanCounters
     private var phaseStartedAt: ContinuousClock.Instant?

@@ -83,6 +83,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     }()
     private var scanTask: Task<Void, Never>?
     private var scanStartedAt: ContinuousClock.Instant?
+    /// Test observability for the engine's cache contents.
+    var debugEngineCacheCounts: (prints: Int, quality: Int) { engine.debugCacheCounts }
+
     private var scanStartedAtDate: Date?
     private var continuedProcessingRequested = false
     private var changeSubscription: ChangeSubscription?
@@ -114,6 +117,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         changeSubscription = library.observeChanges { [weak self] in
             self?.libraryDidChange()
         }
+        self.governor.dropCachesRequested = { [weak self] in self?.engine.dropCaches() }
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
     }
 
