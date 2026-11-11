@@ -34,11 +34,8 @@ final class MemoryBudgetTests: XCTestCase {
         XCTAssertGreaterThan(large.groups, 0)
         XCTAssertLessThanOrEqual(small.peakMB, budget, "scope 100 peak footprint")
         XCTAssertLessThanOrEqual(large.peakMB, budget, "scope 10,000 peak footprint")
-        // The flat-footprint target (growth <= 15 MB) is delivered by F03's bounded engine. F01 records the baseline;
-        // F03 deletes this expectation and the assert becomes a plain one.
-        XCTExpectFailure("fixed by F03: footprint is not yet flat from 100 to 10,000 photos", options: .nonStrict()) {
-            XCTAssertLessThanOrEqual(growth, 15, "growth from scope 100 to 10,000 was \(growth) MB")
-        }
+        // F03's bounded engine: flat footprint from 100 to 10,000 photos (plain assert from F03.11).
+        XCTAssertLessThanOrEqual(growth, 15, "growth from scope 100 to 10,000 was \(growth) MB")
     }
 
     /// Stability gate item 8: the same 10,000-photo scan three times in one process must not leak.

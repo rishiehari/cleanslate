@@ -519,6 +519,7 @@ final class ScanEngine {
             let photos = ids.compactMap { found[$0] }.map { Self.markAlbum($0, albums) }
             guard photos.count >= 2 else { continue }
             var quality: [QualitySignals] = []
+            reporter?.scanUpdate { $0.visionReviewSetPhotos += photos.count }
             for photo in photos {
                 counters.update { $0.inFlight = 1 }
                 defer { counters.update { $0.inFlight = 0 } }
@@ -572,6 +573,7 @@ final class ScanEngine {
             defer { counters.update { $0.inFlight = 0 } }
             guard let firstImage = await library.thumbnail(a.id, target: limits.visionSide),
                   let secondImage = await library.thumbnail(b.id, target: limits.visionSide) else { continue }
+            reporter?.scanUpdate { $0.visionPairsCompared += 1 }
             let distance: Double
             do {
                 // Prints are cached per asset (LRU 64) and run under the per-request deadline;

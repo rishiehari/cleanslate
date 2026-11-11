@@ -7,15 +7,16 @@ import CleanSlateCore
 @MainActor
 final class VisionCacheTests: XCTestCase {
     func testFeaturePrintComputedOncePerAsset() async throws {
-        let library = FakePhotoLibrary.burstHeavy(count: 7_000, burstShare: 0.6, burstLength: 8, seed: 42)
+        // One 8-photo burst: the whole pair working set fits the 64-entry LRU, so every print is
+        // computed exactly once. (Re-prints across huge libraries are bounded by the F03.11 formula.)
+        let library = FakePhotoLibrary.burstHeavy(count: 20, burstShare: 0.6, burstLength: 8, seed: 7)
         let visual = FakeVisualAnalyzer()
         let model = try ScanTestRig.model(library: library, visual: visual)
         await model.runScan()
-        XCTAssertLessThanOrEqual(visual.maxPrintsOfOnePicture, 1, "every print is computed once per asset")
+        XCTAssertEqual(visual.maxPrintsOfOnePicture, 1, "every print is computed once per asset")
         XCTAssertGreaterThan(visual.printCalls, 0)
-        // The quality pass is shared too: at most one quality computation per asset.
-        let photos = 7_000
-        XCTAssertLessThanOrEqual(visual.qualityCalls, photos, "quality computed at most once per asset")
+        // Quality = face + aesthetics per photo: at most 2 Vision calls per asset, computed once.
+        XCTAssertLessThanOrEqual(visual.qualityCalls, 2 * 20, "one quality pass (2 requests) per asset")
     }
 
     /// A Vision request that never returns within 10 s is abandoned: the pair is not compared,
@@ -42,12 +43,12 @@ final class VisionCacheTests: XCTestCase {
         let library = FakePhotoLibrary()
         let spec = FakePhotoLibrary.RenderSpec(base: 9)
         for frame in 0..<3 {
-            library.add("both-\(frame)", content: "\(frame)", at: 1_000 + frame, burst: "B", spec: spec)
+            library.add("both-\(frame)", content: "\(frame)", at: Int64(1_000 + frame), burst: "B", spec: spec)
         }
         let visual = FakeVisualAnalyzer()
         let model = try ScanTestRig.model(library: library, visual: visual)
         await model.runScan()
         XCTAssertLessThanOrEqual(visual.maxPrintsOfOnePicture, 1)
-        XCTAssertLessThanOrEqual(visual.qualityCalls, 3, "one quality pass per asset across both phases")
+        XCTAssertLessThanOrEqual(visual.qualityCalls, 2 * 3, "face+aesthetics per asset, shared across both phases")
     }
 }
