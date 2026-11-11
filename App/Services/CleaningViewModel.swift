@@ -26,6 +26,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     @Published private(set) var isScanning = false
     /// Why the scan is paused right now (e.g. "Paused — your iPhone is warm"), if it is.
     @Published private(set) var pauseReason: String?
+    /// True while the F02 heartbeat sees a stall episode (F05 renders the stall message).
+    @Published private(set) var isScanStalled = false
 
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
@@ -266,8 +268,12 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         networkPolicy.resetSessionBudget()          // the iCloud download limit is per scan
         // The heartbeat makes a stall visible in the on-device log (every 2 s) without Xcode attached.
         let heartbeat = ScanHeartbeat(log: diagnostics, counters: scanCounters)
+        heartbeat.onStall = { [weak self] _ in
+            Task { @MainActor in self?.isScanStalled = true }
+        }
         heartbeat.start()
         defer { heartbeat.stop() }
+        isScanStalled = false
         scanStartedAt = .now
         let outcome = await engine.run()
         finishScan(outcome)
@@ -287,6 +293,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     }
 
     func stop() { scanTask?.cancel() }
+
+    /// Ends the current scan stage early and moves on (F03.8). Skipping never marks anything as matched.
+    func skipCurrentStage() { engine.skipCurrentStage() }
 
     func clearIndex() {
         guard !isScanning else { return }

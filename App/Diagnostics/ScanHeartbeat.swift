@@ -35,9 +35,19 @@ final class ScanHeartbeat: @unchecked Sendable {
     private struct Progress { var lastDone = -1; var lastInFlight = -1; var lastChange: Double = 0; var reported = false; var task: Task<Void, Never>? }
     private let progress = OSAllocatedUnfairLock(initialState: Progress())
 
+    /// Called when a stall episode opens (one event per episode), with the seconds since progress.
+    var onStall: (@Sendable (Int) -> Void)?
+
     init(log: DiagnosticsLog, counters: ScanCounters, probes: Probes = Probes(), stallAfter: Int = 6) {
         self.log = log; self.counters = counters; self.probes = probes; self.stallAfter = stallAfter
     }
+
+    /// Seconds since the counters last moved (the engine updates them per asset — that is the beat).
+    var secondsSinceBeat: Double { probes.seconds() - progress.withLock { $0.lastChange } }
+
+    /// True while a stall episode is open: one `stalled` event has been emitted and the clock has
+    /// not re-armed (no counter movement yet). Surfaced to the view model for F05's stall message.
+    var isStalled: Bool { progress.withLock { $0.reported } }
 
     func start(interval: Duration = ScanHeartbeat.interval) {
         stop()
@@ -77,6 +87,9 @@ final class ScanHeartbeat: @unchecked Sendable {
             p.reported = true
             return idle
         }
-        if let stalledFor { log.record(.stalled(phase: s.phase, secondsSinceProgress: stalledFor, pendingRequests: s.inFlight)) }
+        if let stalledFor {
+            log.record(.stalled(phase: s.phase, secondsSinceProgress: stalledFor, pendingRequests: s.inFlight))
+            onStall?(stalledFor)
+        }
     }
 }

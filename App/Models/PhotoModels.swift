@@ -79,6 +79,8 @@ struct ScanStatistics {
     var exactSkippedByLimit = 0          // past the per-scan hashing cap
     var originalsDownloaded = 0          // only with the opt-in iCloud verification
     var bucketsOversized = 0
+    /// Phases the user skipped this scan (F03.8); skipping never marks anything as matched.
+    var stagesSkipped: [ScanPhase] = []
     var lastError: String?
 }
 
