@@ -445,23 +445,29 @@ final class ScanEngine {
         return nil
     }
 
-    /// Runs one Vision request under the deadline; nil means it expired (the abandoned task is
-    /// counted as a Vision failure by the caller, never a match).
-    private func visionCall<T: Sendable>(id: String, kind: DiagRequestKind, _ call: @escaping @MainActor () async throws -> T?) async -> T? {
-        let result = await Deadline.withDeadline(Self.visionTimeout, onExpire: {}) { (once: OneShotResume<T>) in
-            Task { @MainActor in once.resume(try? await call()) }
+    /// Runs one Vision request under the 10 s deadline. Returns nil ONLY when the deadline expired
+    /// (or the scan was cancelled) — that is recorded as .requestTimedOut and must be counted as a
+    /// Vision failure by the caller, never a match. Throws the request's own error unchanged.
+    private func visionCall<T: Sendable>(id: String, kind: DiagRequestKind,
+                                         _ call: @escaping @MainActor () async throws -> T) async throws -> T? {
+        let result = await Deadline.withDeadline(Self.visionTimeout, onExpire: {}) { (once: OneShotResume<Result<T, Error>>) in
+            Task { @MainActor in
+                do { once.resume(.success(try await call())) }
+                catch { once.resume(.failure(error)) }
+            }
         }
-        if result == nil {
+        guard let result else {
             diagnostics?.record(.requestTimedOut(kind: kind, asset: DiagnosticsLog.shared.salted(id), seconds: Int(Self.visionTimeout)))
+            return nil
         }
-        return result
+        return try result.get()
     }
 
     /// Feature print for an asset, computed at most once per scan (LRU 64).
     private func featurePrint(for id: String, image: UIImage) async throws -> VisualPrint? {
         if let cached = printCache.value(for: id) { return cached }
-        let print = await visionCall(id: id, kind: .vision) { try await self.visual.featurePrint(image) }
-        if let print { printCache.insert(print, for: id) }
+        guard let print = try await visionCall(id: id, kind: .vision, { try await self.visual.featurePrint(image) }) else { return nil }
+        printCache.insert(print, for: id)
         return print
     }
 
@@ -474,8 +480,14 @@ final class ScanEngine {
             let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
             var face: Double?, aesthetics: Double?
             if visionAllowed {
-                face = try await visual.faceQuality(image)
-                aesthetics = try await visual.aesthetics(image)
+                // Under the 10 s deadline like every Vision request (edge finding M1): an expired
+                // request throws -> the caller counts a Vision failure (never a match).
+                guard let faceResult = try await visionCall(id: photo.id, kind: .vision,
+                                                            { try await self.visual.faceQuality(image) }) else { throw VisionError.unavailable }
+                face = faceResult
+                guard let aestheticsResult = try await visionCall(id: photo.id, kind: .vision,
+                                                                  { try await self.visual.aesthetics(image) }) else { throw VisionError.unavailable }
+                aesthetics = aestheticsResult
             }
             signals = QualitySignals(id: photo.id, sharpness: sharpness, faceQuality: face, aesthetics: aesthetics, exposure: exposure,
                                      pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))

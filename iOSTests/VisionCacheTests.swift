@@ -19,6 +19,50 @@ final class VisionCacheTests: XCTestCase {
         XCTAssertLessThanOrEqual(visual.qualityCalls, 2 * 20, "one quality pass (2 requests) per asset")
     }
 
+    /// M1: stuck QUALITY requests (face/aesthetics) also honor the deadline: the review-set scan
+    /// completes, the expiry is counted as a Vision failure, and the set is still built.
+    func testStuckVisionQualityExpiresAndCountsFailure() async throws {
+        let library = FakePhotoLibrary()
+        let spec = FakePhotoLibrary.RenderSpec(base: 21)
+        for frame in 0..<3 { library.add("q-\(frame)", content: "\(frame)", at: Int64(1_000 + frame), burst: "QB", spec: spec) }
+        let visual = FakeVisualAnalyzer()
+        visual.stuckTokens = [spec.token]
+        let model = try ScanTestRig.model(library: library, visual: visual)
+        let began = Date()
+        await model.runScan()
+        let elapsed = Date().timeIntervalSince(began)
+        XCTAssertLessThan(elapsed, 13, "the quality deadline abandoned the stuck request instead of waiting forever (\(String(format: "%.1f", elapsed))s)")
+        XCTAssertGreaterThan(model.statistics.visionFailures, 0, "the abandoned quality request is counted as a Vision failure")
+        XCTAssertGreaterThan(model.statistics.reviewSetsFound, 0, "the review set is still built with default signals")
+    }
+
+    /// M1: stop() during a stuck quality request finishes promptly (deadline cancel path).
+    func testStopDuringStuckVisionQualityFinishesWithinTwoSeconds() async throws {
+        let library = FakePhotoLibrary()
+        let spec = FakePhotoLibrary.RenderSpec(base: 22)
+        for frame in 0..<3 { library.add("s-\(frame)", content: "\(frame)", at: Int64(1_000 + frame), burst: "SB", spec: spec) }
+        let visual = FakeVisualAnalyzer()
+        visual.stuckTokens = [spec.token]
+        let model = try ScanTestRig.model(library: library, visual: visual)
+        model.scan()
+        let stuck = await waitUntil(timeout: 10) { model.scanCounters.snapshot.phase == .vision }
+        XCTAssertTrue(stuck, "the scan entered the vision phase (stuck quality request in flight)")
+        let began = Date()
+        model.stop()
+        let finished = await waitUntil(timeout: 2) { !model.isScanning }
+        XCTAssertTrue(finished, "stop() during a stuck quality request finished in \(String(format: "%.1f", Date().timeIntervalSince(began)))s")
+        visual.releaseStuckVision()
+    }
+
+    private func waitUntil(timeout: TimeInterval, poll: Duration = .milliseconds(50), _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: poll)
+        }
+        return condition()
+    }
+
     /// A Vision request that never returns within 10 s is abandoned: the pair is not compared,
     /// the failure is counted, and the scan still completes.
     func testStuckVisionRequestIsAbandonedAndCounted() async throws {
