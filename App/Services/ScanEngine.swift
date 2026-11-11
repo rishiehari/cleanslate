@@ -7,6 +7,26 @@ import CleanSlateCore
 /// A decoded thumbnail is immutable once created, so handing it to a background task is safe.
 private struct ImageBox: @unchecked Sendable { let image: UIImage }
 
+private enum VisionError: Error { case unavailable }
+
+/// Small LRU cache (newest at the end). The engine is main-actor, so no locking is needed.
+private struct LRUCache<Key: Hashable, Value> {
+    private var storage: [Key: Value] = [:]
+    private var order: [Key] = []            // oldest first
+    let capacity: Int
+    init(capacity: Int) { self.capacity = max(1, capacity) }
+    func value(for key: Key) -> Value? {
+        guard storage[key] != nil else { return nil }
+        return storage[key]
+    }
+    mutating func insert(_ value: Value, for key: Key) {
+        storage[key] = value
+        order.removeAll { $0 == key }
+        order.append(key)
+        while order.count > capacity { storage[order.removeFirst()] = nil }
+    }
+}
+
 @MainActor
 protocol ScanReporting: AnyObject {
     func scanDidEnter(_ phase: ScanPhase)
@@ -42,6 +62,12 @@ final class ScanEngine {
     weak var reporter: ScanReporting?
     /// Local diagnostics (nil = off). Counts, durations and phase names only; never photo information.
     var diagnostics: DiagnosticsLog?
+    /// Per-request Vision deadline (docs/features/F03): an abandoned request is a Vision failure, never a match.
+    nonisolated static let visionTimeout: TimeInterval = 10
+    /// One feature print per asset per scan; 64 entries by spec.
+    private var printCache = LRUCache<String, VisualPrint>(capacity: 64)
+    /// One quality pass per asset per scan, shared by review sets and similar pairs; 2,000 entries by spec.
+    private var qualityCache = LRUCache<String, QualitySignals>(capacity: 2_000)
     /// Lock-protected live counters, owned by the view model and shared with the heartbeat/watchdog.
     let counters: ScanCounters
     private var phaseStartedAt: ContinuousClock.Instant?
@@ -388,6 +414,47 @@ final class ScanEngine {
         return nil
     }
 
+    /// Runs one Vision request under the deadline; nil means it expired (the abandoned task is
+    /// counted as a Vision failure by the caller, never a match).
+    private func visionCall<T: Sendable>(id: String, kind: DiagRequestKind, _ call: @escaping @MainActor () async throws -> T?) async -> T? {
+        let result = await Deadline.withDeadline(Self.visionTimeout, onExpire: {}) { (once: OneShotResume<T>) in
+            Task { @MainActor in once.resume(try? await call()) }
+        }
+        if result == nil {
+            diagnostics?.record(.requestTimedOut(kind: kind, asset: DiagnosticsLog.shared.salted(id), seconds: Int(Self.visionTimeout)))
+        }
+        return result
+    }
+
+    /// Feature print for an asset, computed at most once per scan (LRU 64).
+    private func featurePrint(for id: String, image: UIImage) async throws -> VisualPrint? {
+        if let cached = printCache.value(for: id) { return cached }
+        let print = await visionCall(id: id, kind: .vision) { try await self.visual.featurePrint(image) }
+        if let print { printCache.insert(print, for: id) }
+        return print
+    }
+
+    /// Quality signals for an asset, computed at most once per scan (LRU 2,000), at `limits.visionSide`.
+    /// Throws when a Vision call fails (the caller decides whether that disables Vision for the rest of the scan).
+    private func quality(for photo: PhotoSnapshot, image: UIImage?, visionAllowed: Bool) async throws -> QualitySignals {
+        if let cached = qualityCache.value(for: photo.id) { return cached }
+        let signals: QualitySignals
+        if let image {
+            let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
+            var face: Double?, aesthetics: Double?
+            if visionAllowed {
+                face = try await visual.faceQuality(image)
+                aesthetics = try await visual.aesthetics(image)
+            }
+            signals = QualitySignals(id: photo.id, sharpness: sharpness, faceQuality: face, aesthetics: aesthetics, exposure: exposure,
+                                     pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))
+        } else {
+            signals = QualitySignals(id: photo.id, pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))
+        }
+        qualityCache.insert(signals, for: photo.id)
+        return signals
+    }
+
     // MARK: 6a. Bursts and quick runs (review sets: several shots, you choose what to keep)
 
     private func buildReviewSets(claimed: inout Set<String>) async -> Outcome? {
@@ -422,17 +489,14 @@ final class ScanEngine {
             for photo in photos {
                 counters.update { $0.inFlight = 1 }
                 defer { counters.update { $0.inFlight = 0 } }
-                guard let image = await library.thumbnail(photo.id, target: limits.visionSide) else {
-                    quality.append(QualitySignals(id: photo.id, pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite))); continue
+                let image = await library.thumbnail(photo.id, target: limits.visionSide)
+                do {
+                    quality.append(try await self.quality(for: photo, image: image, visionAllowed: visionUsable))
+                } catch {
+                    visionUsable = false
+                    reporter?.scanUpdate { $0.visionFailures += 1; $0.visionUnavailable = true }
+                    quality.append(QualitySignals(id: photo.id, pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite)))
                 }
-                let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
-                var face: Double?, aesthetics: Double?
-                if visionUsable {
-                    do { face = try await visual.faceQuality(image); aesthetics = try await visual.aesthetics(image) }
-                    catch { visionUsable = false; reporter?.scanUpdate { $0.visionFailures += 1; $0.visionUnavailable = true } }
-                }
-                quality.append(QualitySignals(id: photo.id, sharpness: sharpness, faceQuality: face, aesthetics: aesthetics, exposure: exposure,
-                                              pixelCount: photo.pixelCount, isFavorite: photo.record.flags.contains(.favorite)))
             }
             let bestID = KeeperRanker.sorted(quality).first?.id ?? photos[0].id
             guard let keeper = photos.first(where: { $0.id == bestID }) else { continue }
@@ -476,8 +540,10 @@ final class ScanEngine {
                   let secondImage = await library.thumbnail(b.id, target: limits.visionSide) else { continue }
             let distance: Double
             do {
-                let firstPrint = try await visual.featurePrint(firstImage)
-                let secondPrint = try await visual.featurePrint(secondImage)
+                // Prints are cached per asset (LRU 64) and run under the per-request deadline;
+                // an abandoned or failed request is a Vision failure, never a match.
+                guard let firstPrint = try await featurePrint(for: a.id, image: firstImage),
+                      let secondPrint = try await featurePrint(for: b.id, image: secondImage) else { throw VisionError.unavailable }
                 distance = try firstPrint.distanceTo(secondPrint)
             } catch {
                 reporter?.scanUpdate { $0.visionFailures += 1 }
@@ -493,14 +559,10 @@ final class ScanEngine {
             }
             consecutiveFailures = 0
             guard distance < 0.32 else { continue }
-            let (sharpA, exposeA) = VisualFeatures.sharpnessAndExposure(firstImage)
-            let (sharpB, exposeB) = VisualFeatures.sharpnessAndExposure(secondImage)
-            let qa = QualitySignals(id: a.id, sharpness: sharpA, faceQuality: (try? await visual.faceQuality(firstImage)) ?? nil,
-                                    aesthetics: try? await visual.aesthetics(firstImage), exposure: exposeA,
-                                    pixelCount: a.pixelCount, isFavorite: a.record.flags.contains(.favorite))
-            let qb = QualitySignals(id: b.id, sharpness: sharpB, faceQuality: (try? await visual.faceQuality(secondImage)) ?? nil,
-                                    aesthetics: try? await visual.aesthetics(secondImage), exposure: exposeB,
-                                    pixelCount: b.pixelCount, isFavorite: b.record.flags.contains(.favorite))
+            let qa = (try? await quality(for: a, image: firstImage, visionAllowed: true))
+                ?? QualitySignals(id: a.id, pixelCount: a.pixelCount, isFavorite: a.record.flags.contains(.favorite))
+            let qb = (try? await quality(for: b, image: secondImage, visionAllowed: true))
+                ?? QualitySignals(id: b.id, pixelCount: b.pixelCount, isFavorite: b.record.flags.contains(.favorite))
             let bestID = KeeperRanker.sorted([qa, qb]).first?.id ?? a.id
             let keeper = bestID == a.id ? a : b
             let candidate = bestID == a.id ? b : a
