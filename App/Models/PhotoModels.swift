@@ -56,7 +56,7 @@ enum ScanPhase: String {
     case cancelled = "Scan paused"
 }
 
-struct ScanStatistics {
+struct ScanStatistics: Equatable {
     var photosEnumerated = 0
     var thumbnailsAnalyzed = 0
     var cloudOnlyOrUnavailable = 0
@@ -81,6 +81,10 @@ struct ScanStatistics {
     var bucketsOversized = 0
     /// Phases the user skipped this scan (F03.8); skipping never marks anything as matched.
     var stagesSkipped: [ScanPhase] = []
+    /// Photos that got a (cached) quality pass in review sets — the F03.11 Vision bound counts these.
+    var visionReviewSetPhotos = 0
+    /// Candidate pairs that reached the Vision distance computation — the F03.11 bound counts 2 per pair.
+    var visionPairsCompared = 0
     var lastError: String?
 }
 

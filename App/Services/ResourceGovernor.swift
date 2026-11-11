@@ -64,7 +64,7 @@ final class ResourceGovernor: ObservableObject {
         var waited = 0
         var memoryPauseAnnounced = false
         while true {
-            if Task.isCancelled { pauseReason = nil; return .proceed(concurrency: 1) }
+            if Task.isCancelled { setPauseReason(nil); return .proceed(concurrency: 1) }
             isLowPower = inputs.lowPowerMode()
             let pressure = inputs.memoryPressure()
             batchSize = pressure >= .warning ? max(1, Self.baseBatchSize / 4) : Self.baseBatchSize
@@ -76,11 +76,11 @@ final class ResourceGovernor: ObservableObject {
             let credibleAvailable = Int(inputs.availableMemoryBytes())
             let lowMemory = credibleAvailable >= Self.minimumCredibleBytes && credibleAvailable < Self.criticalMemoryBytes
             if pressure == .critical || lowMemory {
-                pauseReason = "Paused to free memory. Your progress is saved."
+                setPauseReason("Paused to free memory. Your progress is saved.")
                 logDecision(.pause, .lowMemory)
                 if !memoryPauseAnnounced { memoryPauseAnnounced = true }
                 if waited >= Self.memoryPauseSeconds {
-                    pauseReason = nil
+                    setPauseReason(nil)
                     logDecision(.stop, .lowMemory)
                     return .stop(reason: "Paused to free memory. Your progress is saved.")
                 }
@@ -90,37 +90,37 @@ final class ResourceGovernor: ObservableObject {
             memoryPauseAnnounced = false
             switch inputs.thermalState() {
             case .critical:
-                pauseReason = nil
+                setPauseReason(nil)
                 logDecision(.stop, .thermal)
                 return .stop(reason: "Stopped because your iPhone is very warm. Your progress is saved. Scan again when it has cooled down.")
             case .serious:
-                pauseReason = "Paused — your iPhone is warm"
+                setPauseReason("Paused — your iPhone is warm")
                 logDecision(.pause, .thermal)
                 if waited >= maximumPauseSeconds {
-                    pauseReason = nil
+                    setPauseReason(nil)
                     logDecision(.stop, .thermal)
                     return .stop(reason: "Stopped because your iPhone stayed warm. Your progress is saved. Scan again later.")
                 }
                 await inputs.sleep(.seconds(2)); waited += 2
                 continue
             case .fair:
-                pauseReason = nil
+                setPauseReason(nil)
                 logDecision(.shrink, .thermal)
                 return .proceed(concurrency: min(2, baseConcurrency))
             default:
                 break
             }
             if pressure >= .warning {
-                pauseReason = nil
+                setPauseReason(nil)
                 logDecision(.shrink, .lowMemory)
                 return .proceed(concurrency: 1)
             }
             if inputs.availableMemoryBytes() < Self.lowMemoryBytes {
-                pauseReason = nil
+                setPauseReason(nil)
                 logDecision(.shrink, .lowMemory)
                 return .proceed(concurrency: 1)
             }
-            pauseReason = nil
+            setPauseReason(nil)
             if isLowPower, baseConcurrency > 2 { logDecision(.shrink, .lowPower) }
             return .proceed(concurrency: isLowPower ? min(2, baseConcurrency) : baseConcurrency)
         }
@@ -128,6 +128,11 @@ final class ResourceGovernor: ObservableObject {
 
     private var lastLoggedDecision: (decision: DiagGovernorDecision, reason: DiagGovernorReason)?
     private var cachesDroppedForEpisode = false
+    /// @Published fires on every assignment; checkpoints run per item, so only real changes publish.
+    private func setPauseReason(_ value: String?) {
+        if pauseReason != value { pauseReason = value }
+    }
+
     /// One event per decision CHANGE: checkpoint runs per item, so unchanged decisions stay silent.
     private func logDecision(_ decision: DiagGovernorDecision, _ reason: DiagGovernorReason) {
         if let last = lastLoggedDecision, last.decision == decision, last.reason == reason { return }

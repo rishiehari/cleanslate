@@ -88,7 +88,7 @@ final class ScanInProgressMarkerTests: XCTestCase {
         seed(20)
         let governor = ResourceGovernor(inputs: .init(thermalState: { .critical },
                                                       availableMemoryBytes: { .max }, lowPowerMode: { false },
-                                                      sleep: { _ in }), maximumPauseSeconds: 1)
+                                                      memoryPressure: { .normal }, sleep: { _ in }), maximumPauseSeconds: 1)
         let model = makeModel(governor: governor)
         await model.runScan()
         XCTAssertEqual(model.phase, .cancelled)

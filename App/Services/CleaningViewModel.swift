@@ -3,19 +3,53 @@ import Photos
 import Combine
 import CleanSlateCore
 
+/// What the progress UI reads (F03.9): published at most twice per second from the 0.5 s tick.
+struct ScanProgressSnapshot: Equatable {
+    var phase: ScanPhase = .idle
+    var done = 0
+    var total = 0
+    var foundGroups = 0
+    var foundBytesVerified: Int64 = 0
+    var pauseReason: String?
+    var isStalled = false
+    var startedAt: Date?
+}
+
+/// Engine -> view-model write buffer. The engine's reporting calls are frequent; publishing is
+/// coalesced by the 0.5 s tick. Lock-protected like ScanCounters.
+private final class ScanProgressBuffer: @unchecked Sendable {
+    struct State {
+        var phase: ScanPhase = .idle
+        var progress: Double = 0
+        var statistics = ScanStatistics()
+        var pendingGroups: [PhotoReviewGroup] = []
+        var standalone: [StandaloneItem]?
+        var albumMembers: Set<String> = []
+    }
+    private let lock = NSLock()
+    private var state = State()
+    func withLock<T>(_ body: (inout State) -> T) -> T { lock.lock(); defer { lock.unlock() }; return body(&state) }
+}
+
 @MainActor
 final class CleaningViewModel: ObservableObject, ScanReporting {
     @Published private(set) var authorization: PHAuthorizationStatus
     @Published private(set) var phase: ScanPhase = .idle
     @Published private(set) var progress: Double = 0
-    @Published private(set) var groups: [PhotoReviewGroup] = [] { didSet { recomputeStandalone(); rebuildMembership() } }
+    @Published private(set) var groups: [PhotoReviewGroup] = []
     /// Groups being rechecked after a library change. Their Approve button is disabled meanwhile.
     @Published private(set) var recheckingGroupIDs: Set<String> = []
     private var membership = GroupMembershipIndex()
+    /// Members of exact groups, maintained incrementally; standalone items hide these.
+    private var exactMemberIDs: Set<String> = []
+    /// DEBUG/test observability: how often the standalone cache was rebuilt.
+    private(set) var standaloneRecomputeCount = 0
+    private let progressBuffer = ScanProgressBuffer()
+    @Published private(set) var progressSnapshot = ScanProgressSnapshot()
     private var isProcessingChanges = false
     private var changesDirty = false
     private var changesArrivedDuringScan = false
-    @Published private(set) var standaloneItems: [StandaloneItem] = [] { didSet { recomputeStandalone() } }
+    @Published private(set) var standaloneItems: [StandaloneItem] = []
     /// Cached per category: the lists are read many times per screen update.
     private(set) var standaloneCache: [ScanCategory: [StandaloneItem]] = [:]
     private var albumMembers: Set<String> = []
@@ -49,6 +83,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     }()
     private var scanTask: Task<Void, Never>?
     private var scanStartedAt: ContinuousClock.Instant?
+    private var scanStartedAtDate: Date?
+    private var continuedProcessingRequested = false
     private var changeSubscription: ChangeSubscription?
     /// Describes faces and text for the "different people / different text" warnings (replaced by a fake in UI tests).
     lazy var analyzer: PhotoAnalyzer = VisionPhotoAnalyzer(library: library)
@@ -85,8 +121,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         let newStatus = library.authorization
         if newStatus != authorization {
             scanTask?.cancel()
-            groups = []
-            standaloneItems = []
+            resetResults()
             statusMessage = "Photos access changed. Please scan again."
         }
         authorization = newStatus
@@ -131,13 +166,61 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     }
 
     private func clearResultsAfterUnknownChange() {
-        groups = []
-        standaloneItems = []
+        resetResults()
         statusMessage = "The Photos library changed. Previous results were cleared. Scan again."
     }
 
-    private func rebuildMembership() {
-        membership = GroupMembershipIndex(groups: Dictionary(uniqueKeysWithValues: groups.map { ($0.id, Set($0.all.map(\.id))) }))
+    /// Clears groups, standalone items and their indexes (internal for tests; everything routes here).
+    func resetResults() {
+        groups = []
+        standaloneItems = []
+        membership = GroupMembershipIndex()
+        exactMemberIDs = []
+        recomputeStandalone()
+    }
+
+    /// The single entry point for group mutations (F03.9): updates the array in ONE write (the
+    /// re-render bound counts objectWillChange), the membership index incrementally, and (only when
+    /// exact membership moved) the standalone cache. Replaces the old didSet.
+    func didChangeGroups(added: [PhotoReviewGroup] = [], removed: [String] = []) {
+        guard !added.isEmpty || !removed.isEmpty else { return }
+        var exactTouched = !removed.isEmpty
+        let removedIDs = Set(removed)
+        var appended: [PhotoReviewGroup] = []
+        var replacements: [(index: Int, group: PhotoReviewGroup)] = []
+        for group in added {
+            if let index = groups.firstIndex(where: { $0.id == group.id }) {
+                if groups[index].kind == .exact || group.kind == .exact { exactTouched = true }
+                replacements.append((index, group))
+                membership.upsert(groupID: group.id, members: Set(group.all.map(\.id)))
+            } else {
+                if group.kind == .exact { exactTouched = true }
+                appended.append(group)
+                membership.upsert(groupID: group.id, members: Set(group.all.map(\.id)))
+            }
+        }
+        if !removedIDs.isEmpty {
+            groups.removeAll { removedIDs.contains($0.id) }
+        }
+        if !appended.isEmpty {
+            groups.append(contentsOf: appended)          // ONE published write per flush
+        }
+        for replacement in replacements {
+            groups[replacement.index] = replacement.group
+        }
+        guard exactTouched else { return }
+        let updated = Set(groups.filter { $0.kind == .exact }.flatMap { $0.all.map(\.id) })
+        if updated != exactMemberIDs {
+            exactMemberIDs = updated
+            recomputeStandalone()
+        }
+    }
+
+    /// The single entry point for standalone-item replacements.
+    private func didChangeStandalone(_ items: [StandaloneItem]) {
+        guard items != standaloneItems else { return }
+        standaloneItems = items
+        recomputeStandalone()
     }
 
     private func recheckGroups(affectedBy touched: Set<String>) async {
@@ -150,8 +233,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             guard let group = groups.first(where: { $0.id == id }) else { continue }
             switch await rechecker.recheck(group) {
             case .unchanged: break
-            case .updated(let updated): if let index = groups.firstIndex(where: { $0.id == id }) { groups[index] = updated }
-            case .dissolved: groups.removeAll { $0.id == id }
+            case .updated(let updated): didChangeGroups(added: [updated])
+            case .dissolved: didChangeGroups(removed: [id])
             }
         }
     }
@@ -165,7 +248,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             let sameFile = fresh.record.revision == item.snapshot.record.revision
             refreshed.append(StandaloneItem(snapshot: fresh, verifiedBytes: sameFile ? item.verifiedBytes : nil))
         }
-        standaloneItems = refreshed
+        didChangeStandalone(refreshed)
     }
 
     /// Re-judges approved entries. `touched == nil` checks everything (at launch).
@@ -197,11 +280,11 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     func standalone(in category: ScanCategory) -> [StandaloneItem] { standaloneCache[category] ?? [] }
 
     private func recomputeStandalone(trayEntries: [StandaloneTrayEntry]? = nil) {
+        standaloneRecomputeCount += 1
         let inTray = Set((trayEntries ?? tray.standaloneEntries).flatMap { $0.items.map(\.id) })
         // Members of an exact-copy group are handled there (one is always kept). Offering them here
         // would let someone delete every copy of the same photo or video.
-        let inExactGroup = Set(groups.filter { $0.kind == .exact }.flatMap { $0.all.map(\.id) })
-        let hidden = inTray.union(inExactGroup).union(albumMembers)
+        let hidden = inTray.union(exactMemberIDs).union(albumMembers)
         var cache: [ScanCategory: [StandaloneItem]] = [:]
         for category in ScanCategory.allCases {
             guard let kind = category.standaloneKind else { continue }
@@ -214,6 +297,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     func measureSize(of item: StandaloneItem) async {
         guard item.verifiedBytes == nil, let bytes = await library.verifiedSize(id: item.id) else { return }
         if let index = standaloneItems.firstIndex(where: { $0.id == item.id }) { standaloneItems[index].verifiedBytes = bytes }
+        recomputeStandalone()      // byte counts feed the category lists
     }
 
     func verifiedBytes(in category: ScanCategory) -> Int64 {
@@ -238,8 +322,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     #if DEBUG
     /// UI tests and screenshots only: show prepared groups without running a scan.
     func seedGroupsForUITesting(_ seeded: [PhotoReviewGroup], standalone: [StandaloneItem] = []) {
-        groups = seeded
-        standaloneItems = standalone
+        resetResults()
+        didChangeGroups(added: seeded)
+        didChangeStandalone(standalone)
         phase = .finished
         progress = 1
     }
@@ -264,7 +349,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     func runScan() async {
         guard !isScanning, authorization == .authorized || authorization == .limited else { return }
         isScanning = true
-        statistics = ScanStatistics(); statusMessage = nil; groups = []; standaloneItems = []; progress = 0
+        statistics = ScanStatistics(); statusMessage = nil; progress = 0
+        resetResults()
+        progressBuffer.withLock { $0 = ScanProgressBuffer.State() }
         networkPolicy.resetSessionBudget()          // the iCloud download limit is per scan
         // The heartbeat makes a stall visible in the on-device log (every 2 s) without Xcode attached.
         let heartbeat = ScanHeartbeat(log: diagnostics, counters: scanCounters)
@@ -273,10 +360,23 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         }
         heartbeat.start()
         defer { heartbeat.stop() }
-        isScanStalled = false
+        if isScanStalled { isScanStalled = false }
         scanStartedAt = .now
+        scanStartedAtDate = Date()
+        continuedProcessingRequested = false
+        let tick = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { break }
+                self?.publishProgressSnapshot()
+            }
+        }
+        defer { tick.cancel() }
         let outcome = await engine.run()
+        publishProgressSnapshot()                    // final synchronous flush before finishScan reads statistics
         finishScan(outcome)
+        progressBuffer.withLock { s in s.phase = self.phase; s.progress = self.progress }   // finishScan may advance them
+        publishProgressSnapshot()                    // snapshot mirrors the finished phase for the UI
         isScanning = false
         if changesArrivedDuringScan {              // the library moved while we were scanning: recheck what that touched
             changesArrivedDuringScan = false
@@ -301,8 +401,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         guard !isScanning else { return }
         let store = self.store
         Task { try? await store.reset() }
-        groups = []
-        standaloneItems = []
+        resetResults()
         statistics = ScanStatistics()
         statusMessage = "Saved scan data was cleared. Your photos weren't touched."
     }
@@ -315,8 +414,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         let readyGroupIDs = Set(tray.readyEntries.map(\.id))
         guard let receipt = await tray.deleteAll(using: coordinator) else { return false }
         let leftInTray = Set(tray.entries.map(\.id))
-        groups.removeAll { readyGroupIDs.contains($0.id) && !leftInTray.contains($0.id) }
-        standaloneItems.removeAll { library.snapshot(id: $0.id, inspectAlbums: false) == nil }
+        didChangeGroups(removed: readyGroupIDs.subtracting(leftInTray).sorted())
+        didChangeStandalone(standaloneItems.filter { library.snapshot(id: $0.id, inspectAlbums: false) != nil })
         // Keep the index honest about what is gone (only assets that really disappeared).
         let removed = candidateAssets.filter { library.snapshot(id: $0, inspectAlbums: false) == nil }
         if !removed.isEmpty { try? await store.markDeleted(Array(removed)) }
@@ -351,18 +450,49 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         }
     }
 
-    // MARK: ScanReporting
+    // MARK: ScanReporting (writes the buffer; the 0.5 s tick publishes)
 
-    func scanDidEnter(_ phase: ScanPhase) { self.phase = phase }
-    func scanProgress(_ value: Double) { progress = max(progress, min(1, value)) }
-    func scanUpdate(_ change: (inout ScanStatistics) -> Void) { change(&statistics) }
+    func scanDidEnter(_ phase: ScanPhase) { progressBuffer.withLock { $0.phase = phase } }
+    func scanProgress(_ value: Double) { progressBuffer.withLock { s in s.progress = max(s.progress, min(1, value)) } }
+    func scanUpdate(_ change: (inout ScanStatistics) -> Void) { progressBuffer.withLock { change(&$0.statistics) } }
     func scanFound(groups found: [PhotoReviewGroup]) {
         guard !found.isEmpty else { return }
-        let existing = Set(groups.map(\.id))
-        groups += found.filter { !existing.contains($0.id) }      // appear while the scan runs (U12)
+        progressBuffer.withLock { $0.pendingGroups.append(contentsOf: found) }   // flushed on the tick (U12)
     }
     func scanFoundStandalone(_ items: [StandaloneItem], albumMembers: Set<String>) {
-        self.albumMembers = albumMembers
-        standaloneItems = items
+        progressBuffer.withLock { s in
+            s.standalone = items
+            s.albumMembers = albumMembers
+        }
+    }
+
+    /// Applies the buffer at <= 2 Hz: publishes phase/progress/statistics, flushes pending groups
+    /// (incremental membership + exact-member bookkeeping), and refreshes the snapshot struct.
+    private func publishProgressSnapshot() {
+        let buffered = progressBuffer.withLock { state -> (phase: ScanPhase, progress: Double, statistics: ScanStatistics, groups: [PhotoReviewGroup], standalone: [StandaloneItem]?, albums: Set<String>) in
+            let out = (state.phase, state.progress, state.statistics, state.pendingGroups, state.standalone, state.albumMembers)
+            state.pendingGroups = []
+            state.standalone = nil
+            return out
+        }
+        if phase != buffered.phase { phase = buffered.phase }
+        if progress != buffered.progress { progress = buffered.progress }
+        statistics = buffered.statistics
+        // A scan of more than 500 items may continue after the user leaves the app (F03.10).
+        if statistics.photosEnumerated > 500, !continuedProcessingRequested {
+            continuedProcessingRequested = true
+            BackgroundScanning.requestContinuedProcessing()
+        }
+        didChangeGroups(added: buffered.groups)
+        if let standalone = buffered.standalone {
+            albumMembers = buffered.albums
+            didChangeStandalone(standalone)
+        }
+        let counters = scanCounters.snapshot
+        let snapshot = ScanProgressSnapshot(phase: phase, done: counters.done, total: counters.total,
+                                            foundGroups: groups.count, foundBytesVerified: potentialVerifiedBytes,
+                                            pauseReason: pauseReason, isStalled: isScanStalled,
+                                            startedAt: scanStartedAtDate)
+        if snapshot != progressSnapshot { progressSnapshot = snapshot }
     }
 }
