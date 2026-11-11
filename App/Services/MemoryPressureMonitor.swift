@@ -43,9 +43,9 @@ final class MemoryPressureMonitor: @unchecked Sendable {
         defer { lock.unlock() }
         guard source == nil else { return }
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
-        source.setEventHandler { [weak self] in
-            let mask = source.mask
-            self?.raise(mask.contains(.critical) ? .critical : .warning)
+        source.setEventHandler { [weak self, weak source] in
+            guard let source else { return }
+            self?.raise(source.mask.contains(.critical) ? .critical : .warning)
         }
         source.resume()
         self.source = source

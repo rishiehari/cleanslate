@@ -279,10 +279,11 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
         let resourceType = "\(resource.type.rawValue):\(resource.uniformTypeIdentifier)"
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = allowNetwork
-        let watchdog = InactivityWatchdog()
+        let box = DigestBox()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ResourceDigest, Error>) in
                 let once = OneShotThrow(continuation)
+                let watchdog = InactivityWatchdog()
                 let timer = DispatchSource.makeTimerSource(queue: Self.resourceQueue)
                 timer.schedule(deadline: .now() + 1, repeating: 1)
                 timer.setEventHandler {
@@ -307,11 +308,18 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                         once.resume(returning: result)
                     })
                 watchdog.setRequestID(requestID)
+                box.fill(once: once, watchdog: watchdog)
+                // Cancellation may have arrived before the request even started.
+                if Task.isCancelled {
+                    watchdog.cancelRequest()
+                    once.resume(throwing: CancellationError())
+                }
             }
         } onCancel: {
-            // The completion handler fires after cancelDataRequest and resumes via `once`;
-            // if it never does, the inactivity watchdog above still throws .timedOut.
-            watchdog.cancelRequest()
+            // Prompt: cancel the request AND resume now, so a completion handler that never
+            // fires cannot hold the scan until the 20 s inactivity watchdog gives up.
+            box.watchdog?.cancelRequest()
+            box.resume?.resume(throwing: CancellationError())
         }
     }
 }
@@ -339,6 +347,18 @@ private final class RequestIDBox: @unchecked Sendable {
     private var raw: PHImageRequestID?
     var requestID: PHImageRequestID? { lock.lock(); defer { lock.unlock() }; return raw }
     func set(_ id: PHImageRequestID) { lock.lock(); raw = id; lock.unlock() }
+}
+
+/// Shares the live digest request between the operation and the cancellation handler.
+private final class DigestBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var once: OneShotThrow<ResourceDigest>?
+    private var inactivity: InactivityWatchdog?
+    func fill(once: OneShotThrow<ResourceDigest>, watchdog: InactivityWatchdog) {
+        lock.lock(); self.once = once; self.inactivity = watchdog; lock.unlock()
+    }
+    var resume: OneShotThrow<ResourceDigest>? { lock.lock(); defer { lock.unlock() }; return once }
+    var watchdog: InactivityWatchdog? { lock.lock(); defer { lock.unlock() }; return inactivity }
 }
 
 /// Digest inactivity watchdog: the deadline resets on every data chunk; on expiry the request

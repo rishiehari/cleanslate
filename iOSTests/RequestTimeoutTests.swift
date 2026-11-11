@@ -43,6 +43,26 @@ final class RequestTimeoutTests: XCTestCase {
         XCTAssertNil(item?.verifiedBytes, "a timed-out size is unknown, never guessed")
     }
 
+    /// Cancel during a stuck digest must unwind promptly (the fake honors cancellation; the real
+    /// client now resumes the continuation in onCancel instead of waiting out the 20 s watchdog).
+    func testCancelDuringStuckDigestFinishesWithinTwoSeconds() async throws {
+        let library = FakePhotoLibrary()
+        library.add("keep", content: "same-bytes", bytes: 1_000, at: 100)
+        library.add("copy", content: "same-bytes", bytes: 1_000, at: 100)
+        library.stuckDigestIDs = ["copy"]
+        library.digestTimeout = 30
+        let model = try ScanTestRig.model(library: library)
+        model.scan()
+        let reached = await waitUntil(timeout: 30) { model.scanCounters.snapshot.phase == .fullResources }
+        XCTAssertTrue(reached, "the scan reached the digest phase")
+        let began = Date()
+        model.stop()
+        let finished = await waitUntil(timeout: 2) { !model.isScanning }
+        XCTAssertTrue(finished, "Cancel during a stuck digest finished in \(String(format: "%.1f", Date().timeIntervalSince(began)))s")
+        XCTAssertFalse(model.isScanStalled)
+        library.releaseStuckDigests()
+    }
+
     /// Vision that throws (e.g. its own deadline) is a failure count, not silently a match.
     func testFailingVisionOnAPairIsCountedNotMatched() async throws {
         let library = FakePhotoLibrary()

@@ -38,11 +38,17 @@ final class ResourceGovernor: ObservableObject {
     private let inputs: Inputs
     private let cores: Int
     static let lowMemoryBytes = 150 * 1024 * 1024
-    /// Below this, the scan pauses to free memory regardless of tier (F03).
+    /// Below this, the scan pauses to free memory regardless of tier (F03). Real devices only:
+    /// the simulator's `os_proc_available_memory()` is unreliable, so the floor never triggers
+    /// there (the memory-Pressure input still works on every platform).
     static let criticalMemoryBytes = 100 * 1024 * 1024
-    /// `os_proc_available_memory()` is known to report 0 on the simulator; a value this small
-    /// is physically implausible for a running process, so the memory floor is ignored there.
-    static let minimumCredibleBytes = 20 * 1024 * 1024
+    static func isCriticallyLowMemory(_ bytes: Int) -> Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return bytes < criticalMemoryBytes
+        #endif
+    }
     /// How long memory pressure may pause the scan before it stops with progress saved.
     static let memoryPauseSeconds = 60
     static let baseBatchSize = 100
@@ -62,7 +68,6 @@ final class ResourceGovernor: ObservableObject {
     /// < 100 MB available) pauses up to 60 s, then stops with progress saved.
     func checkpoint() async -> Decision {
         var waited = 0
-        var memoryPauseAnnounced = false
         while true {
             if Task.isCancelled { setPauseReason(nil); return .proceed(concurrency: 1) }
             isLowPower = inputs.lowPowerMode()
@@ -73,12 +78,10 @@ final class ResourceGovernor: ObservableObject {
             } else {
                 cachesDroppedForEpisode = false
             }
-            let credibleAvailable = Int(inputs.availableMemoryBytes())
-            let lowMemory = credibleAvailable >= Self.minimumCredibleBytes && credibleAvailable < Self.criticalMemoryBytes
+            let lowMemory = Self.isCriticallyLowMemory(Int(inputs.availableMemoryBytes()))
             if pressure == .critical || lowMemory {
                 setPauseReason("Paused to free memory. Your progress is saved.")
                 logDecision(.pause, .lowMemory)
-                if !memoryPauseAnnounced { memoryPauseAnnounced = true }
                 if waited >= Self.memoryPauseSeconds {
                     setPauseReason(nil)
                     logDecision(.stop, .lowMemory)
@@ -87,7 +90,6 @@ final class ResourceGovernor: ObservableObject {
                 await inputs.sleep(.seconds(2)); waited += 2
                 continue
             }
-            memoryPauseAnnounced = false
             switch inputs.thermalState() {
             case .critical:
                 setPauseReason(nil)
