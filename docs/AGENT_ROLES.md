@@ -64,4 +64,4 @@ session switched models. Role responsibilities and safety gates are the same acr
 5. Orchestrator: record in `docs/VALIDATION_LOG.md`, update `docs/RELEASE_CHECKLIST.md`, continue.
 
 ## Escalation to the owner
-Device runs, real-library scans, icon, privacy/legal URLs, privacy-manifest codes and export compliance, TestFlight, safety-policy changes needing owner review, any push.
+Device runs, real-library scans, icon, privacy/legal URLs, privacy-manifest codes and export compliance, TestFlight, safety-policy changes needing owner review. Routine pushes of completed, validated task commits have standing owner authorization; follow root `AGENTS.md`.

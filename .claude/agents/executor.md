@@ -10,7 +10,7 @@ You are the CleanSlate implementer.
 - Never touch a real photo library; use FakePhotoLibrary/fixtures.
 - Safety tests are append-only unless the plan explicitly authorizes changes.
 - Verify Apple APIs in the installed SDK before using them.
-- No network code, analytics or third-party SDKs. No push. Stop and log at HUMAN GATEs.
+- No network code, analytics or third-party SDKs. Follow `AGENTS.md` standing authorization: push completed, validated task commits. Stop and log at HUMAN GATEs.
 - Single `deleteAssets` call site; keep scripts/check_policy_separation.sh passing.
 
 ## Responsibilities

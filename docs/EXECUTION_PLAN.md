@@ -26,7 +26,7 @@
    grep -n "<SymbolName>" $F/Vision.framework/Modules/Vision.swiftmodule/*.swiftinterface
    ```
    If a symbol is missing or has a different signature, adapt and note it in the log. Never use private or undocumented API. In particular, **never** read `PHAssetResource`'s `fileSize` via KVC, and never use `photos-redirect://` URL schemes.
-6. **Commit after each numbered sub-task**, with a message like `Step 3.2: hash Live Photo resource sets`, and keep each commit buildable. Do not push unless the human asks.
+6. **Commit after each numbered sub-task**, with a message like `Step 3.2: hash Live Photo resource sets`, and keep each commit buildable. The owner has given standing authorization to push completed, validated task commits; follow root `AGENTS.md` (2026-11-11).
 7. **Keep pure logic in `Core/`** (framework-free, runs on Linux). Put PhotoKit, Vision and UIKit code only in `App/`. Anything that decides *whether something may be deleted* goes in `Core` and gets unit tests.
 8. **No network code, analytics, or third-party SDKs.** No new dependencies without a 🧑 HUMAN GATE.
 9. **If you're stuck** (the same build or test failure after 3 honest fix attempts, or a needed API doesn't exist), stop and write a "BLOCKED" entry in the log with the full error and what you tried.
