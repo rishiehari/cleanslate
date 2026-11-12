@@ -6,7 +6,8 @@ import CleanSlateCore
 /// Holds metadata and derived fingerprints only: no photos, thumbnails or faces.
 /// (WAL, foreign keys on, versioned migrations, data protection, excluded from backup.)
 actor LibraryStore {
-    static let schemaVersion = 1
+    /// Derived from the migration list so a new migration can never be forgotten here.
+    static var schemaVersion: Int { migrations.count }
 
     enum StoreError: Error { case open(String), sql(String) }
 
@@ -15,7 +16,9 @@ actor LibraryStore {
     let path: String?
 
     /// `path == nil` opens an in-memory database (tests).
-    init(path: String?) throws {
+    /// `maximumVersion` limits which migrations run. It exists only so tests can build a v1 database and
+    /// simulate an older binary opening a newer file; production always passes nil.
+    init(path: String?, maximumVersion: Int? = nil) throws {
         self.path = path
         var handle: OpaquePointer?
         let target = path ?? ":memory:"
@@ -26,7 +29,7 @@ actor LibraryStore {
         }
         db = handle
         try Self.exec(handle, "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;")
-        try Self.migrate(handle)
+        try Self.migrate(handle, upTo: maximumVersion)
         if let path {
             try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: path)
             var url = URL(fileURLWithPath: path)
@@ -73,18 +76,40 @@ actor LibraryStore {
         CREATE INDEX gm_asset ON group_members(asset_id);
         CREATE TABLE reviews(group_id TEXT PRIMARY KEY, decision INTEGER NOT NULL, decided_at REAL NOT NULL, member_revisions TEXT NOT NULL);
         CREATE TABLE receipts(id TEXT PRIMARY KEY, created_at REAL NOT NULL, payload_json TEXT NOT NULL);
+        """,
+        // v2 (N05): user protection rules. User intent, never derived data: reset() must not touch these tables.
+        """
+        CREATE TABLE protection_rules(
+          rule_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK(kind IN ('asset','album','date_range')),
+          target_id TEXT,
+          start_local_day TEXT, end_local_day TEXT,
+          calendar_id TEXT NOT NULL DEFAULT 'gregorian', time_zone_id TEXT,
+          start_utc REAL, end_utc_exclusive REAL,
+          created_at REAL NOT NULL, updated_at REAL NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+          rule_version INTEGER NOT NULL DEFAULT 1,
+          CHECK((kind IN ('asset','album') AND target_id IS NOT NULL AND start_local_day IS NULL) OR
+                (kind='date_range' AND target_id IS NULL AND start_local_day IS NOT NULL AND end_local_day IS NOT NULL
+                 AND time_zone_id IS NOT NULL AND start_utc IS NOT NULL AND end_utc_exclusive IS NOT NULL
+                 AND end_utc_exclusive > start_utc AND end_local_day >= start_local_day)));
+        CREATE UNIQUE INDEX protection_unique_target ON protection_rules(kind, target_id) WHERE target_id IS NOT NULL;
+        CREATE UNIQUE INDEX protection_unique_range ON protection_rules(start_local_day, end_local_day, time_zone_id) WHERE kind='date_range';
+        CREATE TABLE protection_rule_revision(singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision INTEGER NOT NULL);
+        INSERT INTO protection_rule_revision VALUES (1,1);
         """
     ]
 
-    private static func migrate(_ db: OpaquePointer?) throws {
+    private static func migrate(_ db: OpaquePointer?, upTo maximumVersion: Int?) throws {
+        let target = min(migrations.count, maximumVersion ?? migrations.count)
         var current = 0
         var statement: OpaquePointer?
         if sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK, sqlite3_step(statement) == SQLITE_ROW {
             current = Int(sqlite3_column_int(statement, 0))
         }
         sqlite3_finalize(statement)
-        guard current < migrations.count else { return }
-        for version in current..<migrations.count {
+        guard current < target else { return }
+        for version in current..<target {
             try exec(db, "BEGIN IMMEDIATE;")
             do {
                 try exec(db, migrations[version])
@@ -184,7 +209,7 @@ actor LibraryStore {
                     if let date = photo.capturedAt { sqlite3_bind_int64(s, 7, Int64(date.timeIntervalSince1970)) } else { sqlite3_bind_null(s, 7) }
                     sqlite3_bind_int64(s, 8, Int64(photo.durationSeconds * 1000))
                     text(s, 9, photo.burstID)
-                    text(s, 10, photo.record.flags.map(\.rawValue).sorted().joined(separator: ","))
+                    text(s, 10, photo.record.flags.subtracting([.userProtected]).map(\.rawValue).sorted().joined(separator: ","))
                     text(s, 11, photo.originalFilename)
                     sqlite3_bind_double(s, 12, now)
                 }
@@ -551,6 +576,140 @@ actor LibraryStore {
         (try? rows("SELECT payload_json FROM receipts ORDER BY created_at DESC LIMIT ?", bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
                    map: { String(cString: sqlite3_column_text($0, 0)) })) ?? []
     }
+
+    // MARK: Protection rules (N05)
+    // Unlike the rest of this store these methods THROW. A rule store that silently reads as "empty" would
+    // fail open, so every read or write error must reach the caller.
+
+    private static let protectionColumns = "rule_id,kind,target_id,start_local_day,end_local_day,time_zone_id,start_utc,end_utc_exclusive,created_at,updated_at,enabled,rule_version"
+
+    private func protectionRule(from s: OpaquePointer?) -> Result<ProtectionRule, StoreError> {
+        func bad(_ why: String) -> Result<ProtectionRule, StoreError> { .failure(.sql("malformed protection rule: \(why)")) }
+        guard let idText = str(s, 0), let id = UUID(uuidString: idText) else { return bad("rule_id") }
+        guard sqlite3_column_int(s, 11) == 1 else { return bad("rule_version") }
+        let scope: ProtectionScope
+        switch str(s, 1) {
+        case "asset":
+            guard let target = str(s, 2), !target.isEmpty else { return bad("asset target") }
+            scope = .asset(localIdentifier: target)
+        case "album":
+            guard let target = str(s, 2), !target.isEmpty else { return bad("album target") }
+            scope = .album(localIdentifier: target)
+        case "date_range":
+            guard let startText = str(s, 3), let start = LocalDay(startText),
+                  let endText = str(s, 4), let end = LocalDay(endText), end >= start,
+                  let zone = str(s, 5), TimeZone(identifier: zone) != nil,
+                  sqlite3_column_type(s, 6) != SQLITE_NULL, sqlite3_column_type(s, 7) != SQLITE_NULL else { return bad("date range") }
+            let from = Date(timeIntervalSince1970: sqlite3_column_double(s, 6))
+            let to = Date(timeIntervalSince1970: sqlite3_column_double(s, 7))
+            guard to > from else { return bad("date range interval") }
+            scope = .dateRange(start: start, end: end, timeZoneID: zone, startInclusive: from, endExclusive: to)
+        default:
+            return bad("kind")
+        }
+        return .success(ProtectionRule(id: id, scope: scope, enabled: sqlite3_column_int(s, 10) == 1,
+                                       createdAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 8)),
+                                       updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 9))))
+    }
+
+    private func protectionRevision() throws -> Int64 {
+        guard let revision = try rows("SELECT revision FROM protection_rule_revision WHERE singleton=1", map: { sqlite3_column_int64($0, 0) }).first else {
+            throw StoreError.sql("protection revision row is missing")
+        }
+        return revision
+    }
+
+    /// All rules plus the current revision. Throws on any unreadable or malformed row.
+    func protectionRules() throws -> (revision: Int64, rules: [ProtectionRule]) {
+        var revision: Int64 = 0
+        var results: [Result<ProtectionRule, StoreError>] = []
+        try Self.exec(db, "BEGIN;")
+        do {
+            revision = try protectionRevision()
+            results = try rows("SELECT \(Self.protectionColumns) FROM protection_rules ORDER BY created_at, rule_id", map: { protectionRule(from: $0) })
+            try Self.exec(db, "COMMIT;")
+        } catch { try? Self.exec(db, "ROLLBACK;"); throw error }
+        return (revision, try results.map { try $0.get() })
+    }
+
+    /// An existing target or range is left untouched (`ON CONFLICT DO NOTHING`, which, unlike `OR IGNORE`, still raises
+    /// CHECK violations so a malformed rule is an error, never silently dropped). The revision moves only if a row was added.
+    @discardableResult
+    func insertProtectionRules(_ rules: [ProtectionRule]) throws -> Int64 {
+        try consumeInjectedProtectionFailure()
+        var revision: Int64 = 0
+        try transaction {
+            var changed = 0
+            for rule in rules {
+                try run("""
+                    INSERT INTO protection_rules(rule_id,kind,target_id,start_local_day,end_local_day,time_zone_id,start_utc,end_utc_exclusive,created_at,updated_at,enabled)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                    """) { s in
+                    text(s, 1, rule.id.uuidString)
+                    switch rule.scope {
+                    case .asset(let id):
+                        text(s, 2, "asset"); text(s, 3, id); sqlite3_bind_null(s, 4); sqlite3_bind_null(s, 5); sqlite3_bind_null(s, 6)
+                        sqlite3_bind_null(s, 7); sqlite3_bind_null(s, 8)
+                    case .album(let id):
+                        text(s, 2, "album"); text(s, 3, id); sqlite3_bind_null(s, 4); sqlite3_bind_null(s, 5); sqlite3_bind_null(s, 6)
+                        sqlite3_bind_null(s, 7); sqlite3_bind_null(s, 8)
+                    case .dateRange(let start, let end, let zone, let from, let to):
+                        text(s, 2, "date_range"); sqlite3_bind_null(s, 3); text(s, 4, start.iso); text(s, 5, end.iso); text(s, 6, zone)
+                        sqlite3_bind_double(s, 7, from.timeIntervalSince1970); sqlite3_bind_double(s, 8, to.timeIntervalSince1970)
+                    }
+                    sqlite3_bind_double(s, 9, rule.createdAt.timeIntervalSince1970)
+                    sqlite3_bind_double(s, 10, rule.updatedAt.timeIntervalSince1970)
+                    sqlite3_bind_int(s, 11, rule.enabled ? 1 : 0)
+                }
+                changed += Int(sqlite3_changes(db))
+            }
+            if changed > 0 { try run("UPDATE protection_rule_revision SET revision = revision + 1 WHERE singleton=1") }
+            revision = try protectionRevision()
+        }
+        return revision
+    }
+
+    @discardableResult
+    func deleteProtectionRule(id: UUID) throws -> Int64 {
+        try consumeInjectedProtectionFailure()
+        var revision: Int64 = 0
+        try transaction {
+            try run("DELETE FROM protection_rules WHERE rule_id=?") { text($0, 1, id.uuidString) }
+            if sqlite3_changes(db) > 0 { try run("UPDATE protection_rule_revision SET revision = revision + 1 WHERE singleton=1") }
+            revision = try protectionRevision()
+        }
+        return revision
+    }
+
+    @discardableResult
+    func deleteAllProtectionRules() throws -> Int64 {
+        try consumeInjectedProtectionFailure()
+        var revision: Int64 = 0
+        try transaction {
+            try run("DELETE FROM protection_rules")
+            if sqlite3_changes(db) > 0 { try run("UPDATE protection_rule_revision SET revision = revision + 1 WHERE singleton=1") }
+            revision = try protectionRevision()
+        }
+        return revision
+    }
+
+    /// Indexed, not-deleted photos captured in `[start, end)`. Informational ("N checked photos in this range").
+    func protectedRangeIndexedCount(start: Date, end: Date) -> Int {
+        (try? rows("SELECT COUNT(*) FROM assets WHERE deleted=0 AND created_s IS NOT NULL AND created_s>=? AND created_s<?",
+                   bind: { sqlite3_bind_int64($0, 1, Int64(start.timeIntervalSince1970.rounded(.up))); sqlite3_bind_int64($0, 2, Int64(end.timeIntervalSince1970.rounded(.up))) },
+                   map: { Int(sqlite3_column_int64($0, 0)) }).first) ?? 0
+    }
+
+    private var injectedProtectionFailure = false
+    private func consumeInjectedProtectionFailure() throws {
+        if injectedProtectionFailure { injectedProtectionFailure = false; throw StoreError.sql("injected protection write failure") }
+    }
+
+    #if DEBUG
+    /// Test seams: the next protection write throws before touching the database; raw SQL for corrupting rows.
+    func debugFailNextProtectionWrite() { injectedProtectionFailure = true }
+    func debugExecute(_ sql: String) throws { try Self.exec(db, sql) }
+    #endif
 
     // MARK: Maintenance
 
