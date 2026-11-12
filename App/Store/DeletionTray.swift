@@ -256,6 +256,9 @@ final class DeletionTray: ObservableObject {
 
     func dismissToast() { toastTask?.cancel(); toast = nil }
 
+    /// A short confirmation with Undo, for actions that don't go through the tray itself (for example a new protection rule).
+    func showToast(_ message: String, undo: @escaping () -> Void) { show(message, undo: undo) }
+
     private func show(_ message: String, undo: @escaping () -> Void) {
         undoAction = undo
         let state = ToastState(message: message, undoable: true)

@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import CleanSlateCore
 
 @main
 struct CleanSlateApp: App {
@@ -120,8 +121,11 @@ enum AppEnvironment {
             let suite = UserDefaults(suiteName: "org.cleanslate.uitest") ?? .standard
             suite.removePersistentDomain(forName: "org.cleanslate.uitest")
             let policy = NetworkPolicy(defaults: suite, pathCheck: { true })
+            let fakeProtection = FakeProtection.make(arguments)
             let model = CleaningViewModel(library: scenario.library, tray: DeletionTray(fileURL: trayURL), networkPolicy: policy,
-                                          store: try? LibraryStore(path: nil))   // fake mode never touches the real index
+                                          store: try? LibraryStore(path: nil),   // fake mode never touches the real index
+                                          protection: fakeProtection?.service, loadProtectionOnInit: fakeProtection == nil)
+            if let fakeProtection { Task { await fakeProtection.start() } }
             if auth == .authorized { model.seedGroupsForUITesting(scenario.groups, standalone: scenario.standalone) }
             let analyzer = FakePhotoAnalyzer()
             analyzer.descriptions = ["sim1-a": .init(faceCount: 2, text: ["market"]), "sim1-b": .init(faceCount: 3, text: ["market"]),
@@ -148,6 +152,38 @@ enum AppEnvironment {
 }
 
 #if DEBUG
+/// Fake-mode switches for the protection rules (UI tests only):
+/// `-uiTestingProtectionStore` rules persist in a throwaway database, `-uiTestingProtectedAssets a,b` creates rules at launch,
+/// `-uiTestingProtectionUnavailable` makes the rule store unreadable.
+private struct FakeProtection {
+    let service: ProtectionRuleService
+    let start: () async -> Void
+
+    @MainActor
+    static func make(_ arguments: [String]) -> FakeProtection? {
+        let assets = (UserDefaults.standard.string(forKey: "uiTestingProtectedAssets") ?? "")
+            .split(separator: ",").map { String($0) }.filter { !$0.isEmpty }
+        let unavailable = arguments.contains("-uiTestingProtectionUnavailable")
+        guard arguments.contains("-uiTestingProtectionStore") || unavailable || !assets.isEmpty else { return nil }
+        let path = NSTemporaryDirectory() + "uitest-protection.sqlite"
+        for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+        guard let store = try? LibraryStore(path: path) else { return nil }
+        let suite = UserDefaults(suiteName: "org.cleanslate.uitest.protection") ?? .standard
+        suite.removePersistentDomain(forName: "org.cleanslate.uitest.protection")
+        let service = ProtectionRuleService(store: store, defaults: suite)
+        return FakeProtection(service: service) {
+            if !assets.isEmpty {
+                _ = try? await store.insertProtectionRules(assets.map { ProtectionRule(scope: .asset(localIdentifier: $0)) })
+            }
+            if unavailable {
+                suite.set(true, forKey: ProtectionRuleService.everCreatedKey)
+                try? await store.debugExecute("DROP TABLE protection_rules")
+            }
+            await service.load()
+        }
+    }
+}
+
 private enum AuthArgument {
     /// `-uiTestingAuth denied|limited|authorized` (arrives through the argument domain of UserDefaults).
     static func current() -> PHAuthorizationStatus {

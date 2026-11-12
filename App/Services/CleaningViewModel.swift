@@ -112,6 +112,10 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     private var withheldGroups: [String: (group: PhotoReviewGroup, reason: WithholdReason)] = [:]
     /// True when the rules are loaded and no write is in flight. Bulk approval is hidden otherwise.
     var protectionIsReady: Bool { protection.availability == .ready && protection.pendingWrites == 0 }
+    /// Whether Settings offers "Protected photos": always when the feature is on; otherwise only if there is something to see or fix.
+    var showsProtectionEntry: Bool {
+        FeatureFlags.protectionRulesUI || !(protectionService?.rules.isEmpty ?? true) || protection.availability != .ready
+    }
     /// The concrete service behind `protection`, when the real one is in use (nil when a test injects a gate).
     let protectionService: ProtectionRuleService?
     let networkPolicy: NetworkPolicy
@@ -148,7 +152,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
          visual: VisualAnalyzing = VisionVisualAnalyzer(),
          diagnostics: DiagnosticsLog? = nil,
          scanCounters: ScanCounters = ScanCounters(),
-         protection: ProtectionGate? = nil) {
+         protection: ProtectionGate? = nil,
+         loadProtectionOnInit: Bool = true) {
         self.visual = visual
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
@@ -189,7 +194,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         self.tray.protectionGate = self.protection
         protectionObserver = protectionService?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         protectionService?.onChange = { [weak self] change in self?.protectionDidChange(change) }
-        if let service = protectionService { Task { [weak service] in await service?.load() } }     // commits stay blocked until this finishes
+        if loadProtectionOnInit, let service = protectionService { Task { [weak service] in await service?.load() } }     // commits stay blocked until this finishes
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
     }
 

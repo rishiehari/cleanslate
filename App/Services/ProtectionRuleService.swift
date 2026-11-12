@@ -217,6 +217,9 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
         return await write(creating: true, change: .added, adding: duplicate ? [] : [rule]) { [store] in try await store.insertProtectionRules([rule]) }
     }
 
+    /// For callers that detect an impossible range before asking.
+    func reportInvalidRange() { lastError = "That date range isn't valid." }
+
     @discardableResult
     func remove(ruleID: UUID) async -> Bool {
         await write(creating: false, change: .removed, adding: [], allowWhenUnavailable: true) { [store] in try await store.deleteProtectionRule(id: ruleID) }
