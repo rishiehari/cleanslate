@@ -9,7 +9,7 @@ actor LibraryStore {
     /// Derived from the migration list so a new migration can never be forgotten here.
     static var schemaVersion: Int { migrations.count }
 
-    enum StoreError: Error { case open(String), sql(String), malformedProtectionRule(String) }
+    enum StoreError: Error { case open(String), sql(String), malformedProtectionRule(String), protectionRevisionMissing }
 
     // Only touched by this actor (and its deinit, which has exclusive access).
     nonisolated(unsafe) private var db: OpaquePointer?
@@ -614,7 +614,7 @@ actor LibraryStore {
 
     private func protectionRevision() throws -> Int64 {
         guard let revision = try rows("SELECT revision FROM protection_rule_revision WHERE singleton=1", map: { sqlite3_column_int64($0, 0) }).first else {
-            throw StoreError.sql("protection revision row is missing")
+            throw StoreError.protectionRevisionMissing
         }
         return revision
     }
@@ -637,6 +637,13 @@ actor LibraryStore {
     @discardableResult
     func insertProtectionRules(_ rules: [ProtectionRule]) throws -> Int64 {
         try consumeInjectedProtectionFailure()
+        // A rule that could never be evaluated would later make the whole set unreadable: refuse it here.
+        for rule in rules {
+            switch rule.scope {
+            case .asset(let id), .album(let id): if id.isEmpty { throw StoreError.malformedProtectionRule("empty target") }
+            case .dateRange: break
+            }
+        }
         var revision: Int64 = 0
         try transaction {
             var changed = 0

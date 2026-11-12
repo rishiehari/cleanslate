@@ -144,7 +144,15 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
         self.tray = tray ?? DeletionTray(fileURL: DeletionTray.defaultURL())
-        self.store = store ?? ((try? LibraryStore(path: LibraryStore.defaultPath())) ?? (try! LibraryStore(path: nil)))
+        var openedFallbackStore = false
+        if let store {
+            self.store = store
+        } else if let opened = try? LibraryStore(path: LibraryStore.defaultPath()) {
+            self.store = opened
+        } else {
+            self.store = try! LibraryStore(path: nil)       // the on-disk index could not be opened: work in memory
+            openedFallbackStore = true
+        }
         self.governor = governor ?? ResourceGovernor()
         self.diagnostics = diagnostics ?? DiagnosticsLog.shared
         self.scanCounters = scanCounters
@@ -153,7 +161,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             self.protection = protection
             self.protectionService = protection as? ProtectionRuleService
         } else {
-            let service = ProtectionRuleService(store: self.store)
+            let service = ProtectionRuleService(store: self.store, onDiskDatabasePath: openedFallbackStore ? LibraryStore.defaultPath() : nil)
             self.protection = service
             self.protectionService = service
         }

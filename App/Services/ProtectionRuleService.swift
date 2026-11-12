@@ -69,14 +69,23 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
     private let store: LibraryStore
     private let defaults: UserDefaults
     private let requiresDurableStore: Bool
+    /// Where the real database lives when `store` is only an in-memory stand-in. If a file exists there, rules may exist in it.
+    private let onDiskDatabasePath: String?
     private var ruleSet: ProtectionRuleSet
+    #if DEBUG
+    /// Test seam: makes the next rule-set rebuild after a committed write fail.
+    var debugFailNextRebuild = false
+    #endif
 
     /// - Parameter requiresDurableStore: writes are refused on the in-memory fallback store, because rules that
     ///   cannot be kept must never look protected.
-    init(store: LibraryStore, defaults: UserDefaults = .standard, requiresDurableStore: Bool = true) {
+    /// - Parameter onDiskDatabasePath: pass the real database path ONLY when `store` is a fallback because opening it failed.
+    init(store: LibraryStore, defaults: UserDefaults = .standard, requiresDurableStore: Bool = true,
+         onDiskDatabasePath: String? = nil) {
         self.store = store
         self.defaults = defaults
         self.requiresDurableStore = requiresDurableStore
+        self.onDiskDatabasePath = onDiskDatabasePath
         // An empty set is safe here: `availability` starts at `.loading`, which makes every verdict indeterminate.
         self.ruleSet = ProtectionRuleSet.empty
     }
@@ -100,36 +109,56 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
         return ruleSet.verdict(ProtectionSubject(id: snapshot.id, capturedAt: snapshot.capturedAt, albumIDs: nil))
     }
 
+    private func buildRuleSet(_ rules: [ProtectionRule], revision: Int64) throws -> ProtectionRuleSet {
+        #if DEBUG
+        if debugFailNextRebuild { debugFailNextRebuild = false; throw ProtectionRuleSet.Invalid.emptyInterval }
+        #endif
+        return try ProtectionRuleSet(rules: rules, revision: revision)
+    }
+
     // MARK: Load
 
     /// Reads the rules and decides the availability. Safe to call again (retry).
     func load() async {
         let everCreated = defaults.bool(forKey: Self.everCreatedKey)
         let mirrored = Int64(defaults.integer(forKey: Self.lastRevisionKey))
-        var treatAsCreated = everCreated
-        var loaded: (revision: Int64, rules: [ProtectionRule], set: ProtectionRuleSet)?
+        // Evidence that rules exist which does NOT depend on UserDefaults (which can be cleared or restored independently).
+        var evidence = false
+        if !storeIsDurable, let path = onDiskDatabasePath, FileManager.default.fileExists(atPath: path) { evidence = true }
+        var state: (revision: Int64, rules: [ProtectionRule])?
+        var set: ProtectionRuleSet?
         let outcome: Result<Int64, Error>
         do {
-            let state = try await store.protectionRules()
-            let set = try ProtectionRuleSet(rules: state.rules, revision: state.revision)
-            loaded = (state.revision, state.rules, set)
-            outcome = .success(state.revision)
+            let read = try await store.protectionRules()
+            state = read
+            set = try buildRuleSet(read.rules, revision: read.revision)
+            outcome = .success(read.revision)
         } catch {
-            // Stored rows that cannot be understood prove that rules exist, whatever UserDefaults says.
-            if error is ProtectionRuleSet.Invalid { treatAsCreated = true }
-            if case LibraryStore.StoreError.malformedProtectionRule = error { treatAsCreated = true }
+            // Rows that cannot be understood, or a missing revision row, prove that rules exist, whatever UserDefaults says.
+            if error is ProtectionRuleSet.Invalid { evidence = true }
+            if case LibraryStore.StoreError.malformedProtectionRule = error { evidence = true }
+            if case LibraryStore.StoreError.protectionRevisionMissing = error { evidence = true }
             outcome = .failure(error)
         }
-        let decision = ProtectionLoadPolicy.availability(read: outcome, everCreated: treatAsCreated,
-                                                         mirroredRevision: mirrored, storeDurable: storeIsDurable)
-        if let loaded, decision == .ready || decision == .lost {
-            ruleSet = loaded.set; rules = loaded.rules; revision = loaded.revision
-        } else if case .failure = outcome, decision == .ready {
-            // Never created, nothing to read: no rules.
-            ruleSet = ProtectionRuleSet.empty; rules = []
+        let decision = ProtectionLoadPolicy.availability(read: outcome, everCreated: everCreated, mirroredRevision: mirrored,
+                                                         storeDurable: storeIsDurable, evidenceOfExistingRules: evidence)
+        if let state {
+            // Always list what is stored, even when the set is unusable, so the user can still remove rules.
+            rules = state.rules; revision = state.revision
+        } else if decision == .ready {
+            rules = []                                     // never created, nothing to read
         }
+        if let set, decision == .ready || decision == .lost { ruleSet = set }
+        else if decision == .ready { ruleSet = ProtectionRuleSet.empty }
         availability = decision
-        if decision == .ready { lastError = nil }
+        if decision == .ready {
+            lastError = nil
+            // Rebuild the UserDefaults sentinel from the database when it was cleared.
+            if let state, storeIsDurable, !state.rules.isEmpty || state.revision > 1 {
+                defaults.set(true, forKey: Self.everCreatedKey)
+                if Int(state.revision) > Int(mirrored) { defaults.set(Int(state.revision), forKey: Self.lastRevisionKey) }
+            }
+        }
         onChange?(.reloaded)
     }
 
@@ -148,8 +177,9 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
         let ids = Array(Set(assetIDs.filter { !$0.isEmpty })).sorted()
         guard !ids.isEmpty else { return true }
         let now = Date()
-        let new = ids.map { ProtectionRule(scope: .asset(localIdentifier: $0), createdAt: now) }
-        return await write(creating: true, change: .added) { [store] in try await store.insertProtectionRules(new) }
+        let existing = Set(rules.compactMap { rule -> String? in if case .asset(let id) = rule.scope { id } else { nil } })
+        let new = ids.filter { !existing.contains($0) }.map { ProtectionRule(scope: .asset(localIdentifier: $0), createdAt: now) }
+        return await write(creating: true, change: .added, adding: new) { [store] in try await store.insertProtectionRules(new) }
     }
 
     @discardableResult
@@ -160,23 +190,34 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
         }
         let rule = ProtectionRule(scope: .dateRange(start: range.lowerBound, end: range.upperBound, timeZoneID: timeZoneID,
                                                     startInclusive: interval.start, endExclusive: interval.endExclusive))
-        return await write(creating: true, change: .added) { [store] in try await store.insertProtectionRules([rule]) }
+        let duplicate = rules.contains { existing in
+            if case .dateRange(let s, let e, let z, _, _) = existing.scope { return s == range.lowerBound && e == range.upperBound && z == timeZoneID }
+            return false
+        }
+        return await write(creating: true, change: .added, adding: duplicate ? [] : [rule]) { [store] in try await store.insertProtectionRules([rule]) }
     }
 
     @discardableResult
     func remove(ruleID: UUID) async -> Bool {
-        await write(creating: false, change: .removed) { [store] in try await store.deleteProtectionRule(id: ruleID) }
+        await write(creating: false, change: .removed, adding: [], allowWhenUnavailable: true) { [store] in try await store.deleteProtectionRule(id: ruleID) }
     }
 
     @discardableResult
     func removeAll() async -> Bool {
-        await write(creating: false, change: .removed) { [store] in try await store.deleteAllProtectionRules() }
+        await write(creating: false, change: .removed, adding: [], allowWhenUnavailable: true) { [store] in try await store.deleteAllProtectionRules() }
     }
 
-    /// One write: mark pending synchronously, persist, rebuild from the store, publish, notify, then clear pending.
-    /// Nothing looks protected before the store confirmed the write.
-    private func write(creating: Bool, change: ProtectionChange, _ operation: () async throws -> Int64) async -> Bool {
-        guard availability == .ready else {
+    /// One write: validate BEFORE touching the store, mark pending synchronously, persist, rebuild from the store, publish,
+    /// notify, then clear pending. Nothing looks protected before the store confirmed the write, and anything that goes
+    /// wrong AFTER a commit makes the rules unavailable (never "nothing was changed").
+    /// Removals are also allowed from `.unavailable` (a broken rule set must never lock the user out of fixing it).
+    private func write(creating: Bool, change: ProtectionChange, adding: [ProtectionRule], allowWhenUnavailable: Bool = false,
+                       _ operation: () async throws -> Int64) async -> Bool {
+        var startedUnavailable = false
+        switch availability {
+        case .ready: break
+        case .unavailable where allowWhenUnavailable: startedUnavailable = true
+        default:
             lastError = "Protection rules aren't available right now."
             return false
         }
@@ -184,27 +225,61 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
             lastError = "Protection rules can't be saved on this device right now. Nothing was changed."
             return false
         }
+        if !adding.isEmpty, let message = validationFailure(adding) { lastError = message; return false }
         pendingWrites += 1
         lastError = nil
         if creating { defaults.set(true, forKey: Self.everCreatedKey) }
         do {
             _ = try await operation()
+        } catch {
+            pendingWrites -= 1
+            lastError = "Couldn't save your protection rule. Nothing was changed."
+            if (try? await store.protectionRules()) == nil, !startedUnavailable {
+                // The write may or may not have landed and the store can't be read: fail closed.
+                availability = .unavailable("Protection rules couldn't be read after a failed save.")
+            }
+            return false
+        }
+        // Committed from here on.
+        if startedUnavailable {
+            pendingWrites -= 1
+            await load()
+            if availability != .ready { lastError = "Some protection rules still can't be read. Remove them to continue." }
+            return availability == .ready
+        }
+        do {
             let state = try await store.protectionRules()
-            ruleSet = try ProtectionRuleSet(rules: state.rules, revision: state.revision)
-            rules = state.rules
-            revision = state.revision
-            defaults.set(Int(state.revision), forKey: Self.lastRevisionKey)
+            let set = try buildRuleSet(state.rules, revision: state.revision)
+            // A slower, older read must never overwrite a newer one (overlapping writes).
+            if state.revision >= revision {
+                ruleSet = set; rules = state.rules; revision = state.revision
+                if Int(state.revision) > defaults.integer(forKey: Self.lastRevisionKey) {
+                    defaults.set(Int(state.revision), forKey: Self.lastRevisionKey)
+                }
+            }
             onChange?(change)
             pendingWrites -= 1
             return true
         } catch {
             pendingWrites -= 1
-            lastError = "Couldn't save your protection rule. Nothing was changed."
-            if (try? await store.protectionRules()) == nil {
-                // The write may or may not have landed and the store can't be read: fail closed.
-                availability = .unavailable("Protection rules couldn't be read after a failed save.")
-            }
+            availability = .unavailable("Your protection change was saved, but the rules couldn't be reloaded.")
+            lastError = "Your change was saved, but protection rules couldn't be reloaded. Try again."
+            onChange?(.reloaded)
             return false
+        }
+    }
+
+    /// Would the rule set still be valid with these rules added? nil = yes. Checked BEFORE anything is written.
+    private func validationFailure(_ adding: [ProtectionRule]) -> String? {
+        do {
+            _ = try ProtectionRuleSet(rules: rules + adding, revision: revision)
+            return nil
+        } catch ProtectionRuleSet.Invalid.tooManyAssetRules {
+            return "You've reached the limit of \(ProtectionRuleSet.maximumAssetRules) protected photos. Remove some to add more."
+        } catch ProtectionRuleSet.Invalid.tooManyDateRules {
+            return "You've reached the limit of \(ProtectionRuleSet.maximumDateRules) protected date ranges. Remove some to add more."
+        } catch {
+            return "That protection rule isn't valid."
         }
     }
 }

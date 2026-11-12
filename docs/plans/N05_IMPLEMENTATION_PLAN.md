@@ -276,7 +276,10 @@ Commands: `make core-test fixtures-test eval lint build`, then targeted `-only-t
 ## 7. Risks, residuals and PENDING items
 
 - **Residual window:** a rule written after `library.delete` has been entered (that is, while Apple's prompt is showing) cannot stop that request. The UI is covered by the system alert at that point. Document it; there is no test for it.
-- **Downgrade:** an older binary ignores rules. Old tray JSON decoding fails on the new flag, which empties the tray (fail-safe). Owner awareness needed.
+- **Residual (fix round 1, M2c):** if BOTH the rule database file and the UserDefaults sentinel are wiped or replaced (for example a full app-container reset), rules are gone and the app cannot tell. It then behaves like a fresh install. Not detectable without an external store; documented, not fixed.
+- **Residual (m4):** a photo with no creation date never matches a date-range rule (spec-intended, see N05 §7). Asset rules still protect it.
+- **Residual (m3):** a local day that does not exist in the chosen time zone (for example Samoa 2011-12-30) is rejected when creating a date rule instead of being widened.
+- - **Downgrade:** an older binary ignores rules. Old tray JSON decoding fails on the new flag, which empties the tray (fail-safe). Owner awareness needed.
 - **Perf:** redecorating on rule change is O(G·m) on the main actor. Measure with the 10k fake library (watchdog under 250 ms).
 - **PENDING (owner/device):**
   - Owner safety review of the C1, C4 and C5 diff before merging to `main`.

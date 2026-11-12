@@ -76,7 +76,7 @@ public struct ProtectionSubject: Sendable, Equatable {
     public let id: String
     public let capturedAt: Date?
     public let albumIDs: Set<String>?
-    public init(id: String, capturedAt: Date?, albumIDs: Set<String>? = []) {
+    public init(id: String, capturedAt: Date?, albumIDs: Set<String>? = nil) {
         self.id = id; self.capturedAt = capturedAt; self.albumIDs = albumIDs
     }
 }
@@ -114,10 +114,17 @@ public enum ProtectionDateResolver {
             calendar.date(from: DateComponents(timeZone: zone, year: d.year, month: d.month, day: d.day, hour: 12))
         }
         guard let startNoon = noon(start), let endNoon = noon(end),
+              Self.localDay(of: startNoon, calendar) == start, Self.localDay(of: endNoon, calendar) == end,   // a skipped day has no instants
               let afterEnd = calendar.date(byAdding: .day, value: 1, to: endNoon) else { return nil }
         let from = calendar.startOfDay(for: startNoon)
         let to = calendar.startOfDay(for: afterEnd)
         return to > from ? (from, to) : nil
+    }
+
+    private static func localDay(of date: Date, _ calendar: Calendar) -> LocalDay? {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let y = c.year, let m = c.month, let d = c.day else { return nil }
+        return LocalDay(year: y, month: m, day: d)
     }
 }
 
@@ -226,9 +233,13 @@ public enum ProtectionLoadPolicy {
     /// - `everCreated`: a rule was ever written on this install (mirrored in UserDefaults).
     /// - `mirroredRevision`: last revision mirrored to UserDefaults (survives a replaced database).
     /// - `storeDurable`: false for the in-memory fallback store.
-    public static func availability(read: Result<Int64, Error>?, everCreated: Bool,
-                                    mirroredRevision: Int64, storeDurable: Bool) -> ProtectionAvailability {
+    /// - `evidenceOfExistingRules`: proof found OUTSIDE UserDefaults that rules exist (rows that cannot be understood, a
+    ///   missing revision row, or an on-disk database the app could not open). It counts exactly like `everCreated`.
+    public static func availability(read: Result<Int64, Error>?, everCreated createdFlag: Bool,
+                                    mirroredRevision: Int64, storeDurable: Bool,
+                                    evidenceOfExistingRules: Bool = false) -> ProtectionAvailability {
         guard let read else { return .loading }
+        let everCreated = createdFlag || evidenceOfExistingRules
         switch read {
         case .failure(let error):
             return everCreated ? .unavailable("Protection rules couldn't be read: \(error.localizedDescription)") : .ready
