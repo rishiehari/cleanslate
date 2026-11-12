@@ -29,10 +29,34 @@ private struct ProtectionRulesContent: View {
     @State private var confirmRemoveAll = false
     @State private var confirmContinue = false
     @State private var addingRange = false
+    @State private var query = ""
+    @State private var searching = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// Survives rotation, resizing and relaunch of the scene.
+    @SceneStorage("protection.selectedRule") private var selectedRuleID = ""
 
-    private var assetRules: [ProtectionRule] { service.rules.filter { if case .asset = $0.scope { true } else { false } } }
-    private var dateRules: [ProtectionRule] { service.rules.filter { if case .dateRange = $0.scope { true } else { false } } }
-    private var albumRules: [ProtectionRule] { service.rules.filter { if case .album = $0.scope { true } else { false } } }
+    /// iPad-width windows get a list plus an inspector; compact windows and accessibility sizes push the detail instead.
+    private var wide: Bool { sizeClass == .regular && !typeSize.isAccessibilitySize }
+    private var selectedRule: ProtectionRule? { service.rules.first { $0.id.uuidString == selectedRuleID } }
+
+    private func matches(_ rule: ProtectionRule) -> Bool {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty else { return true }
+        return Self.searchText(for: rule).contains(text)
+    }
+    /// Rule type and date text only. Never a photo's content.
+    private static func searchText(for rule: ProtectionRule) -> String {
+        switch rule.scope {
+        case .asset: return "photo"
+        case .album: return "album"
+        case .dateRange(let start, let end, let zone, _, _): return "dates date range \(start.iso) \(end.iso) \(zone)".lowercased()
+        }
+    }
+
+    private var assetRules: [ProtectionRule] { service.rules.filter { if case .asset = $0.scope { matches($0) } else { false } } }
+    private var dateRules: [ProtectionRule] { service.rules.filter { if case .dateRange = $0.scope { matches($0) } else { false } } }
+    private var albumRules: [ProtectionRule] { service.rules.filter { if case .album = $0.scope { matches($0) } else { false } } }
 
     var body: some View {
         Group {
@@ -70,6 +94,13 @@ private struct ProtectionRulesContent: View {
                         .accessibilityIdentifier("protection.addRange")
                 }
             }
+            if wide, !service.rules.isEmpty, service.availability == .ready {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Search", systemImage: "magnifyingglass") { searching = true }
+                        .keyboardShortcut("f", modifiers: .command)
+                        .accessibilityIdentifier("protection.search")
+                }
+            }
             if !service.rules.isEmpty, service.availability != .loading {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Remove all", systemImage: "trash", role: .destructive) { confirmRemoveAll = true }
@@ -80,7 +111,10 @@ private struct ProtectionRulesContent: View {
         .sheet(isPresented: $addingRange) { ProtectSheet(assetIDs: [], preselected: [], startWithDates: true) }
         .confirmationDialog("Remove this rule?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
                             titleVisibility: .visible, presenting: pendingRemoval) { rule in
-            Button("Remove rule", role: .destructive) { Task { await service.remove(ruleID: rule.id) } }
+            Button("Remove rule", role: .destructive) {
+                if selectedRuleID == rule.id.uuidString { selectedRuleID = "" }
+                Task { await service.remove(ruleID: rule.id) }
+            }
                 .accessibilityIdentifier("protection.remove.confirm")
             Button("Cancel", role: .cancel) {}
         } message: { _ in
@@ -171,6 +205,18 @@ private struct ProtectionRulesContent: View {
             }
         }
         .listStyle(.insetGrouped)
+        .modifier(RuleSearch(enabled: wide, query: $query, searching: $searching))
+        // The setter ignores `false`: the system may collapse the inspector while rotating or resizing, and that must not
+        // forget the selection. The inspector's own Close button clears it.
+        .inspector(isPresented: Binding(get: { wide && selectedRule != nil }, set: { _ in })) {
+            if let rule = selectedRule {
+                ProtectionRuleDetail(rule: rule, wide: true, onClose: { selectedRuleID = "" }) { pendingRemoval = rule }
+                    .inspectorColumnWidth(ideal: 320)
+            }
+        }
+        .navigationDestination(isPresented: Binding(get: { !wide && selectedRule != nil }, set: { if !$0 { selectedRuleID = "" } })) {
+            if let rule = selectedRule { ProtectionRuleDetail(rule: rule, wide: false, onClose: nil) { pendingRemoval = rule } }
+        }
     }
 
     // MARK: Rows
@@ -232,8 +278,94 @@ private struct ProtectionRulesContent: View {
             .accessibilityLabel("Stop protecting")
             .accessibilityIdentifier("protection.rule.\(rule.id.uuidString).remove")
         }
+        .contentShape(Rectangle())
+        .onTapGesture { selectedRuleID = rule.id.uuidString }
+        .listRowBackground(selectedRuleID == rule.id.uuidString ? Color.actionPrimary.opacity(0.18) : Color.surfaceCard)
         .swipeActions { Button("Remove", role: .destructive) { pendingRemoval = rule } }
+        .accessibilityAddTraits(selectedRuleID == rule.id.uuidString ? .isSelected : [])
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("protection.rule.\(rule.id.uuidString)")
+    }
+}
+
+/// One rule in detail: what it covers and how to remove it. Shown in the iPad inspector or as a pushed screen.
+private struct ProtectionRuleDetail: View {
+    let rule: ProtectionRule
+    let wide: Bool
+    let onClose: (() -> Void)?
+    let onRemove: () -> Void
+    @EnvironmentObject private var model: CleaningViewModel
+    @State private var coverage: Int?
+
+    var body: some View {
+        List {
+            Section {
+                Text(title).appText(.groupTitle).foregroundStyle(Color.textPrimary)
+                Text(explanation).appText(.secondary).foregroundStyle(Color.textSecondary)
+                if let coverage {
+                    Text("\(coverage.formatted()) checked \(coverage == 1 ? "photo" : "photos") covered right now")
+                        .appText(.secondary).foregroundStyle(Color.textSecondary)
+                        .accessibilityIdentifier("protection.detail.coverage")
+                }
+            }
+            Section {
+                Button("Remove this rule", role: .destructive, action: onRemove)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("protection.detail.remove")
+            } footer: {
+                Text("It may be suggested again after your next scan. Nothing is deleted.")
+            }
+        }
+        .navigationTitle(wide ? "" : "Rule")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let onClose {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close", action: onClose).accessibilityIdentifier("protection.inspector.close")
+                }
+            }
+        }
+        .task(id: rule.id) { await loadCoverage() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(wide ? "protection.inspector" : "protection.detail")
+    }
+
+    private var title: String {
+        switch rule.scope {
+        case .asset: "A photo"
+        case .album: "An album"
+        case .dateRange(let start, let end, _, _, _): start == end ? start.iso : "\(start.iso) to \(end.iso)"
+        }
+    }
+
+    private var explanation: String {
+        switch rule.scope {
+        case .asset: "CleanSlate won't suggest deleting this photo. Apple Photos isn't changed."
+        case .album: "Photos in this album stay protected."
+        case .dateRange(_, _, let zone, _, _): "CleanSlate won't suggest deleting any photo taken on these days (\(zone))."
+        }
+    }
+
+    private func loadCoverage() async {
+        switch rule.scope {
+        case .asset(let id): coverage = model.library.snapshot(id: id, inspectAlbums: false) == nil ? 0 : 1
+        case .album: coverage = nil
+        case .dateRange(_, _, _, let from, let to): coverage = await model.store.protectedRangeIndexedCount(start: from, end: to)
+        }
+    }
+}
+
+/// Search over rule types and dates, offered in wide windows only (a short phone list doesn't need it).
+private struct RuleSearch: ViewModifier {
+    let enabled: Bool
+    @Binding var query: String
+    @Binding var searching: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.searchable(text: $query, isPresented: $searching, prompt: "Search rule types and dates")
+        } else {
+            content
+        }
     }
 }

@@ -74,7 +74,7 @@ struct ProtectSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .keyboardShortcut(.cancelAction)
+                        .keyboardShortcut(.cancelAction)             // Escape on a hardware keyboard
                         .accessibilityIdentifier("protect.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
