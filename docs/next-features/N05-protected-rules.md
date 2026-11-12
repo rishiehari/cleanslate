@@ -1,6 +1,6 @@
 # N05 — Never Suggest / protected rules
 
-Status: specified; implementation follows first-scan integration closure. Source: owner-supplied premium-parity report, 2026-11-12. Do not infer that unavailable linked bundle specifications were read.
+Status: implemented subset on `feature/N05-protection-rules`, pending safety review, remaining accessibility/device gates and album-rule UI. The V2 package is now checked in at `docs/CleanSlate_Implementation_Specs_V2`; that package plus `docs/plans/N05_IMPLEMENTATION_PLAN.md` govern continuation. See `docs/plans/N05_REVIEW_PACKET.md` for exact implementation scope. Source: owner-supplied premium-parity report, 2026-11-12.
 
 ## Outcome
 

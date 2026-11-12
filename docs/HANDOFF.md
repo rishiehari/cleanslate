@@ -1,5 +1,17 @@
 # Engineering handoff — 2026-11-12
 
+## Current continuation — N05 (2026-11-12)
+
+Draft review: [GitHub PR #2](https://github.com/rishiehari/cleanslate/pull/2). Code is on the feature branch; main receives documentation only.
+
+The V2 package **is present**, at `docs/CleanSlate_Implementation_Specs_V2` (import f694156). Resume `feature/N05-protection-rules`; use `git worktree list` to find its checkout. Main remains the previously validated 9037790 baseline. Claude completed C1–C9 through 410b924, including phone, Swipe and iPad UI. Continuation code ba80f92 (canonical dates) and 5196133 (presentation/performance) is committed/pushed to origin. The older checkpoint/feature-status text below is historical and does not describe this branch.
+
+This continuation fixes canonical Gregorian date conversion, captured rule-zone consistency, actual-width inspector eligibility, selection/search continuity, repeated presentation-metadata reads and AX5 presentation. See [N05 review packet](plans/N05_REVIEW_PACKET.md) for scope, exclusions, safety review paths and residual limitations. The creation UI is enabled in Debug and disabled in Release; existing saved rules are enforced regardless of that flag.
+
+**Do not merge N05 into main yet.** Owner review of C1/C4/C5 is explicitly required by [the N05 plan](plans/N05_IMPLEMENTATION_PLAN.md). The default-size iPad ProtectSheet audit failure was corrected by native page sizing on both tested runtimes; no new audit exemption was added. A full final integrated CI run and native iPad sidebar-return automation remain pending; exploratory return checks failed and are not passing evidence. Full feature acceptance, album-rule UI, physical keyboard/pointer, limited-access device checks and release gates remain open. Do not start N04 until the recorded N05 gates are resolved. Current measured results are in the latest VALIDATION_LOG entry; do not treat an earlier compile-only or zero-test success as current product validation.
+
+Test with synthetic libraries only. The owner-provided `CleanSlate-RealLib` simulator was not accessed in this continuation; its earlier authorization is not standing permission to inspect personal media. Metadata caching fixes repeated synchronous snapshot reads but cannot interrupt a single stalled PhotoKit call; physical-device latency remains unverified.
+
 ## Checkpoint and owner intent
 
 Code checkpoint: `df429a3` on `main`, pushed to `origin/main`. It integrates the previously dirty parallel-agent work and restores a buildable app. Subsequent documentation commits may follow this SHA. Confirm current HEAD and working-tree status before editing.
@@ -59,4 +71,4 @@ Prior session logs remain locally at `/tmp/cleanslate-*.log`; result bundles are
 
 Owner signing and run instructions: PHONE_TESTING.md. Device PhotoKit latency, real cancellation, limited-access changes, Apple prompts, Vision, Instruments and iPad windowing remain unverified. No release/TestFlight approval.
 
-After current integration/device feedback: N05 → N04 → N07 → N06 → N01 → N02 → N03 → N08 → N09 → N10. The source research summary is checked in; its linked 24-file bundle was NOT supplied locally. N05-protected-rules.md is a specification only. No premium-parity feature has been implemented or enabled. Follow the per-feature acceptance/test/review process in the implementation-order document and update these handoff documents after each increment.
+Historical sequence: N05 → N04 → N07 → N06 → N01 → N02 → N03 → N08 → N09 → N10. The V2 package is now checked in, and N05 is implemented on its review branch as described at the top of this file; other premium-parity features have not started. Follow the per-feature acceptance/test/review process in the implementation-order document and update these handoff documents after each increment.

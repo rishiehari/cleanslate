@@ -44,3 +44,15 @@ Current work and review status: [PROGRESS.md](PROGRESS.md). Dated validation ent
 - [ ] Remaining Home/Swipe accessibility audit reconciliation and fully integrated green CI on the final checkpoint.
 - [ ] Owner physical iPhone/iPad run, PhotoKit metadata latency/cancellation and Instruments evidence; actual signing/install is owner work.
 - [ ] Premium-parity implementation queue: report imported and N05 specified; no feature-complete/release claim.
+
+
+### 2026-11-12 N05 V2 continuation (feature branch only)
+
+- [x] Claude C1–C9 implementation found and resumed; canonical dates, actual-width presentation and cancellable presentation-metadata fixes added.
+- [x] Current feature status and safety diff paths recorded in plans/N05_REVIEW_PACKET.md.
+- [x] Default-size iPad ProtectSheet audit corrected by native page sizing, measured on iOS26.5 and27.2 without a new exemption.
+- [ ] Native iPad sidebar-return automation; exploratory cross-device return check failed. Phone-only visibility check does not satisfy this.
+- [ ] Full final integrated CI; focused final regression evidence does not establish a full CI pass.
+- [ ] Owner review of C1/C4/C5 before main merge; independent full-feature gate remains pending.
+- [ ] Physical iPhone/iPad, limited-access/relaunch/loss, keyboard/pointer and full accessibility matrix.
+- [ ] Album-rule UI/full N05 acceptance and owner decision on Release creation flag. N04 not started.

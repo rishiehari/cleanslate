@@ -508,3 +508,57 @@ Start HEAD: f694156. Orchestrator: Claude Code (Opus 5.5) with planner/executor/
 - `make build`: BUILD SUCCEEDED, zero compile warnings (only the appintentsmetadataprocessor notice).
 - Full `xcodebuild test` on iPhone 17 Pro (0C142434…, iOS 26.5): **CleanSlateTests 324 executed, 3 skipped, 0 failures; CleanSlateUITests 45 executed, 12 skipped, 0 failures; TEST SUCCEEDED.** Skips: 2 pre-existing device-only + 1 real-library diagnostic (unit); UI: capture/screenshot tests, 5 opt-in real-library tests, `IPadLayoutUITests/testComparisonRotationPreservesChoiceWithoutApproving` and `ReviewQueueUITests/testRotationPreservesUnapprovedDraftAndQueueAdvancesWithSkip` (iPad-only, skipped on iPhone). Gatekeeper: APPROVE (second round; first round REJECTED for an unguarded deleting opt-in test, fixed).
 - `make core-test`: 127 / 0 failures. `make lint`: PASS.
+
+
+## 2026-11-12 — Codex V2 / N05 continuation from 410b924
+
+Scope: `feature/N05-protection-rules`, based on main 9037790; Claude's C1–C9 were committed before this continuation. Main was not merged or modified by the implementation. Synthetic libraries only; no personal-library simulator or media was accessed. Xcode 27.2, SDK 27.2; simulator iOS versions below are runtime versions.
+
+Implemented fixes: Gregorian rule days under non-Gregorian calendar settings; captured time zone for picker/count/write; stored-zone rule display; actual-width inspector eligibility and selection/search continuity; one cancellable metadata pass per sheet instead of repeated full-group reads; distinct spoken photo positions; native scope menu; AX5-readable sheet and stacked rule rows. Metadata snapshot calls still execute synchronously on main and cannot interrupt an individual stalled PhotoKit fetch.
+
+### Personally measured automated results
+
+- `make core-test`: **171 tests, 0 failures**, final run 6.494s. New regressions cover Buddhist2569→Gregorian2026, opposite-zone dates, invalid zone, skipped-midnight display roundtrip.
+- `make PY=<repository>/.venv/bin/python fixtures-test eval`: **7 fixture tests PASS**, synthetic **GATE PASS**. The synthetic gate is not a real-world accuracy or harmful-deletion probability claim.
+- `make lint` and `git diff --check`: **PASS** (policy separation plus installed SwiftLint). V2 `tests/spec_validation.py`: **PASS**, a documentation consistency check, not product validation.
+- Broad `make ios-test SIM_ID=1D5EA6D9-4090-4033-8159-DED0CEA0F214` on iPhone17/iOS26.5: **450 unit tests, 3 skips, 0 failures**; includes F03 10k watchdog (39.340s) and tier-H memory/soak. UI: **70 tests, 19 skips, 1 failure**; the sole failure was AX5 rule-row contrast/clipping, subsequently fixed with stacked rows/bottom-edge effect removal. This invocation exited65; it is **not** a full green final CI run. Later helper/menu/page/row changes require the focused evidence below; do not claim the broad run tested a later diff. UI skips include deliberate opt-in/hardware/screenshot/real-library gates.
+- `make budget BUDGET_TIER=M DD=build/BudgetContinuation` on synthetic SE-test/iOS26.5: **2 PASS**, 10k peak59.6MB vs160MB budget; marginal settled growth4.2MB; released soak46.4/46.3/46.2MB. Pinned simulator tier is not physical-device memory evidence.
+- iPad26.5 focused final metadata/layout/rules checks: **7 unit tests PASS**; **8 UI tests, 1 skip, 0 failures** (7 successful UI checks: inspector selection/rotation, search/rotation/clear, AX5 collapse, removal confirmation, Cmd-F, AX5 rules audit). Existing synthetic Escape skip retained; no hardware-keyboard claim.
+- Metadata helper focused runs: **2 PASS**, each distinct asset (including unavailable) read once; pre-cancellation performs zero reads.
+- `xcodebuild ... -derivedDataPath build/DeviceDerivedData -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`: **PASS**, including final page/row changes. Unsigned arm64 compilation only; not installed on a phone.
+
+### Failure investigation and evidence boundaries
+
+Initial AX5 sheet audit failed contrast because the explanatory note was clipped/faded at the bottom; moving it before the controls with explicit readable text corrected it. A retry invocation reported TEST SUCCEEDED while executing **zero tests**; it was rejected as evidence, and discovered tests were rerun.
+
+Default-size iPad sheet audit then reported `elementDetection`: "Potentially inaccessible element", nil element/zero frame. Reproduced on iOS26.5 and27.2; native scope-menu and label changes did not fix it. No new exemption or relaxed assertion was introduced. A native `.presentationSizing(.page)` sheet subsequently passed the previously failing audit on iPad/iOS27.2 (**1 test, 0 failures**). This is measured behavior; a background-OCR explanation remains an unproven hypothesis. The same default audit now passes on iPad/iOS26.5 too; that run also passes date-range save (asserting zero delete calls and empty tray) and AX5 sheet audit: **3 tests, 0 failures**.
+
+Local transient logs: `/tmp/n05-complete-core.log`, `/tmp/n05-final-full-ios.log`, `/tmp/n05-final-budget.log`, `/tmp/n05-ipad-final-focused.log`, `/tmp/n05-ipad-page-audit.log`, `/tmp/n05-complete-device-build.log`. Result bundles are in ignored build directories. Counts/status above are portable evidence; temp logs may disappear.
+
+Independent read-only review (per AGENT_ROLES): continuation calendar/cache/layout changes and later AX5 row-layout changes had no blocking correctness finding. Approval is limited to that continuation diff, subject to focused UI validation. It does **not** approve full N05, owner safety gate, main merge or release. Owner C1/C4/C5 review, full final integrated CI, device permission/relaunch/loss/PhotoKit latency, physical keyboard/pointer and full accessibility matrix remain **PENDING**. Album UI/full N05 acceptance remains incomplete; N04 not started.
+
+### Final-code regression and narrow-phone follow-up
+
+- `xcodebuild ... -derivedDataPath build/IPadContinuation -destination platform=iOS\ Simulator,id=068BE719-FC2A-43C5-A859-7986DCC2C265 test -only-testing:CleanSlateTests -skip-testing:CleanSlateTests/MemoryBudgetTests -skip-testing:CleanSlateTests/F03AcceptanceTests`: **449 tests, 3 documented simulator skips, 0 failures**,112.385s. New helper tests included. F03/memory have separate passing evidence above. This preceded the final row copy/layout and tab-chrome presentation changes; no deletion/service code changed afterward.
+- iPad27.2 native page-sheet flows: **5 tests PASS** (AX3,AX5,cancel,date save,photo save); iPad26.5 native page-sheet default/AX5/date save: **3 PASS**.
+- Final-class phone17Pro/iOS26.5 run before the last compact-row adjustment: **7 units PASS;17 UI tests,1 failure** (AX5 rule-row contrast). SE class run before the layout fix: **17 UI tests,2 failures** (AX3/AX5 rule-row contrast). These are failed invocations, not green final CI.
+- Subsequent shorter-copy-only SE retry still failed AX3. Planner escalation after bounded fix rounds identified row crowding above the floating tab bar. Labels now precede a shared thumbnail/removal-control row at accessibility sizes; normal rows retain their layout. This preserves the photo, spoken rule description,44pt removal target, identifiers and explicit confirmation. Phone17Pro focused AX3/AX5/removal confirmation then **3 PASS**; iPad AX5 audit/pushed-detail collapse **2 PASS**. SE AX3 passed but AX5 still overlapped floating tabs, so the iPhone management destination now requests native `.toolbar(.hidden, for: .tabBar)` while active (iPad remains automatic). A new phone-only test requires a hittable Swipe tab and actual navigation after returning. No global TabView change or audit exemption.
+- Calendar fix committed/pushed as **ba80f92** on `feature/N05-protection-rules`. Final presentation commit and chrome/return-navigation evidence follow.
+
+### Final presentation evidence and explicit limitation
+
+- SE/iOS26.5 focused phone tab-return + AX3 + AX5: **3 tests PASS** (`/tmp/n05-se-focus-navigation.log`). Phone17Pro/iOS26.5 AX3+AX5: **2 PASS** (`/tmp/n05-phone-focus-navigation.log`); that invocation did not discover the newly added return method, so no third pass is counted.
+- iPad final rotation/selection and AX5 pushed-detail collapse: **2 PASS**. iPad AX5 rules audit: **PASS**, including after limiting floating-tab hiding to iPhone. Native iPad toolbar policy remains automatic.
+- **Unresolved iPad native sidebar-return automation:** an exploratory cross-device return test could not activate the native iPad destination. Investigation showed that existence alone is insufficient evidence of visible navigation state. An exploratory stricter helper also produced a false closure condition on phone (retained screen ID after Back with no remaining Back button); it was discarded, and the shared helper is unchanged from baseline. Native iPad tab/sidebar activation was not established. No iPad return-navigation pass is claimed, and no product regression/cause is proven. The new tab-visibility regression test is scoped to iPhone (the only platform receiving tab hiding) with an explicit iPad skip. Separate iPad sidebar-return coverage remains a gate. The failed exploratory runs remain failed evidence. No accessibility-audit assertion or exemption was changed.
+- Exploratory strict-Home-helper phone Undo regression: **1 PASS** (`/tmp/n05-phone-final-return.log`); the selected return test was not discovered in that invocation and is not counted. New/discovered-test counts must be checked every time.
+- Final generic simulator and unsigned device builds **PASS**; lint and whitespace checks **PASS**. No hardware was installed/run. Full final integrated CI remains pending.
+
+The stricter shared return helper was reverted rather than changing the existing suite around an unproven SwiftUI accessibility-tree assumption. The retained new phone test independently requires a hittable Swipe tab and a Swipe navigation bar, so helper existence alone cannot make it pass. iPad return automation is still OPEN.
+
+### Published continuation code
+
+Calendar fix **ba80f92** and presentation/performance fixes **5196133** are committed on `feature/N05-protection-rules` and pushed to origin. Final phone/iPhone-SE26.5 rerun (`/tmp/n05-phone-return-final.log`) executes **2 tests, 0 failures**: actual return to Swipe n Save and AX5 rules audit. This uses the unchanged baseline return helper plus independent hittable-tab/real-navigation assertions; the discarded stricter-helper experiments above are not included in the published code. The new return check explicitly skips iPad, whose native sidebar-return gate remains open.
+
+C10 generic documentation is current. Limited continuation diff review found no blocking correctness issue, subject to the now-passing phone rerun; no full-feature/owner/device/release approval was granted. Main merge remains gated by the owner's C1/C4/C5 review and remaining automated/device evidence. No N04 work started.
+
+Publication: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2), code5196133 / evidence5e794d1. Generic handoff/progress/review documents are synchronized to main as documentation only so any next tool finds the correct branch. This does not merge the safety feature or approve its gates.

@@ -3,9 +3,22 @@
 Shared status page for Kimi, Codex and Claude (orchestrator → planner/reasoner → executor/implementer → validator/edge-tester → gatekeeper/evaluator).
 **Update this file whenever progress is made** — every feature gate, every fix round, every blocked item.
 
-_Last updated: 2026-11-12 — Claude Code session: main stability fixes; N05 in progress on branch._
+_Last updated: 2026-11-12 — Codex continuation: N05 fixes and regression validation on feature branch; main merge gated._
 
 ---
+
+## 2026-11-12 — V2 continuation after Claude stopped
+
+Published for review: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2), feature HEAD 5e794d1 before this documentation pointer. Code commits ba80f92 and 5196133; documentation-only synchronization to main does not merge the safety feature.
+
+- Resumed `feature/N05-protection-rules` from 410b924 (Claude C1–C9); main baseline 9037790. Phone, Swipe and iPad implementation already exists on that branch. C10 review packet and current handoff are complete for this increment; continuation code ba80f92 and 5196133 is committed/pushed. The V2 specification package is checked in; earlier "bundle missing" entries are superseded.
+- Fixed Gregorian day extraction under non-Gregorian user calendars; captured time zone now drives selection, coverage and rule writes; rule display uses the stored zone. Added calendar/zone/DST tests.
+- Actual available width controls the iPad inspector. Selection survives layout transitions, and an active search remains editable after narrowing. Added rotation/search and layout regression checks.
+- Replaced repeated whole-group metadata dictionary reconstruction with one cancellable, yielding pass, one snapshot read per distinct asset; added unit tests. This is presentation metadata, not deletion authority.
+- AX5 sheet explanation moved before controls; photo switches have distinct spoken positions; native scope menu supports long labels. Accessibility rules rows put full-width labels before thumbnail/removal controls, with concise unavailable-photo copy; the nested iPhone management flow hides floating tab chrome and restores main navigation on Back. Added AX5, navigation-return and date-save-without-deletion UI checks.
+- Calendar fix **ba80f92 committed/pushed**. Core **171 PASS**, fixtures **7 PASS**, synthetic eval/lint PASS. Broad unit tests **450, 3 skips, 0 failures**, including watchdog and tier-H memory; separate tier-M budget **2 PASS** (59.6 MB peak, 4.2 MB retained). Final phone return/AX5 rerun **2 PASS**; iPad default sheet audits on both runtimes, AX5 audits, save/cancel and rotation checks pass. Simulator and unsigned device builds PASS. Final UI/build results and unresolved native iPad sidebar-return coverage are in VALIDATION_LOG, not inferred from unit counts.
+- **Audit fix:** native page-sized sheet passes the previously failing default iPad audit on iOS26.5 and27.2; save/cancel and AX3/AX5 checks also pass. No audit exemption was added.
+- **Open:** native iPad sidebar-return automation (exploratory check failed; no iPad return pass claimed), full green final integrated regression; owner C1/C4/C5 safety review; physical-device/keyboard/pointer/permission matrix; full N05 scope including album UI. No audit exemption or safety assertion was weakened. N04 has not started. Main has not received the safety feature.
 
 ## 2026-11-12 — Claude Code autonomous session (V2 specs)
 
