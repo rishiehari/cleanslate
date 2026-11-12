@@ -9,6 +9,8 @@ _Last updated: 2026-11-12 — Codex continuation: N05 fixes and regression valid
 
 ## 2026-11-12 — V2 continuation after Claude stopped
 
+Published for review: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2), feature HEAD 5e794d1 before this documentation pointer. Code commits ba80f92 and 5196133; documentation-only synchronization to main does not merge the safety feature.
+
 - Resumed `feature/N05-protection-rules` from 410b924 (Claude C1–C9); main baseline 9037790. Phone, Swipe and iPad implementation already exists on that branch. C10 review packet and current handoff are complete for this increment; continuation code ba80f92 and 5196133 is committed/pushed. The V2 specification package is checked in; earlier "bundle missing" entries are superseded.
 - Fixed Gregorian day extraction under non-Gregorian user calendars; captured time zone now drives selection, coverage and rule writes; rule display uses the stored zone. Added calendar/zone/DST tests.
 - Actual available width controls the iPad inspector. Selection survives layout transitions, and an active search remains editable after narrowing. Added rotation/search and layout regression checks.

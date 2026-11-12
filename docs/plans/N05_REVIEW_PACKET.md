@@ -1,5 +1,7 @@
 # N05 protection rules — review packet
 
+Review: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2).
+
 Status: implementation branch; owner safety review and physical-device gates remain PENDING. Not merged into main. This packet describes the implemented increment, not full V2 feature completion.
 
 ## Scope and branch

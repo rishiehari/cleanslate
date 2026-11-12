@@ -2,6 +2,8 @@
 
 ## Current continuation — N05 (2026-11-12)
 
+Draft review: [GitHub PR #2](https://github.com/rishiehari/cleanslate/pull/2). Code is on the feature branch; main receives documentation only.
+
 The V2 package **is present**, at `docs/CleanSlate_Implementation_Specs_V2` (import f694156). Resume `feature/N05-protection-rules`; use `git worktree list` to find its checkout. Main remains the previously validated 9037790 baseline. Claude completed C1–C9 through 410b924, including phone, Swipe and iPad UI. Continuation code ba80f92 (canonical dates) and 5196133 (presentation/performance) is committed/pushed to origin. The older checkpoint/feature-status text below is historical and does not describe this branch.
 
 This continuation fixes canonical Gregorian date conversion, captured rule-zone consistency, actual-width inspector eligibility, selection/search continuity, repeated presentation-metadata reads and AX5 presentation. See [N05 review packet](plans/N05_REVIEW_PACKET.md) for scope, exclusions, safety review paths and residual limitations. The creation UI is enabled in Debug and disabled in Release; existing saved rules are enforced regardless of that flag.
