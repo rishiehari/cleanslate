@@ -217,7 +217,7 @@ final class GroupReviewModel: ObservableObject {
     }
 
     /// nil = every photo marked for deletion is clear of the rules right now. Photos being kept may be protected.
-    private func protectionNoticeForMarkedPhotos() -> String? {
+    func protectionNoticeForMarkedPhotos() -> String? {
         // No gate at all means the rules cannot be consulted: fail closed.
         guard let gate = protection ?? tray.protectionGate else { return Self.rulesNotReadyNotice }
         for photo in group.all where draft.deleteIDs.contains(photo.id) {

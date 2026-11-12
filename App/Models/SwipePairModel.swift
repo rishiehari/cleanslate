@@ -122,7 +122,13 @@ final class SwipePairModel: ObservableObject {
 
     @discardableResult
     func approve() -> Bool {
-        guard side != nil, isCurrent, freshSnapshotsMatch else {
+        guard side != nil, isCurrent else {
+            notice = "These photos changed. Scan again before approving."
+            return false
+        }
+        // A rule that arrived after the choice was made gets its own message, not "these photos changed".
+        if let rulesNotice = review.protectionNoticeForMarkedPhotos() { notice = rulesNotice; return false }
+        guard freshSnapshotsMatch else {
             notice = "These photos changed. Scan again before approving."
             return false
         }
