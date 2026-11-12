@@ -301,6 +301,11 @@ final class DeletionTray: ObservableObject {
             batchNotice = "\(n) \(n == 1 ? "item needs" : "items need") another look and \(n == 1 ? "was" : "were") set aside. " + rest
             return nil
         }
+        // N05: the protection rules must be readable before ANY chunk goes out (the coordinator re-checks per chunk).
+        if let gate = protectionGate, gate.availability != .ready || gate.pendingWrites > 0, !readyEntries.isEmpty || !readyStandaloneEntries.isEmpty {
+            batchNotice = PhotoDeletionCoordinator.DeletionError.protectionUnavailable.errorDescription
+            return nil
+        }
         let chunks = Self.chunks(groups: readyEntries, standalone: readyStandaloneEntries, limit: SafetyPolicy.maximumBatchTargets)
         guard !chunks.isEmpty else {                       // nothing ready to delete
             if !entries.isEmpty || !standaloneEntries.isEmpty {

@@ -110,6 +110,12 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     private enum WithholdReason { case rule, rulesNotReady }
     /// Groups kept out of `groups` by the rules (or because the rules could not answer yet), with the group as scanned.
     private var withheldGroups: [String: (group: PhotoReviewGroup, reason: WithholdReason)] = [:]
+    /// The order groups were first seen in, so groups restored after the rules load return to their place.
+    private var seenOrder: [String: Int] = [:]
+    private var nextSeenOrder = 0
+    private func noteSeen(_ id: String) {
+        if seenOrder[id] == nil { seenOrder[id] = nextSeenOrder; nextSeenOrder += 1 }
+    }
     /// True when the rules are loaded and no write is in flight. Bulk approval is hidden otherwise.
     var protectionIsReady: Bool { protection.availability == .ready && protection.pendingWrites == 0 }
     /// Whether Settings offers "Protected photos": always when the feature is on; otherwise only if there is something to see or fix.
@@ -267,6 +273,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         membership = GroupMembershipIndex()
         exactMemberIDs = []
         withheldGroups = [:]
+        seenOrder = [:]
         hiddenByRulesGroupIDs = []
         shielding.resetSession()                 // a new scan is a new protection session
         recomputeStandalone()
@@ -283,6 +290,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         var withheldExactChanged = false
         for id in removed { if withheldGroups.removeValue(forKey: id)?.group.kind == .exact { withheldExactChanged = true } }
         for group in added {
+            noteSeen(group.id)
             if let reason = withholdReason(group) {
                 withheldGroups[group.id] = (group, reason)
                 if group.kind == .exact { withheldExactChanged = true }
@@ -335,7 +343,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             }
         }
         var restored: [PhotoReviewGroup] = []
-        for (id, entry) in withheldGroups where entry.reason == .rulesNotReady {
+        for (id, entry) in withheldGroups.sorted(by: { (seenOrder[$0.key] ?? 0) < (seenOrder[$1.key] ?? 0) }) where entry.reason == .rulesNotReady {
             if let reason = withholdReason(entry.group) {
                 withheldGroups[id] = (entry.group, reason)
             } else {
@@ -346,6 +354,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         }
         publishHiddenByRules()
         applyGroupChanges(added: restored, removed: withheldNow)
+        // Restored groups return to the place they were found in.
+        if !restored.isEmpty { groups.sort { (seenOrder[$0.id] ?? .max) < (seenOrder[$1.id] ?? .max) } }
         if exactChanged { recomputeStandalone() }
     }
 

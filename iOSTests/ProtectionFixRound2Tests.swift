@@ -168,9 +168,8 @@ final class ProtectionFixRound2Tests: XCTestCase {
         XCTAssertTrue(tray.needsAttention.isEmpty, "a user Stop must not mark groups as changed")
     }
 
-    func testCancelWithARawCancellationErrorSaysStopped() async throws {
-        // Needs the coordinator to rethrow a raw CancellationError from the rehash (fixed on main as m-1; arrives by rebase).
-        try XCTSkipIf(true, "Pending the main-branch fix for m-1 (coordinator must rethrow CancellationError from the rehash); un-skip after rebase.")
+    func testCancelWithARawCancellationErrorSaysStopped() async {
+        // The coordinator rethrows a raw CancellationError from the rehash (main's m-1 fix).
         for i in 0..<10 { tray.approve(group: pair(i), selected: ["c\(i)"], manuallyReviewed: []) }
         let raw = RawCancelLibrary(library)
         let coordinator = PhotoDeletionCoordinator(library: raw, networkPolicy: netPolicy(), protection: gate)
