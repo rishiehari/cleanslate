@@ -56,7 +56,7 @@ final class EngineSkipTests: XCTestCase {
         let visual = FakeVisualAnalyzer()
         visual.delayPerCall = .milliseconds(25)             // keeps the Comparing phase open long enough to skip
         let model = try ScanTestRig.model(library: library, visual: visual)
-        model.scan()
+        model.scanAllForTesting()
         let reachedComparing = await waitUntil(timeout: 30) { model.scanCounters.snapshot.phase == .vision }
         XCTAssertTrue(reachedComparing, "the scan reached the Comparing phase")
         model.skipCurrentStage()

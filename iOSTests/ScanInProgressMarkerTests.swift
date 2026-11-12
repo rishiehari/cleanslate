@@ -73,7 +73,7 @@ final class ScanInProgressMarkerTests: XCTestCase {
                     continuation.resume(returning: value)
                 }
             }
-            model.scan()
+            model.scanAllForTesting()
         }
         XCTAssertEqual(markerDuringScan?.phase, .inventory, "the marker was written at the first phase boundary")
         var spins = 0

@@ -217,7 +217,7 @@ final class ExactMatchingTests: XCTestCase {
     func testScanCanBeStoppedWhenStartedWithScan() async {
         library.add("a", content: "same", at: 5_000)
         let model = makeModel()
-        model.scan()
+        model.scanAllForTesting()
         model.stop()
         try? await Task.sleep(for: .milliseconds(300))
         XCTAssertFalse(model.isScanning)

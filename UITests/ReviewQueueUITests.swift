@@ -16,8 +16,12 @@ final class ReviewQueueUITests: XCTestCase {
         app.buttons["category.exact"].tap()
         XCTAssertTrue(app.buttons["group.test-ex1-keep"].waitForExistence(timeout: 5))
         app.buttons["group.test-ex1-keep"].tap()
+        // Give comparison the full window: the system sidebar can otherwise leave
+        // an intermediate-width detail where the product correctly collapses its queue.
+        let sidebar = app.buttons["ToggleSidebar"]
+        if sidebar.exists && sidebar.label == "Hide Sidebar" { sidebar.tap() }
         let queue = app.descendants(matching: .any)["review.queue"].firstMatch
-        XCTAssertTrue(queue.waitForExistence(timeout: 5))
+        XCTAssertTrue(queue.waitForExistence(timeout: 5), app.debugDescription)
         let copy = app.buttons["tile.ex1-copy"]
         XCTAssertTrue(copy.waitForExistence(timeout: 5))
         copy.tap()

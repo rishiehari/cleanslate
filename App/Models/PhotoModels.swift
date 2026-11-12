@@ -2,12 +2,30 @@ import Foundation
 import Photos
 import CleanSlateCore
 
+/// Defines the status of a photo - whether it's local, in iCloud, or unknown
+enum PhotoStatus: String, CaseIterable, Codable, Sendable {
+    case local = "Local"
+    case cloudOnly = "In iCloud"
+    case unknown = "Unknown"
+
+    var icon: String {
+        switch self {
+        case .local: return "📱"
+        case .cloudOnly: return "☁️"
+        case .unknown: return "❓"
+        }
+    }
+
+    // Note: Color is not available in this context - we'll remove it for now
+    // var color: Color { ... }  // Remove this line for now
+}
+
 enum GroupKind: String, Codable {
     case exact = "Verified identical files"
     case similar = "Similar captures · review required"
 }
 
-struct PhotoSnapshot: Identifiable, Codable, Equatable {
+struct PhotoSnapshot: Identifiable, Codable, Equatable, Sendable {
     let id: String
     var record: AssetRecord
     let capturedAt: Date?
@@ -20,6 +38,7 @@ struct PhotoSnapshot: Identifiable, Codable, Equatable {
     var durationSeconds: Double = 0
     /// Raw `PHAssetMediaSubtype` bits.
     var subtypes: UInt = 0
+
 
     var isScreenshot: Bool { PHAssetMediaSubtype(rawValue: subtypes).contains(.photoScreenshot) }
     var isScreenRecording: Bool { PHAssetMediaSubtype(rawValue: subtypes).contains(.videoScreenRecording) }

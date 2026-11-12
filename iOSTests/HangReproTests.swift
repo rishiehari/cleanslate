@@ -22,7 +22,7 @@ final class HangReproTests: XCTestCase {
         let library = FakePhotoLibrary.burstHeavy(count: photos, burstShare: 0.6, burstLength: 8, seed: 42)
         let visual = FakeVisualAnalyzer()
         let model = try ScanTestRig.model(library: library, visual: visual)
-        model.scan()
+        model.scanAllForTesting()
         let started = await waitUntil(timeout: 10) { model.isScanning }
         XCTAssertTrue(started, "the scan started")
         let finished = await waitUntil(timeout: 240) { !model.isScanning }
@@ -44,7 +44,7 @@ final class HangReproTests: XCTestCase {
         let library = FakePhotoLibrary.burstHeavy(count: 300, burstShare: 0.3, burstLength: 6, seed: 3)
         library.stuckThumbnailIDs = ["u0"]
         let model = try ScanTestRig.model(library: library)
-        model.scan()
+        model.scanAllForTesting()
         let stuck = await waitUntil(timeout: 20) { library.thumbnailsInFlight > 0 && library.maxThumbnailsInFlight > 0 && model.statistics.photosEnumerated > 0 }
         XCTAssertTrue(stuck, "the scan reached the stuck thumbnail")
         let began = Date()

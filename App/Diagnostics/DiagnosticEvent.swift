@@ -9,7 +9,7 @@ enum DiagPhase: String, Codable, Sendable, CaseIterable {
     case idle, inventory, thumbnails, candidates, fullResources, vision, sizing, finished, cancelled
 }
 
-enum DiagScope: String, Codable, Sendable { case all }
+enum DiagScope: String, Codable, Sendable { case all, bounded }
 enum DiagScene: String, Codable, Sendable { case active, inactive, background }
 enum DiagRequestKind: String, Codable, Sendable { case thumbnail, digest, videoSize, vision }
 enum DiagGovernorDecision: String, Codable, Sendable { case pause, shrink, stop }

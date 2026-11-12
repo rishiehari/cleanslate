@@ -66,7 +66,7 @@ struct ReviewGroupView: View {
             .padding(Spacing.m)
             .padding(.bottom, barClearance * 1.6)
         }
-        .scrollEdgeEffectStyle(.soft, for: .bottom)   // separates the floating bar from scrolling photos
+        .scrollEdgeEffectHidden(true, for: .bottom)   // separates the floating bar from scrolling photos
         .background(Color.surfaceBackground)
         .navigationTitle(position ?? "\(review.group.all.count) photos")
         .navigationBarTitleDisplayMode(.inline)
@@ -214,9 +214,9 @@ private struct EvidenceExplanation: View {
     }
 }
 
-private struct WarningPrompt: Identifiable { let id: String }
+struct WarningPrompt: Identifiable { let id: String }
 
-private struct WarningSheet: View {
+struct WarningSheet: View {
     let warnings: Set<DifferenceWarning>
     var couldntCompare = false
     let onRemoveAnyway: () -> Void

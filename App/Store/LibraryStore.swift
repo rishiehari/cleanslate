@@ -196,7 +196,8 @@ actor LibraryStore {
         try transaction { for id in ids { try run("UPDATE assets SET deleted=1 WHERE id=?") { text($0, 1, id) } } }
     }
 
-    /// After a full inventory: anything not seen since the run started is gone from the library.
+    /// Deactivates index rows not seen during this inventory. Scoped scans use this to exclude
+    /// out-of-scope rows from analysis. This is index membership, never proof of a Photos deletion.
     @discardableResult
     func markUnseen(before startedAt: Double) throws -> Int {
         let before = assetCount()

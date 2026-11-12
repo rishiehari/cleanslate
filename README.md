@@ -1,8 +1,8 @@
 # CleanSlate — completely free, private iOS photo cleanup
 
-Native iOS SwiftUI prototype. All duplicate search and best-shot ranking runs on your iPhone using PhotoKit, Vision and a local SQLite feature cache. There is **no backend, account, subscription, ad, or photo upload**.
+Native iPhone and iPad SwiftUI app in development. All duplicate search and best-shot ranking runs on your device using PhotoKit, Vision and a local SQLite feature cache. There is **no backend, account, subscription, ad, or photo upload**.
 
-**Status:** Active implementation; see [current progress](docs/PROGRESS.md) and [validation evidence](docs/VALIDATION_LOG.md). The current macOS Core baseline is **115 passing tests** (2026-11-11). F01–F03 have recorded simulator validation and review; the F03 physical-device stability gate remains **PENDING**, and the app is not release-ready. Do not test deletion against personal/iCloud-synchronized libraries.
+**Status:** Active implementation; see [current progress](docs/PROGRESS.md) and [validation evidence](docs/VALIDATION_LOG.md). The current macOS Core baseline is **118 passing tests** (2026-11-12). F01–F03 have recorded simulator validation and review; the F03 physical-device stability gate remains **PENDING**, and the app is not release-ready. Do not test deletion against personal/iCloud-synchronized libraries.
 
 ## Local Mac setup
 
@@ -48,7 +48,10 @@ The generator creates exactly identical copies as well as recompressed images, a
 
 ## Known limitations
 
-- Inventory is paged and resumable; per-pass exact verification and visual comparisons are capped. Recent-100 scope is planned in F04 and is not implemented yet. Fake-library scale results do not establish device performance.
+- Start with a metadata-only activity overview of up to the latest 5,000 accessible items. It highlights busy/burst-heavy weeks without image analysis, downloads or claimed savings.
+- Scan one suggested week, the past month/two months, or the latest 100/1,000/2,000 items. Every product scan is capped at 2,000. A repeated count-only scan rechecks the latest items; it does not advance to unseen items. Album scanning is not available.
+- Inventory metadata runs on a serial background reader with public date predicates/fetch limits and cancellation/deadlines. Bounded scans restart inventory and reuse revision-matched caches; internal unbounded regression scans retain their resume coverage. Fake-library results do not establish device performance.
+- Home and Swipe n Save share the tray, scan and receipt owner. Swipe decisions use the normal warnings/protections; a separate Approve adds to the tray. The product swipe feed remains directly compared similar pairs; expanded exact-pair feed/tutorial work remains planned.
 - Default scans use local data. Original downloads require the existing opt-in, path-checked, budgeted PhotoKit verification setting. No claim of exhaustive duplicate detection.
 - Best-shot ranking is heuristic, not human-calibrated.
 - An app icon placeholder is included; production artwork still requires owner review.
@@ -59,6 +62,6 @@ The generator creates exactly identical copies as well as recompressed images, a
 Start with [current progress](docs/PROGRESS.md), [implementation order](docs/IMPLEMENTATION_ORDER.md), and the
 [device test plan](docs/DEVICE_TEST_PLAN.md). The older engineering backlog is historical context. Detailed planning:
 [iPad expansion](docs/plans/IPAD_APP_PLAN.md) and [Swipe n Save, onboarding and calibration](docs/plans/SWIPE_N_SAVE_PLAN.md).
-iPad remains planning-only. Keep signing keys, real photos and private datasets out of GitHub.
+iPad shares features with iPhone, with sidebar-adaptive navigation, wide review queues, adaptive grids and equal Compare panes; the complete window/accessibility/device matrix remains pending. Keep signing keys, real photos and private datasets out of GitHub.
 
 MIT licensed. The app is intended to be free forever, but public App Store distribution normally requires the developer's Apple Developer Program membership.

@@ -7,7 +7,7 @@ struct StorageHero: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text("You can free up").appText(.secondary).foregroundStyle(Color.textSecondary)
+            Text("Verified potential removals").appText(.secondary).foregroundStyle(Color.textPrimary)
             Text(verifiedBytes.friendlyBytes)
                 .appText(.heroNumber)
                 .foregroundStyle(Color.textPrimary)
@@ -18,8 +18,8 @@ struct StorageHero: View {
                 Text("≈ \(estimatedBytes.friendlyBytes) more, estimated")
                     .appText(.caption).foregroundStyle(Color.textSecondary)
             }
-            Text("Verified file sizes. Space on your iPhone and in iCloud is freed after you empty Recently Deleted.")
-                .appText(.caption).foregroundStyle(Color.textSecondary)
+            Text("File sizes of copies found in this scan. Actual free space can differ. Nothing is deleted until you confirm.")
+                .appText(.caption).foregroundStyle(Color.textPrimary)
         }
         .padding(Spacing.m)
         .frame(maxWidth: .infinity, alignment: .leading)

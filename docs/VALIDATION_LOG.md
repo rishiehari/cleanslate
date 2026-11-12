@@ -399,7 +399,7 @@ Deviations (orchestrator decisions + documented):
 
 
 ### Fix round 2 — edge-test return (6 Majors + minors) — 2026-11-11 (implementer)
-Commits: 13e02d5 C1 deadline/digest/monitor · bf89a75 C2 M1 quality deadlines · ac775b0 C3 skip/stall-end · a72451d C4 dropCaches · 9910af7 C5 caps/reporting/paging · (this note) C6 docs. Gates after every commit: core 115/115, build zero warnings, lint PASS. Touched suites re-run green (Deadline 4, MemoryPressureGovernor 7, RequestTimeout 6, VisionCache 5, EngineSkip 4, PagedQuery 6, ExactNarrowing 6, ScanEngine 13, ExactMatching 19, E2E 9, LibraryStore 10, HangRepro 2).
+Commits: 13e02d5 C1 deadline/digest/monitor · bf89a75 C2 M1 quality deadlines · ac775b0 C3 skip/stall-end · a72451d C4 dropCaches · 9910af7 C5 caps/reporting/paging · (this note) C6 docs. Gates after every commit: core 115/115, build zero warnings, lint PASS. Touched suites re-run green (Deadline 4, MemoryPressureGovernor 7, RequestTimeout 5, VisionCache 5, EngineSkip 4, PagedQuery 5, ExactNarrowing 6, ScanEngine 13, ExactMatching 19, E2E 9, LibraryStore 15, HangRepro 2). Evaluator-verified counts (earlier draft said RequestTimeout 6 / PagedQuery 6 / LibraryStore 10 — corrected).
 
 Majors:
 - **M1 (H4 reopen)**: `quality()` called face/aesthetics with no deadline. Both now route through `visionCall`, which throws the request's own error and returns nil ONLY on expiry (recorded `.requestTimedOut`); an expired quality request throws → counted as a Vision failure, never a match. `visionCall` needed a rework (it previously swallowed throws into nil, conflating errors with expiry). FakeVisualAnalyzer gained `stuckTokens` (requests never return until released or the configurable deadline). Tests: stuck quality expires <13 s and is counted; stop() during stuck quality < 2 s.
@@ -418,3 +418,53 @@ Dispositions:
 - **m14 (print count)**: the spec's "every print computed once per asset" cannot hold library-wide with the mandated 64-entry print LRU — ranked pair order spans bursts on a 7,000-photo library, so eviction re-prints are legitimate, not a defect (the uncached engine printed one picture 44×; the cached worst is 7). The tight guarantee is the single-burst fixture (`maxPrintsOfOnePicture == 1`, working set ≪ 64) in VisionCacheTests; the 7,000-photo bound stays at ≤ 8 as the regression magnitude with the precise reason in the comment. Documented, not silently kept.
 
 Everything remains simulator-verified; the 🧑 device gate below still applies.
+
+
+## S01 — Swipe n Save / cross-agent continuation — 2026-11-11 (IN PROGRESS)
+Start commit: a711be6. Implementation: 5631229 (pair model/feed + tests); UI commit pending. Plans/handoff: 7ce0f4b; Kimi prompt housekeeping: 64f02c4. This entry will be completed with final validation/review evidence.
+
+Owner direction: continue Swipe n Save before F04 despite the PENDING F03 device gate; write detailed iPad and expanded swipe plans; **do not implement iPad yet**; maintain shared Kimi/Codex handoff records. No human device/release/safety-policy gate is waived.
+
+Baseline independently rerun by orchestrator: Core 115/115 PASS; fixtures 7/7 PASS; synthetic eval GATE PASS (40 scenes, 320 images, 0/120 harmful preselection canaries; not real-world safety proof); lint/policy separation PASS. These baseline checks are not a final current-feature CI pass.
+
+Implementation scope: original near-* two-photo directly compared similar groups; orientation-specific normal GroupReviewModel for either keeper, explicit Approve to existing tray, center Keep both, Compare, shared toast/receipt/tab state. No policy/deletion-path or existing safety-test changes. Exact pairs, up gesture, onboarding practice, durable drafts, larger-group pair sessions and local calibration are separately planned; iPad remains planning-only.
+
+Focused tests: executor reports SwipePairTests **13/13 PASS**. First focused UI run found container identifiers masking child identifiers and an evidence button below 44 pt; executor fixed containment and hit target and is rerunning. Final focused UI, independent regression/budgets/screenshots and gatekeeper verdict are PENDING.
+
+Documentation: two Astra plans in docs/plans; README/architecture/roadmap/product/backlog/device-plan summaries corrected, shared handoff protocol in AGENT_ROLES and Kimi prompts. Pre-existing validation-count correction preserved. Important residual: PhotoKit inventory resource-metadata reads are still synchronous on main actor; fake watchdog tests do not establish real-device hang resolution.
+
+Human gates: F02/F03 device runs, historical safety-policy owner reviews, Step 9 labels, legal/icon/privacy, distribution remain PENDING. No real libraries used; no push.
+
+### 2026-11-11 — iPad foundation increment
+
+Owner authorized starting IPAD_APP_PLAN implementation. Universal target, explicit single-window configuration, sidebar-adaptable existing tabs, bounded Home width and adaptive equal-size Compare panes implemented using shared components. Safety/deletion ownership unchanged.
+
+- PASS: `make core-test` (115 tests), `make fixtures-test` (7 tests), `make eval` (synthetic GATE: PASS), `make lint`.
+- BLOCKED: `make build` on existing working-tree PhotoModels missing Color import and ScanEngine ScanScope/DiagScope mismatch. Existing fullInventory scope call also mismatches its no-argument declaration. No unrelated edits reverted.
+- NOT RUN: newly added AdaptiveLayoutTests and IPadLayoutUITests, full iOS suite, budget suite, screenshots and device tests, pending app build recovery.
+- SDK evidence: installed iPhoneSimulator27.2 SwiftUI interface exposes sidebarAdaptable at line 9488. Provisional widths require visual/device validation. IP0–IP5 acceptance remains incomplete.
+
+## 2026-11-12 — bounded first scans and metadata activity overview (integration)
+
+Owner stopped the parallel implementation and authorized this session to integrate/fix the current tree, bounded first scans and phone/iPad parity, then the supplied premium-parity report sequentially. Starting HEAD: 2472313.
+
+Build defects fixed: XCTest source was under App/Tests and compiled into the application; scope APIs disagreed and the scope overload ignored its argument. Test source moved to iOSTests with assertions preserved. Product inventory now enforces date predicates and fetch limits before metadata reads, using a serial off-main reader and 25-item pages with a 10-second deadline/cancellation. A blocked synchronous PhotoKit call itself cannot be killed; the caller returns and further asset work on that page is suppressed. Scope changes cannot reuse an unbounded completed index. Out-of-scope index membership is not a verified Photos deletion. Receipt/tray format and SafetyPolicy unchanged.
+
+Home adds a metadata-only activity summary of up to 5,000 accessible recent items (dates/burst membership only), one suggested week plus optional additional weeks, and bounded date/count scan choices. Suggested weeks/month/two months are capped at 2,000 items. No trip classification, savings estimate, whole-library/cloud/local counts or fixed completion time is inferred. Background work shares the selected scan task and its cancellation owner. Hosted unit tests now use a fake app environment, and library observation waits for Photos authorization, preventing unsolicited real Photos initialization during tests.
+
+Evidence so far:
+- Core 118 tests PASS; fixtures 7 tests PASS; synthetic eval GATE PASS; lint/policy separation and generic simulator build PASS.
+- Initial full make ios-test completed: 311 unit tests with 2 skips/5 failures, plus 39 UI tests with 7 skips/4 failures. These were real failures, not a green CI claim. Failures identified Keep Both state reset, an invalid exact-pair fixture, the 10k watchdog, old UI fixture timestamps outside the new scan window, and contrast audits.
+- Corrected focused run on iPad Pro 11-inch simulator, iOS 27.2: 25 tests PASS, including all scoped-scan/Swipe model tests and the 10,000-photo no-main-block watchdog (40.5 s). CPU sharpness/exposure calculations moved off main. Product swipe feed remains the original directly compared similar-pair contract.
+- Clean broad unit rerun: 309 tests, 2 existing skips, 0 failures. This explicitly excludes the two memory tests and watchdog, which have separate runs; an earlier interrupted run overlapped simulator sessions and is NOT counted as passing.
+- Final tier-M memory suite on iPad simulator with TEST_RUNNER_CLEANSLATE_TIER=M: 2 tests PASS. Scope 100 peak 33.6 MB, 10k peak 47.0 MB, tier budget 160 MB; marginal settled growth 6.7 MB. Three-run settled-after-release soak 33.1/33.1/33.1 MB. This is a pinned simulator tier, not evidence from a physical 4 GB device. Earlier tier-H suite also passed (10k peak 92.3 MB, marginal retained growth 6.6 MB).
+- iPad overview/range picker and Compare rotation/choice tests PASS. Queue rotation/draft/Skip test PASS after collapsing the system sidebar to provide the required wide detail; no width policy or assertion weakened.
+- Phone scoped/background tests, overview/range picker, iCloud opt-in flow and behavioral Swipe tests PASS in focused reruns. Home/Swipe default+AX3 audits required further visual fixes; bottom scroll-edge blur was fading clipped labels, and photo decoration exposed duplicate accessibility nodes. Final audit results will be appended below.
+
+Simulator Vision/Espresso availability skips/errors remain documented. Physical iPhone/iPad metadata latency, cancellation under actual PhotoKit hangs, authorization permutations, Apple prompts, windowing, memory and Instruments gates remain PENDING. Self-review in this sole-agent session is not an independent gatekeeper approval. No personal photo libraries used.
+
+### Owner-requested session closure
+
+Final `make build`: PASS (generic iOS simulator). Final `xcodebuild ... -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO build`: PASS (physical iPhone/iPad arm64 compilation, unsigned). `make lint` and diff whitespace checks PASS. See PHONE_TESTING.md for signing and running on the owner's iPhone. No device was installed/run and no real photo library was tested by the agent.
+
+Closure is a buildable development checkpoint, not release approval or a claim that full make ios-test is green. The latest scoped/background and broad unit evidence is above. AX3 Swipe contrast audit passed after representing photos as images and keeping decision actions on the review deck/visible buttons; an earlier default audit then found an undersized actionable image representation. Actions were moved to the full-size deck and the final default audit was rerun at closure; its result is appended if available. Home contrast sampling still flags text clipped/occluded near the floating-tab edge. Do not remove or relax those test assertions to declare CI green. Next session should verify the remaining audit behavior and owner device results before starting N05 implementation. Research report and serialized feature queue are saved; N05 has a specification only.

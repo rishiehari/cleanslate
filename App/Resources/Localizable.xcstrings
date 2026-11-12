@@ -1,46 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "We couldn't compare this photo closely" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "We couldn't compare this photo closely"
-          }
-        }
-      }
-    },
-    "Not compared closely" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Not compared closely"
-          }
-        }
-      }
-    },
-    "Still checking this photo. Try again in a moment." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Still checking this photo. Try again in a moment."
-          }
-        }
-      }
-    },
-    "We couldn't compare this photo closely, so we can't tell what the suggested photo would lose. Look before you remove it." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "We couldn't compare this photo closely, so we can't tell what the suggested photo would lose. Look before you remove it."
-          }
-        }
-      }
-    },
     "%@" : {
 
     },
@@ -80,6 +40,9 @@
         }
       }
     },
+    "%@ photo" : {
+
+    },
     "%@ photos" : {
 
     },
@@ -95,6 +58,15 @@
     "≈ %@ more, estimated" : {
 
     },
+    "A few minutes. A little more room." : {
+
+    },
+    "A private record of how scans ran on this iPhone. It never leaves your phone unless you share it." : {
+
+    },
+    "Approve 1 photo" : {
+
+    },
     "Approve all %@ %@" : {
       "localizations" : {
         "en" : {
@@ -106,6 +78,12 @@
       }
     },
     "Approve photos in a review and they'll wait here. Nothing is deleted until you confirm." : {
+
+    },
+    "Approving never deletes. Your tray has a separate confirmation, followed by Apple's prompt." : {
+
+    },
+    "Contains timings and counts only. No photos, names, dates or places." : {
 
     },
     "Delete %@ %@" : {
@@ -190,10 +168,16 @@
     "Swipe a group to take it out of the tray." : {
 
     },
+    "Swipe left to keep the left photo, or right to keep the right. Choose Keep both to move on. Then approve your choice to add one photo to the tray." : {
+
+    },
     "That frees about %@ (verified file sizes)." : {
 
     },
     "These changed after you approved them, so they won't be deleted unless you review them again." : {
+
+    },
+    "This removes the local record of how scans ran. Your photos and names were never in it." : {
 
     },
     "This version checks part of your library at a time, and can't compare photos that only live in iCloud. Similar shots are never selected for you." : {

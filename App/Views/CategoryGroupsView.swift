@@ -90,7 +90,7 @@ struct CategoryGroupsView: View {
                     .appText(.secondary).foregroundStyle(Color.textSecondary)
                 if s.exactAssetsUnverifiable > 0 {
                     Button { showVerifySheet = true } label: {
-                        Label("\(s.exactAssetsUnverifiable.formatted()) couldn't be checked — they're in iCloud. Turn on iCloud checking", systemImage: "icloud.and.arrow.down")
+                        Label("\(s.exactAssetsUnverifiable.formatted()) originals couldn't be checked. Review iCloud checking options", systemImage: "icloud.and.arrow.down")
                             .appText(.secondary).multilineTextAlignment(.leading)
                     }
                     .accessibilityIdentifier("inbox.verifyicloud")

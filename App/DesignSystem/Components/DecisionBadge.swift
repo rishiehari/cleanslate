@@ -10,11 +10,8 @@ struct DecisionBadge: View {
     let decision: Decision
 
     var body: some View {
-        Label {
-            Text(title).appText(.badge)
-        } icon: {
-            Image(systemName: symbol).imageScale(.small)
-        }
+        Label(title, systemImage: symbol)
+        .appText(.chip)
         .padding(.horizontal, Spacing.s)
         .padding(.vertical, Spacing.xs)
         .foregroundStyle(Color.onAccent)

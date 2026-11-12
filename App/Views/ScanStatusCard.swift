@@ -4,6 +4,8 @@ import SwiftUI
 struct ScanStatusCard: View {
     @EnvironmentObject private var model: CleaningViewModel
 
+    @State private var choosingScope = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s + Spacing.xs) {
             HStack {
@@ -15,14 +17,20 @@ struct ScanStatusCard: View {
                 } else {
                     Button(model.statistics.photosEnumerated > 0 ? "Scan again" : "Scan photos",
                            systemImage: "sparkle.magnifyingglass") { model.scan() }
-                        .buttonStyle(.glassProminent).tint(Color.actionPrimary)
+                        .buttonStyle(AccessiblePrimaryButtonStyle())
                         .accessibilityIdentifier("dashboard.scan")
                 }
             }
+            Text("\(model.currentScanTitle) · up to \((model.currentScanScope.maximumItems ?? 2_000).formatted()) items")
+                .appText(.caption).foregroundStyle(Color.textPrimary)
+            if !model.isScanning {
+                Button("Change scan range") { choosingScope = true }
+                    .frame(minHeight: 44).accessibilityIdentifier("scan.changeScope")
+            }
             if model.isScanning { ProgressView(value: model.progress) }
-            if let detail { Text(detail).appText(.caption).foregroundStyle(Color.textSecondary) }
+            if let detail { Text(detail).appText(.caption).foregroundStyle(Color.textPrimary) }
             if let message = model.statusMessage {
-                Text(message).appText(.caption).foregroundStyle(Color.textSecondary)
+                Text(message).appText(.caption).foregroundStyle(Color.textPrimary)
             }
             if let pause = model.pauseReason {
                 Label(pause, systemImage: "thermometer.medium").appText(.secondary).foregroundStyle(Color.warningAccent)
@@ -31,6 +39,7 @@ struct ScanStatusCard: View {
         }
         .padding(Spacing.m)
         .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.m))
+        .sheet(isPresented: $choosingScope) { ScanScopeView(isPresented: $choosingScope) }
     }
 
     private var headline: String {
@@ -50,7 +59,7 @@ struct ScanStatusCard: View {
     private var detail: String? {
         let s = model.statistics
         guard s.photosEnumerated > 0 else { return nil }
-        let checked = "\(s.photosEnumerated.formatted()) photos checked"
-        return s.cloudOnlyOrUnavailable > 0 ? "\(checked) · \(s.cloudOnlyOrUnavailable.formatted()) in iCloud weren't" : checked
+        let checked = "\(s.photosEnumerated.formatted()) items in this scan"
+        return s.cloudOnlyOrUnavailable > 0 ? "\(checked) · \(s.cloudOnlyOrUnavailable.formatted()) previews unavailable" : checked
     }
 }

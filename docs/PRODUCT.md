@@ -34,10 +34,10 @@ Apple's Photos app (Collections → Utilities → **Duplicates**) already finds 
 Approving moves photos into a **Deletion tray**; it never deletes. The tray's summary sheet, then Apple's system prompt, are the only paths to deletion.
 
 ## Non-goals
-No cloud or accounts. No ads, tracking, subscriptions or analytics. No automatic deletion of anything that is not byte-identical. No merging of photo metadata. No iPad-optimized layout in 1.0 (runs in compatibility mode). No claims of exhaustive duplicate detection.
+No cloud or accounts. No ads, tracking, subscriptions or analytics. No automatic deletion of anything that is not byte-identical. No merging of photo metadata. Native iPad layouts are in implementation; release requires the separate iPad validation gates. No claims of exhaustive duplicate detection.
 
 **2026-11-11 planning update:** the owner requested an iPad expansion plan and a detailed Swipe n Save interaction,
-onboarding and calibration plan. iPad implementation has not started. Swipe n Save's initial implementation reuses
+onboarding and calibration plan. iPad implementation was authorized later that day; the first universal-target and adaptive-layout increment is underway. Swipe n Save's initial implementation reuses
 existing directly compared similar pairs; choices are explicit and approval still only adds to the tray. Personalization
 is planning-only and does not change the [ML gate](ML_GATE.md) or authorize automatic deletion.
 
@@ -49,3 +49,8 @@ is planning-only and does not change the [ML gate](ML_GATE.md) or authorize auto
 
 ## Platform decision
 Minimum iOS **26** (iPhone 11 and newer): Liquid Glass and `BGContinuedProcessingTask` require it, and supporting iOS 18 would mean maintaining two visual systems. Reversible: if the owner prefers iOS 18, glass uses get `#available` fallbacks (Step 2B notes).
+
+
+## 2026-11-12 first-scan implementation
+
+The owner authorized bounded initial scans and a metadata-first start before further feature work. Home summarizes weekly photo activity using dates and burst membership from at most 5,000 recent accessible items; this is not duplicate analysis or a savings estimate. The default scan checks the past month with a 2,000-item cap. Past two months, suggested weeks and latest 100/1,000/2,000 are available. Time windows apply at PhotoKit fetch; unavailable previews are not automatically classified as cloud-only. Album scanning, cursor-based next batches, trip classification and selfie segmentation remain unimplemented. iPhone and iPad share these features and the same review/approval/tray pipeline. Device evidence remains pending.

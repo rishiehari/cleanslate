@@ -23,7 +23,7 @@ struct ReceiptView: View {
                 Text("Verified file sizes removed from your library.").appText(.secondary).foregroundStyle(Color.textSecondary)
             }
             if let before = receipt.freeBytesBefore, let after = receipt.freeBytesAfter {
-                Text("Free space on this iPhone right now: \(before.friendlyBytes) → \(after.friendlyBytes)")
+                Text("Free space on this device right now: \(before.friendlyBytes) → \(after.friendlyBytes)")
                     .appText(.caption).foregroundStyle(Color.textSecondary).accessibilityIdentifier("receipt.freespace")
             }
             VStack(alignment: .leading, spacing: Spacing.s) {

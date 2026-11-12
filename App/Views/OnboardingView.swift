@@ -7,7 +7,7 @@ struct OnboardingView: View {
 
     private struct Page { let symbol: String; let title: String; let body: String }
     private let pages = [
-        Page(symbol: "lock.shield", title: "Your photos stay on your iPhone",
+        Page(symbol: "lock.shield", title: "Your photos stay on this device",
              body: "CleanSlate looks for copies right here on your device. No account, no ads, and nothing is uploaded."),
         Page(symbol: "hand.raised", title: "You decide what goes",
              body: "Nothing is deleted until you approve it, then confirm it in Apple's own prompt. Deleted photos stay in Recently Deleted for 30 days. If iCloud Photos is on, they're removed from your other devices too."),

@@ -52,7 +52,7 @@ final class RequestTimeoutTests: XCTestCase {
         library.stuckDigestIDs = ["copy"]
         library.digestTimeout = 30
         let model = try ScanTestRig.model(library: library)
-        model.scan()
+        model.scanAllForTesting()
         let reached = await waitUntil(timeout: 30) { model.scanCounters.snapshot.phase == .fullResources }
         XCTAssertTrue(reached, "the scan reached the digest phase")
         let began = Date()

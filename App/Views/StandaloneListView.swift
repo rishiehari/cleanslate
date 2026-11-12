@@ -52,7 +52,7 @@ struct StandaloneListView: View {
             .padding(Spacing.m)
             .padding(.bottom, Spacing.barClearance)
         }
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .scrollEdgeEffectHidden(true, for: .bottom)
         .background(Color.surfaceBackground)
         .navigationTitle(category.title)
         .navigationBarTitleDisplayMode(.inline)

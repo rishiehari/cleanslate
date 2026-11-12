@@ -35,7 +35,7 @@ final class ScanEngineTests: XCTestCase {
         seed(2_500)
         let model = makeModel()
         library.onInventoryPage = { offset in if offset == 1_000 { model.stop() } }
-        model.scan()
+        model.scanAllForTesting()
         try? await Task.sleep(for: .milliseconds(800))
         XCTAssertFalse(model.isScanning)
         let partial = await store.assetCount()

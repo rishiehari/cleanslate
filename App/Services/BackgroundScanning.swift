@@ -30,10 +30,10 @@ enum BackgroundScanning {
             guard let task = task as? BGProcessingTask else { return }
             let work = Task { @MainActor in
                 guard let model else { task.setTaskCompleted(success: false); return }
-                await model.runScan()
+                await model.runSelectedScan()
                 task.setTaskCompleted(success: model.phase == .finished)
             }
-            task.expirationHandler = { work.cancel() }   // progress is checkpointed, so a cut-off scan resumes later
+            task.expirationHandler = { work.cancel() }   // bounded inventory restarts; revision-matched feature work can be reused
         }
         if #available(iOS 26.0, *) {
             BGTaskScheduler.shared.register(forTaskWithIdentifier: continuedWildcard, using: nil) { task in
@@ -48,7 +48,7 @@ enum BackgroundScanning {
                             try? await Task.sleep(for: .seconds(1))
                         }
                     }
-                    if !model.isScanning { await model.runScan() }
+                    await model.runSelectedScan()
                     reporter.cancel()
                     task.setTaskCompleted(success: model.phase == .finished)
                 }
@@ -76,7 +76,7 @@ enum BackgroundScanning {
         guard didRegister, NSClassFromString("XCTestCase") == nil else { return }
         guard #available(iOS 26.0, *) else { return }
         let request = BGContinuedProcessingTaskRequest(identifier: continuedIdentifier, title: "Looking for copies",
-                                                       subtitle: "CleanSlate is scanning your photos on this iPhone")
+                                                       subtitle: "CleanSlate is scanning your photos on this device")
         request.strategy = .queue
         try? BGTaskScheduler.shared.submit(request)
     }

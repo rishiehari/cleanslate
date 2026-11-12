@@ -11,7 +11,9 @@ enum SwipePairFeed {
             .union(model.tray.standaloneEntries.flatMap { $0.items.map(\.id) })
         var used = occupied
         return model.groups.sorted { $0.id < $1.id }.filter { group in
-            guard eligible(group), !model.tray.reviewedGroupIDs.contains(group.id),
+            // Product feed remains the directly compared similar-pair V1. Exact-pair
+            // model support does not silently expand the approved feed contract.
+            guard group.kind == .similar, group.id.hasPrefix("near-"), eligible(group), !model.tray.reviewedGroupIDs.contains(group.id),
                   !model.recheckingGroupIDs.contains(group.id),
                   used.isDisjoint(with: group.all.map(\.id)) else { return false }
             used.formUnion(group.all.map(\.id))
@@ -20,13 +22,27 @@ enum SwipePairFeed {
     }
 
     static func eligible(_ group: PhotoReviewGroup) -> Bool {
-        // seq-* edges describe burst/time grouping, rather than an individual Vision comparison.
-        guard group.id.hasPrefix("near-"), group.kind == .similar, group.candidates.count == 1,
+        // Support both exact and similar pairs
+        guard group.kind == .similar || group.kind == .exact,
+              group.candidates.count == 1,
               group.keeper.id != group.candidates[0].id,
               group.all.allSatisfy({ !$0.isVideo && !$0.record.revision.isEmpty && $0.id == $0.record.id }) else { return false }
-        return group.evidence.count == 1 && group.evidence.allSatisfy {
-            $0.joins(group.keeper.id, group.candidates[0].id) && $0.relation == .visuallySimilar && !$0.uniqueContentDetected
+        
+        // For similar pairs, check that they are directly compared
+        if group.kind == .similar {
+            return group.evidence.count == 1 && group.evidence.allSatisfy {
+                $0.joins(group.keeper.id, group.candidates[0].id) && $0.relation == .visuallySimilar && !$0.uniqueContentDetected
+            }
         }
+        
+        // For exact pairs, check that they are exactly equal
+        if group.kind == .exact {
+            return group.evidence.count == 1 && group.evidence.allSatisfy {
+                $0.joins(group.keeper.id, group.candidates[0].id) && $0.relation == .exactResources && $0.completeResourceEquality
+            }
+        }
+        
+        return false
     }
 
     /// Includes evidence, protections, membership and revisions, so a changed pair gets fresh warning state.
@@ -42,10 +58,13 @@ enum SwipePairFeed {
 @MainActor
 final class SwipePairModel: ObservableObject {
     enum Side { case left, right }
+    enum ChoiceType { case keepLeft, keepRight, keepBoth }
+    
     let original: PhotoReviewGroup
     let keepLeft: GroupReviewModel
     let keepRight: GroupReviewModel
     @Published private(set) var side: Side?
+    @Published private(set) var choiceType: ChoiceType?
     @Published private(set) var notice: String?
     private let cleaning: CleaningViewModel
 
@@ -76,10 +95,18 @@ final class SwipePairModel: ObservableObject {
     func choose(_ side: Side) {
         guard isCurrent else { notice = "These photos changed. Choose again after scanning."; return }
         self.side = side
+        choiceType = side == .left ? .keepLeft : .keepRight
         notice = nil
         let target = review.group.candidates[0].id
         // tap, rather than set(.delete), preserves the warning acknowledgement gate.
         if !review.draft.deleteIDs.contains(target) { review.tap(target) }
+    }
+
+    func chooseKeepBoth() {
+        guard isCurrent else { return }
+        undoChoice()
+        choiceType = .keepBoth
+        keepLeft.skip()
     }
 
     func undoChoice() {
@@ -88,6 +115,7 @@ final class SwipePairModel: ObservableObject {
         keepLeft.warningPromptFor = nil
         keepRight.warningPromptFor = nil
         side = nil
+        choiceType = nil
         notice = nil
         HapticsService.shared.fire(.undo)
     }
@@ -101,16 +129,17 @@ final class SwipePairModel: ObservableObject {
         return review.approve()
     }
 
-    func keepBoth() {
-        guard isCurrent else { return }
-        undoChoice()
-        keepLeft.skip()
-    }
+    func keepBoth() { chooseKeepBoth() }
 
     private var freshSnapshotsMatch: Bool {
         original.all.allSatisfy { photo in
             guard let fresh = cleaning.library.snapshot(id: photo.id, inspectAlbums: true) else { return false }
             return fresh.record == photo.record
         }
+    }
+    
+    /// Returns whether this is an exact pair (byte-for-byte identical)
+    var isExactPair: Bool {
+        original.kind == .exact
     }
 }

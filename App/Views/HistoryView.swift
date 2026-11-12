@@ -16,7 +16,7 @@ struct HistoryView: View {
                     Section {
                         ForEach(receipts) { receipt in row(receipt) }
                     } footer: {
-                        Text("Deleted photos stay in Recently Deleted for 30 days. Space on your iPhone and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time.")
+                        Text("Deleted photos stay in Recently Deleted for 30 days. Space on this device and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time.")
                     }
                 }
             }
@@ -34,7 +34,7 @@ struct HistoryView: View {
             Text("\(receipt.logicalBytesRemoved.friendlyBytes) of verified file sizes · \(receipt.date.formatted(date: .abbreviated, time: .shortened))")
                 .appText(.secondary).foregroundStyle(Color.textSecondary)
             if let before = receipt.freeBytesBefore, let after = receipt.freeBytesAfter {
-                Text("Free space on this iPhone: \(before.friendlyBytes) → \(after.friendlyBytes)")
+                Text("Free space on this device: \(before.friendlyBytes) → \(after.friendlyBytes)")
                     .appText(.caption).foregroundStyle(Color.textSecondary)
             }
             if receipt.uncertain > 0 {

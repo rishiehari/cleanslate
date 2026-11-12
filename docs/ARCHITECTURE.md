@@ -44,9 +44,11 @@ Thumbnail, video-size and Vision requests have 10-second deadlines; digest strea
 deadline. Diagnostics record stage counts, timeouts, heartbeat, and main-thread watchdog events locally. UI scan
 publication is coalesced rather than emitted for every asset.
 
-**Remaining device risk:** `PhotoKitLibraryClient` is still main-actor isolated, and inventory snapshots enumerate
-resource metadata synchronously. Fake-library watchdog tests do not establish that the owner's real PhotoKit
-metadata-fetch hang is resolved. F03's Instruments/device gate remains PENDING. F04 scoped inventory is not implemented.
+**Bounded first scans (2026-11-12):** `PhotoInventoryReader` owns a serial queue for scan inventory and metadata-only activity summaries. Public PhotoKit date predicates/fetchLimit constrain the query before resource enumeration; normal inventory pages contain 25 snapshots, with a 10-second deadline and prompt caller cancellation. Only the worker touches its PHFetchResult. A synchronous PhotoKit call cannot be forcibly interrupted; after cancellation it can finish only on that queue and additional asset work is suppressed. UI/review/mutation operations remain main-actor owned. CPU sharpness/exposure work is detached like fingerprint hashing.
+
+The activity overview aggregates dates and burst membership among at most 5,000 recent accessible assets. It retains week counts, not image bytes, raw IDs or locations. Suggested weeks and month/two-month scans have a 2,000-item maximum. Every bounded scan rebuilds active index membership; a prior wider index or change token cannot expand analysis beyond the new scope. Index rows outside a scope are deactivated, never interpreted as evidence of Photos deletion. Receipts/tray persistence and commit-time revalidation are unchanged.
+
+**Remaining device risk:** fake watchdog tests do not establish that the owner's real PhotoKit metadata-fetch hang is resolved. F03's Instruments/device gate remains PENDING. Full-library scan remains an internal regression/maintenance path; product/background entries use the bounded selection.
 
 ## Persistence
 `library-index.sqlite` (Application Support, WAL, complete-until-first-unlock, excluded from backup): rebuildable

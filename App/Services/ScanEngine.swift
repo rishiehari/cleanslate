@@ -101,9 +101,9 @@ final class ScanEngine {
 
     // MARK: Entry point
 
-    func run() async -> Outcome {
+    func run(scope: ScanScope = .all, inventoryRequest: ScanInventoryRequest? = nil) async -> Outcome {
         counters.reset(); libraryItems = 0; lastTickBucket = -1
-        let outcome = await runPhases()
+        let outcome = await runPhases(scope: scope, inventoryRequest: inventoryRequest)
         endPhase()
         // Leave the counters in an honest resting state for the watchdog's phase attribution.
         counters.update { $0.phase = outcome == .finished ? .finished : .idle; $0.inFlight = 0 }
@@ -163,15 +163,20 @@ final class ScanEngine {
         }
     }
 
-    private func runPhases() async -> Outcome {
+    private func runPhases(scope: ScanScope = .all, inventoryRequest: ScanInventoryRequest?) async -> Outcome {
         guard let reporter else { return .cancelled }
         await enter(.inventory)
-        await syncInventory()
+        do {
+            try await syncInventory(scope: scope, inventoryRequest: inventoryRequest)
+        } catch {
+            if Task.isCancelled { return .cancelled }
+            return .stopped(reason: "Photos took too long to respond. The scan stopped safely. Try Recent 100 or scan again.")
+        }
         if inventorySkipped { inventorySkipped = false; return .cancelled }
         if Task.isCancelled { return .cancelled }
         let total = await store.assetCount()
         reporter.scanUpdate { $0.photosEnumerated = total }
-        diagnostics?.record(.scanStarted(scope: .all, items: total))
+        diagnostics?.record(.scanStarted(scope: scope == .all ? .all : .bounded, items: total))
         if total == 0 { return .finished }
         libraryItems = total
 
@@ -214,8 +219,15 @@ final class ScanEngine {
 
     private typealias Meta = LibrarySync.Meta
 
-    private func syncInventory() async {
-        if await store.meta(Meta.complete) != nil, let token = await store.meta(Meta.token), await store.assetCount() > 0 {
+    private func syncInventory(scope: ScanScope = .all, inventoryRequest: ScanInventoryRequest?) async throws {
+        // A scoped inventory is always rebuilt: a wider prior index must never bypass the cap.
+        let priorScope = await store.meta("inventory.scope")
+        if scope != .all || (priorScope != nil && priorScope != Data(ScanScope.all.rawValue.utf8)) {
+            try await store.setMeta(Meta.complete, nil)
+            try await store.setMeta(Meta.offset, nil)
+            try await store.setMeta(Meta.startedAt, nil)
+        }
+        if scope == .all, await store.meta(Meta.complete) != nil, let token = await store.meta(Meta.token), await store.assetCount() > 0 {
             switch library.changes(since: token) {
             case .changes(let set):
                 await applyChanges(set)
@@ -227,7 +239,7 @@ final class ScanEngine {
                 break
             }
         }
-        await fullInventory()
+        try await fullInventory(scope: scope, inventoryRequest: inventoryRequest)
     }
 
     private func applyChanges(_ set: LibraryChangeSet) async {
@@ -235,7 +247,10 @@ final class ScanEngine {
         reporter?.scanUpdate { $0.changesApplied = touched }
     }
 
-    private func fullInventory() async {
+    private func fullInventory(scope: ScanScope, inventoryRequest: ScanInventoryRequest?) async throws {
+        let request = inventoryRequest ?? scope.inventoryRequest()
+        guard scope != .album else { throw LibraryResourceError.notAccessible }
+        try await store.setMeta("inventory.scope", Data(scope.rawValue.utf8))
         var offset = 0
         var startedAt = Date().timeIntervalSince1970
         // Resume an interrupted full inventory instead of starting over.
@@ -252,10 +267,13 @@ final class ScanEngine {
         }
         while true {
             if Task.isCancelled || shouldSkip(.inventory) { return }
-            let page = library.inventoryPage(offset: offset, limit: Self.pageSize)
+            let page = try await library.scanInventoryPage(offset: offset,
+                limit: scope == .all ? Self.pageSize : 25, request: request)
+            try Task.checkCancellation()
             if page.photos.isEmpty { break }
             try? await store.upsert(page.photos)
             offset += page.photos.count
+            reporter?.scanUpdate { $0.photosEnumerated = offset }
             try? await store.setMeta(Meta.offset, Data(String(offset).utf8))
             reporter?.scanProgress(0.10 * Double(offset) / Double(max(1, page.total)))
             tick(done: offset, total: page.total)
@@ -515,7 +533,10 @@ final class ScanEngine {
         if let cached = qualityCache.value(for: photo.id) { return cached }
         let signals: QualitySignals
         if let image {
-            let (sharpness, exposure) = VisualFeatures.sharpnessAndExposure(image)
+            let box = ImageBox(image: image)
+            let (sharpness, exposure) = await Task.detached(priority: .utility) {
+                autoreleasepool { VisualFeatures.sharpnessAndExposure(box.image) }
+            }.value
             var face: Double?, aesthetics: Double?
             if visionAllowed {
                 // Under the 10 s deadline like every Vision request (edge finding M1): an expired

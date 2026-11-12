@@ -21,7 +21,7 @@ struct DiagnosticsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.m) {
-                Text("A private record of how scans ran on this iPhone. It never leaves your phone unless you share it.")
+                Text("A private record of how scans ran on this device. It never leaves this device unless you share it.")
                     .appText(.secondary).foregroundStyle(Color.textSecondary)
                 if records.isEmpty {
                     ContentStateView<Int, EmptyView>(state: .empty(title: "Nothing recorded yet",

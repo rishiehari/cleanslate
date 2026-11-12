@@ -5,13 +5,16 @@ import AVFoundation
 import CryptoKit
 import CleanSlateCore
 
-/// All PhotoKit-facing work is isolated on the main actor. Inference and byte streaming use
-/// asynchronous callbacks; the app does not call PhotoKit from an uncontrolled background task.
+/// UI, review and mutation operations are main-actor owned. Scan inventory and activity
+/// metadata have a dedicated serial reader; no PhotoKit objects cross that queue.
 @MainActor
 final class PhotoKitLibraryClient: PhotoLibraryClient {
     static let shared = PhotoKitLibraryClient()
     private static let resourceQueue = DispatchQueue(label: "org.cleanslate.resource-watchdog", qos: .userInitiated)
+    private let inventoryReader = PhotoInventoryReader()
     private let imageManager = PHCachingImageManager()
+    private var prefetchedAssets: [PHAsset] = []
+    private var prefetchTarget: CGFloat = 600
     private let watcher = PhotoLibraryWatcher()
     private var handlers: [UUID: @MainActor () -> Void] = [:]
     private var registered = false
@@ -24,7 +27,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     func observeChanges(_ onChange: @escaping @MainActor () -> Void) -> ChangeSubscription {
         let id = UUID()
         handlers[id] = onChange
-        if !registered { PHPhotoLibrary.shared().register(watcher); registered = true }
+        registerWatcherIfAuthorized()
         return ChangeSubscription { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -35,6 +38,12 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                 }
             }
         }
+    }
+
+    private func registerWatcherIfAuthorized() {
+        guard !registered, !handlers.isEmpty, authorization == .authorized || authorization == .limited else { return }
+        PHPhotoLibrary.shared().register(watcher)
+        registered = true
     }
 
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot? {
@@ -124,11 +133,13 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     var authorization: PHAuthorizationStatus { PHPhotoLibrary.authorizationStatus(for: .readWrite) }
 
     func requestAccess() async -> PHAuthorizationStatus {
-        await withCheckedContinuation { continuation in
+        let status = await withCheckedContinuation { continuation in
             PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
                 continuation.resume(returning: status)
             }
         }
+        registerWatcherIfAuthorized()
+        return status
     }
 
     private var inventoryFetch: PHFetchResult<PHAsset>?
@@ -154,6 +165,15 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
             }
         }
         return (photos, result.count)
+    }
+
+    func activitySummary() async throws -> PhotoActivitySummary {
+        try await inventoryReader.activitySummary()
+    }
+
+    func scanInventoryPage(offset: Int, limit: Int, request: ScanInventoryRequest) async throws -> ScanInventoryPage {
+        registerWatcherIfAuthorized()
+        return try await inventoryReader.page(offset: offset, limit: limit, request: request)
     }
 
     func currentChangeToken() -> Data? {
@@ -188,6 +208,10 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     }
 
     private func snapshot(_ asset: PHAsset, inspectAlbums: Bool = false) -> PhotoSnapshot {
+        Self.makeSnapshot(asset, inspectAlbums: inspectAlbums)
+    }
+
+    nonisolated static func makeSnapshot(_ asset: PHAsset, inspectAlbums: Bool = false) -> PhotoSnapshot {
         var flags: Set<PreservationFlag> = []
         if asset.isFavorite { flags.insert(.favorite) }
         if asset.isHidden { flags.insert(.hidden) }
@@ -231,6 +255,20 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                              originalFilename: resources.first(where: { $0.type == .photo || $0.type == .video })?.originalFilename,
                              isVideo: asset.mediaType == .video, durationSeconds: asset.duration,
                              subtypes: asset.mediaSubtypes.rawValue)
+    }
+
+    func prefetchThumbnails(_ ids: [String], target: CGFloat) {
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = false
+        options.deliveryMode = .fastFormat
+        options.resizeMode = .fast
+        imageManager.stopCachingImages(for: prefetchedAssets,
+                                       targetSize: CGSize(width: prefetchTarget, height: prefetchTarget),
+                                       contentMode: .aspectFit, options: options)
+        prefetchedAssets = Array(ids.prefix(8)).compactMap { fetchAsset($0) }
+        prefetchTarget = target
+        imageManager.startCachingImages(for: prefetchedAssets, targetSize: CGSize(width: target, height: target),
+                                        contentMode: .aspectFit, options: options)
     }
 
     /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable,

@@ -63,6 +63,41 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     /// True while the F02 heartbeat sees a stall episode (F05 renders the stall message).
     @Published private(set) var isScanStalled = false
 
+    // MARK: Scan Scope Support
+    @Published private(set) var activityOverview: PhotoActivitySummary?
+    @Published private(set) var activityOverviewLoading = false
+    @Published private(set) var activityOverviewError: String?
+    @Published private(set) var currentScanPeriod: PhotoActivityPeriod?
+
+    var currentScanTitle: String {
+        if let period = currentScanPeriod {
+            return "Week of \(period.start.formatted(date: .abbreviated, time: .omitted))"
+        }
+        return currentScanScope.title
+    }
+
+    func loadActivityOverview() async {
+        guard authorization == .authorized || authorization == .limited else {
+            activityOverview = nil
+            return
+        }
+        guard activityOverview == nil, !activityOverviewLoading else { return }
+        activityOverviewLoading = true
+        activityOverviewError = nil
+        defer { activityOverviewLoading = false }
+        do {
+            let summary = try await library.activitySummary()
+            try Task.checkCancellation()
+            activityOverview = summary
+        } catch {
+            if !Task.isCancelled {
+                activityOverviewError = "Photos didn't respond in time. You can still start a small scan or try the overview again."
+            }
+        }
+    }
+
+    @Published private(set) var currentScanScope: ScanScope = .recentMonth
+
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
     let tray: DeletionTray
@@ -121,11 +156,20 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
     }
 
+    func setScanScope(_ scope: ScanScope) {
+        guard !isScanning, scanTask == nil, ScanScope.userScopes.contains(scope) else { return }
+        currentScanScope = scope
+        currentScanPeriod = nil
+    }
+
     func refreshPermissions() {
         let newStatus = library.authorization
         if newStatus != authorization {
             scanTask?.cancel()
             resetResults()
+            activityOverview = nil
+            currentScanPeriod = nil
+            currentScanScope = .recentMonth
             statusMessage = "Photos access changed. Please scan again."
         }
         authorization = newStatus
@@ -350,7 +394,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     // MARK: Scanning
 
     /// Runs one scan to completion. `scan()` wraps this in a cancellable task; tests await it directly.
-    func runScan() async {
+    /// Explicit internal default preserves full-library regression coverage. Product entry is scan(),
+    /// which always captures the selected bounded scope before scheduling the task.
+    func runScan(with scope: ScanScope = .all, inventoryRequest: ScanInventoryRequest? = nil) async {
         guard !isScanning, authorization == .authorized || authorization == .limited else { return }
         isScanning = true
         statistics = ScanStatistics(); statusMessage = nil; progress = 0
@@ -379,7 +425,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             }
         }
         defer { tick.cancel() }
-        let outcome = await engine.run()
+        let outcome = await engine.run(scope: scope, inventoryRequest: inventoryRequest)
         publishProgressSnapshot()                    // final synchronous flush before finishScan reads statistics
         finishScan(outcome)
         progressBuffer.withLock { s in s.phase = self.phase; s.progress = self.progress }   // finishScan may advance them
@@ -391,13 +437,47 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         }
     }
 
-    func scan() {
-        guard !isScanning else { return }
+    func scan(scope: ScanScope? = nil) {
+        guard !isScanning, scanTask == nil else { return }
+        let chosen = scope ?? currentScanScope
+        guard ScanScope.userScopes.contains(chosen) || (chosen == .activityRange && currentScanPeriod != nil) else { return }
+        if chosen != .activityRange { currentScanPeriod = nil }
+        beginScan(scope: chosen, request: chosen == .activityRange ? selectedPeriodRequest : nil)
+    }
+
+    func scan(period: PhotoActivityPeriod) {
+        guard !isScanning, scanTask == nil else { return }
+        currentScanPeriod = period
+        beginScan(scope: .activityRange, request: selectedPeriodRequest)
+    }
+
+    private var selectedPeriodRequest: ScanInventoryRequest? {
+        currentScanPeriod.map { ScanInventoryRequest(maximumItems: 2_000, earliestDate: $0.start, latestDate: $0.end.addingTimeInterval(-0.001)) }
+    }
+
+    private func beginScan(scope: ScanScope, request: ScanInventoryRequest?) {
+        guard !isScanning, scanTask == nil else { return }
+        currentScanScope = scope
         scanTask = Task { [weak self] in
-            await self?.runScan()
+            await self?.runScan(with: scope, inventoryRequest: request)
             self?.scanTask = nil
         }
     }
+
+    /// Background continuation uses the same bounded selection as the foreground button.
+    func runSelectedScan() async {
+        await withTaskCancellationHandler {
+            if scanTask == nil { scan() }
+            await scanTask?.value
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.stop() }
+        }
+    }
+
+    #if DEBUG
+    /// Keeps historical full-library cancellation/fault tests explicit; never exposed in product UI.
+    func scanAllForTesting() { beginScan(scope: .all, request: nil) }
+    #endif
 
     func stop() { scanTask?.cancel() }
 
@@ -440,7 +520,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         switch outcome {
         case .cancelled:
             phase = .cancelled
-            statusMessage = "Scan paused. Your progress is saved, and the next scan picks up from here."
+            statusMessage = "Scan paused. Available results are ready to review. Scan again to recheck the selected range."
             diagnostics.record(.scanEnded(outcome: .paused, seconds: seconds, groupsFound: groups.count))
         case .stopped(let reason):
             phase = .cancelled
@@ -453,7 +533,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             if statistics.exactAssetsUnverifiable > 0 { message += " Some originals live only in iCloud, so matches there may be missed." }
             if statistics.visionUnavailable { message += " Similar-photo comparison isn't available on this device, so only identical copies were checked." }
             else if statistics.visionFailures > 0 { message += " Similar-photo comparison failed for \(statistics.visionFailures) pair(s)." }
-            if statistics.exactSkippedByLimit > 0 { message += " \(statistics.exactSkippedByLimit.formatted()) candidates were left for the next scan." }
+            if statistics.exactSkippedByLimit > 0 { message += " \(statistics.exactSkippedByLimit.formatted()) candidates were not checked in this scan." }
             statusMessage = message
         }
     }

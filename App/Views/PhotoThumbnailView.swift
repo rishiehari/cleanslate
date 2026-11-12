@@ -22,9 +22,12 @@ struct PhotoThumbnailView: View {
         .clipped()
         .task(id: assetID) {
             finished = false
-            image = await library.thumbnail(assetID, target: target)
+            image = nil
+            let loaded = await library.thumbnail(assetID, target: min(target, 1_400))
+            guard !Task.isCancelled else { return }
+            image = loaded
             finished = true
         }
-        .accessibilityLabel(image == nil ? "Photo thumbnail unavailable" : "Photo preview")
+        .accessibilityLabel(image != nil ? "Photo preview" : finished ? "Photo thumbnail unavailable" : "Loading photo preview")
     }
 }

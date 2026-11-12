@@ -15,6 +15,10 @@ protocol PhotoLibraryClient: AnyObject {
     /// One page of the library (images and videos), newest first. Callers walk pages instead of
     /// holding the whole library in memory.
     func inventoryPage(offset: Int, limit: Int) -> (photos: [PhotoSnapshot], total: Int)
+    /// Bounded metadata-only overview, without resource enumeration or thumbnail requests.
+    func activitySummary() async throws -> PhotoActivitySummary
+    /// Scan-only async inventory. Production applies bounds in PhotoKit and reads metadata off-main.
+    func scanInventoryPage(offset: Int, limit: Int, request: ScanInventoryRequest) async throws -> ScanInventoryPage
     /// Opaque archived token for "now" (used to catch up on changes later), or nil if unsupported.
     func currentChangeToken() -> Data?
     /// What changed since `token`. `.tokenExpired` means the history is gone: do a full inventory.
@@ -23,6 +27,8 @@ protocol PhotoLibraryClient: AnyObject {
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot?
     /// Local-only thumbnail; nil when no local rendition exists.
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage?
+    /// Bounded, local-only hints for the next few review photos. Empty ids release the hints.
+    func prefetchThumbnails(_ ids: [String], target: CGFloat)
     /// Digest of EVERY resource of the asset. Reads the network only when `allowNetwork` is true,
     /// which only `NetworkPolicy` (via `DigestFetcher`) may request.
     func digests(id: String, allowNetwork: Bool) async throws -> [ResourceDigest]
@@ -53,6 +59,7 @@ final class ChangeSubscription {
 }
 
 extension PhotoLibraryClient {
+    func prefetchThumbnails(_ ids: [String], target: CGFloat) {}
     /// Local-only convenience.
     func digests(id: String) async throws -> [ResourceDigest] { try await digests(id: id, allowNetwork: false) }
 }

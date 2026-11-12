@@ -31,7 +31,7 @@ enum ScanCategory: String, CaseIterable, Identifiable {
         case .similar: "Near-identical shots. You choose what to remove."
         case .videos: "Identical copies of the same video."
         case .screenshots: "Old screenshots and screen recordings. You pick."
-        case .largeFiles: "The biggest videos on your iPhone. You pick."
+        case .largeFiles: "The biggest videos on this device. You pick."
         }
     }
 

@@ -44,7 +44,7 @@ final class VisionCacheTests: XCTestCase {
         let visual = FakeVisualAnalyzer()
         visual.stuckTokens = [spec.token]
         let model = try ScanTestRig.model(library: library, visual: visual)
-        model.scan()
+        model.scanAllForTesting()
         let stuck = await waitUntil(timeout: 10) { model.scanCounters.snapshot.phase == .vision }
         XCTAssertTrue(stuck, "the scan entered the vision phase (stuck quality request in flight)")
         let began = Date()

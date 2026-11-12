@@ -142,6 +142,37 @@ final class FakePhotoLibrary: PhotoLibraryClient {
         return (page, all.count)
     }
 
+    private(set) var activitySummaryCalls = 0
+    func activitySummary() async throws -> PhotoActivitySummary {
+        activitySummaryCalls += 1
+        try Task.checkCancellation()
+        var builder = PhotoActivityBuilder()
+        let photos = assets.values.map(\.snapshot).sorted { ($0.capturedAt ?? .distantPast) > ($1.capturedAt ?? .distantPast) }
+        for photo in photos.prefix(5_000) { builder.add(date: photo.capturedAt, isBurst: photo.burstID != nil) }
+        await Task.yield()
+        return builder.finish()
+    }
+
+    func scanInventoryPage(offset: Int, limit: Int, request: ScanInventoryRequest) async throws -> ScanInventoryPage {
+        try Task.checkCancellation()
+        if request.maximumItems == nil && request.earliestDate == nil {
+            let page = inventoryPage(offset: offset, limit: limit)
+            return ScanInventoryPage(photos: page.photos, total: page.total)
+        }
+        pageRequests.append(offset)
+        onInventoryPage?(offset)
+        let matching = assets.values.map(\.snapshot).filter(request.includes).sorted {
+            ($0.capturedAt ?? .distantPast, $1.id) > ($1.capturedAt ?? .distantPast, $0.id)
+        }
+        let count = min(matching.count, request.maximumItems ?? matching.count)
+        let upper = min(count, offset + limit)
+        let photos = offset < upper ? Array(matching[offset..<upper]) : []
+        blockMainThreadForMetadata(reads: photos.count)
+        await Task.yield()
+        try Task.checkCancellation()
+        return ScanInventoryPage(photos: photos, total: count)
+    }
+
     // MARK: Change tracking (token = a counter into `changeLog`)
     private(set) var pageRequests: [Int] = []
     private var changeLog: [(changed: Set<String>, deleted: Set<String>)] = []
@@ -395,23 +426,34 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 /// Builds a review group out of fake-library assets.
 extension FakePhotoLibrary {
     /// Deterministic data for UI tests and screenshots (never used in release builds).
-    static func uiTestScenario(authorization: PHAuthorizationStatus = .authorized) -> (library: FakePhotoLibrary, groups: [PhotoReviewGroup], standalone: [StandaloneItem]) {
+    static func uiTestScenario(authorization: PHAuthorizationStatus = .authorized, swipePairs: Bool = false) -> (library: FakePhotoLibrary, groups: [PhotoReviewGroup], standalone: [StandaloneItem]) {
         let lib = FakePhotoLibrary()
         lib.authorization = authorization
         var groups: [PhotoReviewGroup] = []
+        let recentBase = Int64(Date().timeIntervalSince1970) - 10 * 86_400
         for n in 1...3 {
-            lib.add("ex\(n)-keep", content: "exact\(n)", bytes: Int64(n) * 2_400_000, at: Int64(1_000 * n))
-            lib.add("ex\(n)-copy", content: "exact\(n)", bytes: Int64(n) * 2_400_000, at: Int64(1_000 * n))
+            lib.add("ex\(n)-keep", content: "exact\(n)", bytes: Int64(n) * 2_400_000, at: recentBase + Int64(1_000 * n))
+            lib.add("ex\(n)-copy", content: "exact\(n)", bytes: Int64(n) * 2_400_000, at: recentBase + Int64(1_000 * n))
             groups.append(lib.exactGroup(keeper: "ex\(n)-keep", copies: ["ex\(n)-copy"], bytes: Int64(n) * 2_400_000))
         }
         // A copy that only exists in iCloud: found only after the user opts in to iCloud checking.
-        lib.add("ic-local", content: "icloud", bytes: 3_000_000, at: 9_000)
-        lib.add("ic-remote", content: "icloud", bytes: 3_000_000, at: 9_000)
+        lib.add("ic-local", content: "icloud", bytes: 3_000_000, at: recentBase + 9_000)
+        lib.add("ic-remote", content: "icloud", bytes: 3_000_000, at: recentBase + 9_000)
         let remoteDigests = lib.assets["ic-remote"]?.digests
         lib.assets["ic-remote"]?.cloudDigests = remoteDigests
         lib.assets["ic-remote"]?.digests = nil
         lib.add("sim1-a", content: "sim1a"); lib.add("sim1-b", content: "sim1b"); lib.add("sim1-c", content: "sim1c")
         groups.append(lib.similarGroup(keeper: "sim1-a", copies: ["sim1-b", "sim1-c"]))
+        if swipePairs {
+            for n in 1...3 {
+                let left = "sw\(n)-left", right = "sw\(n)-right"
+                lib.add(left, content: left, spec: RenderSpec(base: 20 + n))
+                lib.add(right, content: right, spec: RenderSpec(base: 20 + n, shiftX: 1))
+                let source = lib.similarGroup(keeper: left, copies: [right])
+                groups.append(PhotoReviewGroup(id: "near-swipe-\(n)", kind: .similar, keeper: source.keeper,
+                                               candidates: source.candidates, evidence: source.evidence, verifiedCandidateBytes: [:]))
+            }
+        }
         // Keeper-less categories.
         let screenshotBit: UInt = 1 << 2, recordingBit: UInt = 1 << 19
         let day: Int64 = 86_400
