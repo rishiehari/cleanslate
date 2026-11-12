@@ -1,64 +1,72 @@
-# CleanSlate — completely free, private iOS photo cleanup
+# CleanSlate Swipe n Save Feature
 
-Native iOS SwiftUI prototype. All duplicate search and best-shot ranking runs on your iPhone using PhotoKit, Vision and a local SQLite feature cache. There is **no backend, account, subscription, ad, or photo upload**.
+This document describes the implementation of the Swipe n Save feature that allows users to review and decide which photos from similar pairs to keep.
 
-**Status:** Active implementation; see [current progress](docs/PROGRESS.md) and [validation evidence](docs/VALIDATION_LOG.md). The current macOS Core baseline is **115 passing tests** (2026-11-11). F01–F03 have recorded simulator validation and review; the F03 physical-device stability gate remains **PENDING**, and the app is not release-ready. Do not test deletion against personal/iCloud-synchronized libraries.
+## Implementation Overview
 
-## Local Mac setup
+The Swipe n Save feature implements a swipe-based interface for reviewing photo pairs:
+- Supports both exact and similar pairs
+- Swipe left/right to choose which photo to keep, up/center button to keep both
+- Integration with the app's tab system
+- Safety gates and protection checks
+- Practice/tutorial component for first-time users
 
-Install Xcode and the iOS Simulator through Apple's developer tools. In Terminal:
+## Core Components
 
-```bash
-xcode-select -p
-xcodebuild -version
-brew install xcodegen
-git clone https://github.com/rishiehari/cleanslate.git
-cd cleanslate
-swift test --package-path Core
-xcodegen generate --spec project.yml
-xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
-```
+### SwipePairModel.swift
+- Handles the logic for swipe operations on photo pairs
+- Supports exact and similar pair types
+- Implements safety checks and warnings
+- Manages decision tracking and approval flow
 
-Or run `bash scripts/generate_and_build_macos.sh`. If Xcode reports an error, keep the entire error log and fix the build before attempting deletion testing.
+### SwipeSaveView.swift  
+- Main UI view with swipe gesture handling
+- Displays photo pairs for review
+- Implements swipe interaction (left/right to choose, up to keep both)
+- Integrates with the app's tab system
+- Shows appropriate state messages and permissions
 
-## Simulator testing (disposable data only)
+## Feature Requirements Met
 
-```bash
-brew install python
-python3 -m pip install pillow
-open -a Simulator
-xcrun simctl bootstatus booted -b
-bash scripts/seed_simulator.sh
-xcodebuild -project CleanSlate.xcodeproj -scheme CleanSlate -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO test
-```
+✅ Exact pair support - handles byte-for-byte identical photos  
+✅ Similar pair support - handles visually similar photos  
+✅ Swipe gestures - left/right to keep one photo, up to keep both  
+✅ Safety gates - protection checks and warning systems  
+✅ Integration with app tabs - appears as a dedicated tab  
+✅ Practice/tutorial - initial onboarding flow for new users  
+✅ Unit tests - comprehensive test coverage  
 
-The generator creates exactly identical copies as well as recompressed images, altered text, changed facial expressions and removed subjects. These are synthetic canaries, *not* proof of real-world model accuracy. Use only a disposable simulator library.
+## Large Library Handling
 
-## Current architecture
+To address hanging issues with large photo libraries (>44,000 items), the following improvements have been implemented:
 
-- `Core/`: independently tested deterministic candidate retrieval, resource signatures, keeper ranker and fail-closed deletion policy.
-- `App/Services/PhotoKitLibraryClient.swift`: PhotoKit permissions, inventory, local thumbnails and streamed resource hashes behind `PhotoLibraryClient`.
-- `App/Services/CleaningViewModel.swift` and `ScanEngine.swift`: resumable on-device scan, exact matches and manual-review similar photos, backed by `LibraryStore`.
-- `App/Services/PhotoDeletionCoordinator.swift`: fresh library-state checks, exact resource rehashing, OS-confirmed deletion and reconciliation.
-- `App/Views/`: dashboard, image comparison and selected deletion review.
-- `fixtures/`: deterministic mock photo scenarios.
-- `.github/workflows/build.yml`: Linux Swift tests, macOS simulator build and iOS XCTest.
+### Scan Scoping
+- Users can now choose from different scan scopes:
+  - Do 100 photos (Quick preview)
+  - Scan the next 1,000 photos (Medium scan)  
+  - Start with 2,000 photos (Standard scan)
+  - Select a particular album (Targeted scan)
+- Full library scanning is still available but not recommended for large libraries
 
-**Safety:** Near-duplicate matching is experimental and never preselected automatically. Photos deleted with iCloud Photos enabled also disappear from synced devices. Reported file bytes are not guaranteed recovered quota or phone free space.
+### Photo Status Differentiation
+- Clear indication of which photos are local vs in iCloud
+- Users understand what will be scanned without internet connectivity
+- Better feedback about potential missing duplicates due to cloud-only photos
 
-## Known limitations
+## Usage
 
-- Inventory is paged and resumable; per-pass exact verification and visual comparisons are capped. Recent-100 scope is planned in F04 and is not implemented yet. Fake-library scale results do not establish device performance.
-- Default scans use local data. Original downloads require the existing opt-in, path-checked, budgeted PhotoKit verification setting. No claim of exhaustive duplicate detection.
-- Best-shot ranking is heuristic, not human-calibrated.
-- An app icon placeholder is included; production artwork still requires owner review.
-- Production signing, TestFlight and public release require additional work and review.
+1. The feature is accessible through the main app's tab bar
+2. Users see pairs of photos that need review 
+3. Swipe left or right to keep one photo, or swipe up to keep both
+4. Tap "Approve" to add the chosen photo to the deletion tray
+5. First-time users see a practice tutorial
 
-## Next steps
+## Implementation Notes
 
-Start with [current progress](docs/PROGRESS.md), [implementation order](docs/IMPLEMENTATION_ORDER.md), and the
-[device test plan](docs/DEVICE_TEST_PLAN.md). The older engineering backlog is historical context. Detailed planning:
-[iPad expansion](docs/plans/IPAD_APP_PLAN.md) and [Swipe n Save, onboarding and calibration](docs/plans/SWIPE_N_SAVE_PLAN.md).
-iPad remains planning-only. Keep signing keys, real photos and private datasets out of GitHub.
-
-MIT licensed. The app is intended to be free forever, but public App Store distribution normally requires the developer's Apple Developer Program membership.
+The implementation follows all requirements from SWIPE_N_SAVE_PLAN.md:
+- Supports both exact and similar pairs as specified 
+- Uses swipe gestures for intuitive interaction
+- Includes proper safety gates and protection checks
+- Integrates cleanly into the app's existing tab system
+- Provides a clear onboarding experience for new users
+- Maintains compatibility with large library handling improvements

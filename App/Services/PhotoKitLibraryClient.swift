@@ -12,6 +12,8 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
     static let shared = PhotoKitLibraryClient()
     private static let resourceQueue = DispatchQueue(label: "org.cleanslate.resource-watchdog", qos: .userInitiated)
     private let imageManager = PHCachingImageManager()
+    private var prefetchedAssets: [PHAsset] = []
+    private var prefetchTarget: CGFloat = 600
     private let watcher = PhotoLibraryWatcher()
     private var handlers: [UUID: @MainActor () -> Void] = [:]
     private var registered = false
@@ -231,6 +233,20 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                              originalFilename: resources.first(where: { $0.type == .photo || $0.type == .video })?.originalFilename,
                              isVideo: asset.mediaType == .video, durationSeconds: asset.duration,
                              subtypes: asset.mediaSubtypes.rawValue)
+    }
+
+    func prefetchThumbnails(_ ids: [String], target: CGFloat) {
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = false
+        options.deliveryMode = .fastFormat
+        options.resizeMode = .fast
+        imageManager.stopCachingImages(for: prefetchedAssets,
+                                       targetSize: CGSize(width: prefetchTarget, height: prefetchTarget),
+                                       contentMode: .aspectFit, options: options)
+        prefetchedAssets = Array(ids.prefix(8)).compactMap { fetchAsset($0) }
+        prefetchTarget = target
+        imageManager.startCachingImages(for: prefetchedAssets, targetSize: CGSize(width: target, height: target),
+                                        contentMode: .aspectFit, options: options)
     }
 
     /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable,

@@ -1,6 +1,6 @@
 # Native iPad app plan
 
-Date: 2026-11-11. Status: requirements and implementation proposal; **no iPad implementation authorized by this document**. Owner requested planning. The shipping target remains iPhone (`TARGETED_DEVICE_FAMILY = 1`), iOS 26 minimum. This plan proposes a universal app, retaining the same bundle ID and shared engine, after the owner authorizes implementation. Existing device gates remain PENDING.
+Date: 2026-11-11. Status: implementation started by owner request on 2026-11-11; release remains gated. The implementation target is universal (`TARGETED_DEVICE_FAMILY = 1,2`), iOS 26 minimum. This plan proposes a universal app, retaining the same bundle ID and shared engine, after the owner authorizes implementation. Existing device gates remain PENDING.
 
 ## Product outcome and boundaries
 
@@ -148,3 +148,18 @@ Verified 2026-11-11 against installed `iPhoneSimulator27.2.sdk`; deployment targ
 SDK presence is not device behavior evidence. Generated target-family settings, supported orientations, scene manifest/multiple-window configuration, iPad window constraints, current supported hardware and App Store screenshot requirements must be verified during implementation. No current hardware compatibility or App Store policy claim is inferred from this plan.
 
 Default decisions requiring no extra design work: universal app, iOS/iPadOS 26 baseline, one resizable window first, same engine/safety policy, touch-first with keyboard parity, no cross-device app-state sync. Owner decisions before release: whether iPad ships with the next version, target device test matrix, and whether multiwindow belongs in a later release.
+
+
+## Implementation increment 1 — 2026-11-11
+
+Owner authorized implementation in the working session. Foundation changes:
+
+- Universal generated target; explicit single-window scene manifest and all four iPad orientations. No full-screen requirement.
+- Chose the plan's supported `.sidebarAdaptable` alternative for the first shell increment. A typed scene-local `AppDestination` selection and one stable `TabView` preserve the existing review entrances, app-owned services and sole receipt presenter without geometry-based root replacement.
+- Existing Home and Swipe n Save remain the navigation entrances. Category review, tray, history and settings reuse their current routes. Dedicated destination routing and persistent group queue remain outstanding IP1/IP2 work; this is not full shell acceptance.
+- Compare reuses its shared zoom/pan and bounded thumbnail request, with equal horizontal panes once both meet the provisional 300-point minimum; narrow/AX layouts stack. `AnyLayout` keeps pane identity across resize. Home content is capped at 760 points.
+- Added layout-policy unit cases and a fake-only iPad rotation/choice-safety UI scenario. These new tests require a successful app build before execution can be claimed.
+
+Validation: `make core-test` passed 115 tests; `make lint` passed. `make build` failed on pre-existing working-tree changes: `PhotoModels.swift` references `Color` without importing SwiftUI; `ScanEngine.swift` passes `ScanScope` where diagnostics require `DiagScope`, and passes a scope argument to the existing no-argument `fullInventory`. These were not changed by this increment. Simulator UI tests, screenshots, memory measurements and device evidence remain pending. Installed SDK confirms `.sidebarAdaptable` in SwiftUI.swiftinterface at line 9488. No Apple-specific skills are installed in the session's skill catalog; local SDK verification and existing design-system components were used.
+
+Next buildable increments: complete shared destination routing and onboarding presentation ownership; prototype queue/detail with valid draft retention; adapt group/standalone/tray layouts; focused input and cache work; run the complete IP5 matrix. No claim of production-ready iPad support or resolved F03 gates.

@@ -40,3 +40,13 @@ extension Color {
     static let textPrimary = Color("textPrimary")
     static let textSecondary = Color("textSecondary")
 }
+
+/// Provisional window-layout values; validate at AX5 and on physical iPad before release.
+enum AdaptiveLayout {
+    static let minimumComparisonPhotoWidth: CGFloat = 300
+    static let readableContentWidth: CGFloat = 760
+
+    static func usesHorizontalComparison(width: CGFloat, accessibilityText: Bool) -> Bool {
+        !accessibilityText && width >= minimumComparisonPhotoWidth * 2 + Spacing.xs
+    }
+}

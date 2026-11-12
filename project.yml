@@ -7,7 +7,7 @@ settings:
   base:
     SWIFT_VERSION: '6.0'
     IPHONEOS_DEPLOYMENT_TARGET: '26.0'
-    TARGETED_DEVICE_FAMILY: '1'
+    TARGETED_DEVICE_FAMILY: '1,2'
     PRODUCT_BUNDLE_IDENTIFIER: org.cleanslate.free
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_CFBundleDisplayName: CleanSlate
@@ -28,6 +28,13 @@ targets:
       path: App/Info.plist
       properties:
         ITSAppUsesNonExemptEncryption: false
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         BGTaskSchedulerPermittedIdentifiers:
           - org.cleanslate.free.scan
           - org.cleanslate.free.continued.*

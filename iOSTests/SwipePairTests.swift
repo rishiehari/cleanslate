@@ -68,8 +68,9 @@ final class SwipePairTests: XCTestCase {
     func testKeepBothClearsChoiceAndSkipsWithoutTrayEntryAndUndoRestoresPair() async {
         let pair = await pair()
         pair.choose(.right)
-        pair.keepBoth()
+        pair.chooseKeepBoth()
         XCTAssertNil(pair.side)
+        XCTAssertEqual(pair.choiceType, .keepBoth)
         XCTAssertTrue(pair.keepLeft.draft.deleteIDs.isEmpty)
         XCTAssertTrue(pair.keepRight.draft.deleteIDs.isEmpty)
         XCTAssertTrue(cleaning.tray.reviewedGroupIDs.contains("near-1"))

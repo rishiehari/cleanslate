@@ -214,9 +214,9 @@ private struct EvidenceExplanation: View {
     }
 }
 
-private struct WarningPrompt: Identifiable { let id: String }
+struct WarningPrompt: Identifiable { let id: String }
 
-private struct WarningSheet: View {
+struct WarningSheet: View {
     let warnings: Set<DifferenceWarning>
     var couldntCompare = false
     let onRemoveAnyway: () -> Void

@@ -20,13 +20,27 @@ enum SwipePairFeed {
     }
 
     static func eligible(_ group: PhotoReviewGroup) -> Bool {
-        // seq-* edges describe burst/time grouping, rather than an individual Vision comparison.
-        guard group.id.hasPrefix("near-"), group.kind == .similar, group.candidates.count == 1,
+        // Support both exact and similar pairs
+        guard group.kind == .similar || group.kind == .exact,
+              group.candidates.count == 1,
               group.keeper.id != group.candidates[0].id,
               group.all.allSatisfy({ !$0.isVideo && !$0.record.revision.isEmpty && $0.id == $0.record.id }) else { return false }
-        return group.evidence.count == 1 && group.evidence.allSatisfy {
-            $0.joins(group.keeper.id, group.candidates[0].id) && $0.relation == .visuallySimilar && !$0.uniqueContentDetected
+        
+        // For similar pairs, check that they are directly compared
+        if group.kind == .similar {
+            return group.evidence.count == 1 && group.evidence.allSatisfy {
+                $0.joins(group.keeper.id, group.candidates[0].id) && $0.relation == .visuallySimilar && !$0.uniqueContentDetected
+            }
         }
+        
+        // For exact pairs, check that they are exactly equal
+        if group.kind == .exact {
+            return group.evidence.count == 1 && group.evidence.allSatisfy {
+                $0.joins(group.keeper.id, group.candidates[0].id) && $0.relation == .exactResources && $0.completeResourceEquality
+            }
+        }
+        
+        return false
     }
 
     /// Includes evidence, protections, membership and revisions, so a changed pair gets fresh warning state.
@@ -42,10 +56,13 @@ enum SwipePairFeed {
 @MainActor
 final class SwipePairModel: ObservableObject {
     enum Side { case left, right }
+    enum ChoiceType { case keepLeft, keepRight, keepBoth }
+    
     let original: PhotoReviewGroup
     let keepLeft: GroupReviewModel
     let keepRight: GroupReviewModel
     @Published private(set) var side: Side?
+    @Published private(set) var choiceType: ChoiceType?
     @Published private(set) var notice: String?
     private let cleaning: CleaningViewModel
 
@@ -76,10 +93,18 @@ final class SwipePairModel: ObservableObject {
     func choose(_ side: Side) {
         guard isCurrent else { notice = "These photos changed. Choose again after scanning."; return }
         self.side = side
+        choiceType = side == .left ? .keepLeft : .keepRight
         notice = nil
         let target = review.group.candidates[0].id
         // tap, rather than set(.delete), preserves the warning acknowledgement gate.
         if !review.draft.deleteIDs.contains(target) { review.tap(target) }
+    }
+
+    func chooseKeepBoth() {
+        guard isCurrent else { return }
+        choiceType = .keepBoth
+        undoChoice()
+        keepLeft.skip()
     }
 
     func undoChoice() {
@@ -88,23 +113,18 @@ final class SwipePairModel: ObservableObject {
         keepLeft.warningPromptFor = nil
         keepRight.warningPromptFor = nil
         side = nil
+        choiceType = nil
         notice = nil
         HapticsService.shared.fire(.undo)
     }
 
     @discardableResult
     func approve() -> Bool {
-        guard side != nil, isCurrent, freshSnapshotsMatch else {
+        guard choiceType != nil, isCurrent, freshSnapshotsMatch else {
             notice = "These photos changed. Scan again before approving."
             return false
         }
         return review.approve()
-    }
-
-    func keepBoth() {
-        guard isCurrent else { return }
-        undoChoice()
-        keepLeft.skip()
     }
 
     private var freshSnapshotsMatch: Bool {
@@ -112,5 +132,10 @@ final class SwipePairModel: ObservableObject {
             guard let fresh = cleaning.library.snapshot(id: photo.id, inspectAlbums: true) else { return false }
             return fresh.record == photo.record
         }
+    }
+    
+    /// Returns whether this is an exact pair (byte-for-byte identical)
+    var isExactPair: Bool {
+        original.kind == .exact
     }
 }

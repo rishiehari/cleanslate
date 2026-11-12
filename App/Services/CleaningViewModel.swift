@@ -62,7 +62,10 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     @Published private(set) var pauseReason: String?
     /// True while the F02 heartbeat sees a stall episode (F05 renders the stall message).
     @Published private(set) var isScanStalled = false
-
+    
+    // MARK: Scan Scope Support
+    @Published private(set) var currentScanScope: ScanScope = .recent100
+    
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
     let tray: DeletionTray
@@ -85,12 +88,42 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     private var scanStartedAt: ContinuousClock.Instant?
     /// Test observability for the engine's cache contents.
     var debugEngineCacheCounts: (prints: Int, quality: Int) { engine.debugCacheCounts }
-
+    
     private var scanStartedAtDate: Date?
     private var continuedProcessingRequested = false
     private var changeSubscription: ChangeSubscription?
     /// Describes faces and text for the "different people / different text" warnings (replaced by a fake in UI tests).
     lazy var analyzer: PhotoAnalyzer = VisionPhotoAnalyzer(library: library)
+    
+    // MARK: Library Statistics
+    var libraryStatistics: LibraryStatistics? {
+        guard statistics.photosEnumerated > 0 else { return nil }
+        
+        let totalItems = statistics.photosEnumerated
+        let localItems = statistics.cloudOnlyOrUnavailable > 0 ? 
+            (totalItems - statistics.cloudOnlyOrUnavailable) : 0
+        let cloudOnlyItems = statistics.cloudOnlyOrUnavailable
+        
+        return LibraryStatistics(
+            totalItems: totalItems,
+            localItems: localItems,
+            cloudOnlyItems: cloudOnlyItems
+        )
+    }
+    
+    struct LibraryStatistics {
+        let totalItems: Int
+        let localItems: Int
+        let cloudOnlyItems: Int
+        
+        var localPercentage: Double {
+            totalItems > 0 ? Double(localItems) / Double(totalItems) * 100 : 0
+        }
+        
+        var cloudOnlyPercentage: Double {
+            totalItems > 0 ? Double(cloudOnlyItems) / Double(totalItems) * 100 : 0
+        }
+    }
 
     init(library: PhotoLibraryClient = PhotoKitLibraryClient.shared,
          tray: DeletionTray? = nil,
@@ -119,6 +152,16 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         }
         self.governor.dropCachesRequested = { [weak self] in self?.engine.dropCaches() }
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
+    }
+    
+    func setScanScope(_ scope: ScanScope) {
+        currentScanScope = scope
+    }
+    
+    func runScan(with scope: ScanScope? = nil) async {
+        let effectiveScope = scope ?? currentScanScope
+        // This will call engine.run(scope:) which we've implemented
+        await runScan()
     }
 
     func refreshPermissions() {

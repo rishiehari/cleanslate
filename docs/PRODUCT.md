@@ -34,10 +34,10 @@ Apple's Photos app (Collections → Utilities → **Duplicates**) already finds 
 Approving moves photos into a **Deletion tray**; it never deletes. The tray's summary sheet, then Apple's system prompt, are the only paths to deletion.
 
 ## Non-goals
-No cloud or accounts. No ads, tracking, subscriptions or analytics. No automatic deletion of anything that is not byte-identical. No merging of photo metadata. No iPad-optimized layout in 1.0 (runs in compatibility mode). No claims of exhaustive duplicate detection.
+No cloud or accounts. No ads, tracking, subscriptions or analytics. No automatic deletion of anything that is not byte-identical. No merging of photo metadata. Native iPad layouts are in implementation; release requires the separate iPad validation gates. No claims of exhaustive duplicate detection.
 
 **2026-11-11 planning update:** the owner requested an iPad expansion plan and a detailed Swipe n Save interaction,
-onboarding and calibration plan. iPad implementation has not started. Swipe n Save's initial implementation reuses
+onboarding and calibration plan. iPad implementation was authorized later that day; the first universal-target and adaptive-layout increment is underway. Swipe n Save's initial implementation reuses
 existing directly compared similar pairs; choices are explicit and approval still only adds to the tray. Personalization
 is planning-only and does not change the [ML gate](ML_GATE.md) or authorize automatic deletion.
 

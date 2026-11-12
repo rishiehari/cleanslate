@@ -399,7 +399,7 @@ Deviations (orchestrator decisions + documented):
 
 
 ### Fix round 2 — edge-test return (6 Majors + minors) — 2026-11-11 (implementer)
-Commits: 13e02d5 C1 deadline/digest/monitor · bf89a75 C2 M1 quality deadlines · ac775b0 C3 skip/stall-end · a72451d C4 dropCaches · 9910af7 C5 caps/reporting/paging · (this note) C6 docs. Gates after every commit: core 115/115, build zero warnings, lint PASS. Touched suites re-run green (Deadline 4, MemoryPressureGovernor 7, RequestTimeout 6, VisionCache 5, EngineSkip 4, PagedQuery 6, ExactNarrowing 6, ScanEngine 13, ExactMatching 19, E2E 9, LibraryStore 10, HangRepro 2).
+Commits: 13e02d5 C1 deadline/digest/monitor · bf89a75 C2 M1 quality deadlines · ac775b0 C3 skip/stall-end · a72451d C4 dropCaches · 9910af7 C5 caps/reporting/paging · (this note) C6 docs. Gates after every commit: core 115/115, build zero warnings, lint PASS. Touched suites re-run green (Deadline 4, MemoryPressureGovernor 7, RequestTimeout 5, VisionCache 5, EngineSkip 4, PagedQuery 5, ExactNarrowing 6, ScanEngine 13, ExactMatching 19, E2E 9, LibraryStore 15, HangRepro 2). Evaluator-verified counts (earlier draft said RequestTimeout 6 / PagedQuery 6 / LibraryStore 10 — corrected).
 
 Majors:
 - **M1 (H4 reopen)**: `quality()` called face/aesthetics with no deadline. Both now route through `visionCall`, which throws the request's own error and returns nil ONLY on expiry (recorded `.requestTimedOut`); an expired quality request throws → counted as a Vision failure, never a match. `visionCall` needed a rework (it previously swallowed throws into nil, conflating errors with expiry). FakeVisualAnalyzer gained `stuckTokens` (requests never return until released or the configurable deadline). Tests: stuck quality expires <13 s and is counted; stop() during stuck quality < 2 s.
@@ -418,3 +418,28 @@ Dispositions:
 - **m14 (print count)**: the spec's "every print computed once per asset" cannot hold library-wide with the mandated 64-entry print LRU — ranked pair order spans bursts on a 7,000-photo library, so eviction re-prints are legitimate, not a defect (the uncached engine printed one picture 44×; the cached worst is 7). The tight guarantee is the single-burst fixture (`maxPrintsOfOnePicture == 1`, working set ≪ 64) in VisionCacheTests; the 7,000-photo bound stays at ≤ 8 as the regression magnitude with the precise reason in the comment. Documented, not silently kept.
 
 Everything remains simulator-verified; the 🧑 device gate below still applies.
+
+
+## S01 — Swipe n Save / cross-agent continuation — 2026-11-11 (IN PROGRESS)
+Start commit: a711be6. Implementation: 5631229 (pair model/feed + tests); UI commit pending. Plans/handoff: 7ce0f4b; Kimi prompt housekeeping: 64f02c4. This entry will be completed with final validation/review evidence.
+
+Owner direction: continue Swipe n Save before F04 despite the PENDING F03 device gate; write detailed iPad and expanded swipe plans; **do not implement iPad yet**; maintain shared Kimi/Codex handoff records. No human device/release/safety-policy gate is waived.
+
+Baseline independently rerun by orchestrator: Core 115/115 PASS; fixtures 7/7 PASS; synthetic eval GATE PASS (40 scenes, 320 images, 0/120 harmful preselection canaries; not real-world safety proof); lint/policy separation PASS. These baseline checks are not a final current-feature CI pass.
+
+Implementation scope: original near-* two-photo directly compared similar groups; orientation-specific normal GroupReviewModel for either keeper, explicit Approve to existing tray, center Keep both, Compare, shared toast/receipt/tab state. No policy/deletion-path or existing safety-test changes. Exact pairs, up gesture, onboarding practice, durable drafts, larger-group pair sessions and local calibration are separately planned; iPad remains planning-only.
+
+Focused tests: executor reports SwipePairTests **13/13 PASS**. First focused UI run found container identifiers masking child identifiers and an evidence button below 44 pt; executor fixed containment and hit target and is rerunning. Final focused UI, independent regression/budgets/screenshots and gatekeeper verdict are PENDING.
+
+Documentation: two Astra plans in docs/plans; README/architecture/roadmap/product/backlog/device-plan summaries corrected, shared handoff protocol in AGENT_ROLES and Kimi prompts. Pre-existing validation-count correction preserved. Important residual: PhotoKit inventory resource-metadata reads are still synchronous on main actor; fake watchdog tests do not establish real-device hang resolution.
+
+Human gates: F02/F03 device runs, historical safety-policy owner reviews, Step 9 labels, legal/icon/privacy, distribution remain PENDING. No real libraries used; no push.
+
+### 2026-11-11 — iPad foundation increment
+
+Owner authorized starting IPAD_APP_PLAN implementation. Universal target, explicit single-window configuration, sidebar-adaptable existing tabs, bounded Home width and adaptive equal-size Compare panes implemented using shared components. Safety/deletion ownership unchanged.
+
+- PASS: `make core-test` (115 tests), `make fixtures-test` (7 tests), `make eval` (synthetic GATE: PASS), `make lint`.
+- BLOCKED: `make build` on existing working-tree PhotoModels missing Color import and ScanEngine ScanScope/DiagScope mismatch. Existing fullInventory scope call also mismatches its no-argument declaration. No unrelated edits reverted.
+- NOT RUN: newly added AdaptiveLayoutTests and IPadLayoutUITests, full iOS suite, budget suite, screenshots and device tests, pending app build recovery.
+- SDK evidence: installed iPhoneSimulator27.2 SwiftUI interface exposes sidebarAdaptable at line 9488. Provisional widths require visual/device validation. IP0–IP5 acceptance remains incomplete.

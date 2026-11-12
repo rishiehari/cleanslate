@@ -23,6 +23,8 @@ protocol PhotoLibraryClient: AnyObject {
     func snapshot(id: String, inspectAlbums: Bool) -> PhotoSnapshot?
     /// Local-only thumbnail; nil when no local rendition exists.
     func thumbnail(_ id: String, target: CGFloat) async -> UIImage?
+    /// Bounded, local-only hints for the next few review photos. Empty ids release the hints.
+    func prefetchThumbnails(_ ids: [String], target: CGFloat)
     /// Digest of EVERY resource of the asset. Reads the network only when `allowNetwork` is true,
     /// which only `NetworkPolicy` (via `DigestFetcher`) may request.
     func digests(id: String, allowNetwork: Bool) async throws -> [ResourceDigest]
@@ -53,6 +55,7 @@ final class ChangeSubscription {
 }
 
 extension PhotoLibraryClient {
+    func prefetchThumbnails(_ ids: [String], target: CGFloat) {}
     /// Local-only convenience.
     func digests(id: String) async throws -> [ResourceDigest] { try await digests(id: id, allowNetwork: false) }
 }

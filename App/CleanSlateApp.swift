@@ -70,7 +70,7 @@ struct CleanSlateApp: App {
 
     private var root: some View {
         Group {
-            DashboardView()
+            AppTabsView()
                 #if DEBUG
                 .preferredColorScheme(Self.forcedScheme)
                 #endif
@@ -113,7 +113,7 @@ enum AppEnvironment {
         if arguments.contains("-skipOnboarding") { UserDefaults.standard.set(true, forKey: "onboarding.seen.v1") }
         if arguments.contains("-uiTestingFakeLibrary") {
             let auth = AuthArgument.current()
-            let scenario = FakePhotoLibrary.uiTestScenario(authorization: auth)
+            let scenario = FakePhotoLibrary.uiTestScenario(authorization: auth, swipePairs: arguments.contains("-uiTestingSwipe"))
             let trayURL = DeletionTray.defaultURL(name: "tray-uitest.json")
             if !arguments.contains("-keepTray"), let trayURL { try? FileManager.default.removeItem(at: trayURL) }
             let suite = UserDefaults(suiteName: "org.cleanslate.uitest") ?? .standard
@@ -125,6 +125,10 @@ enum AppEnvironment {
             let analyzer = FakePhotoAnalyzer()
             analyzer.descriptions = ["sim1-a": .init(faceCount: 2, text: ["market"]), "sim1-b": .init(faceCount: 3, text: ["market"]),
                                      "sim1-c": .init(faceCount: 2, text: ["market"])]       // sim1-b shows an extra person
+            for n in 1...3 {
+                analyzer.descriptions["sw\(n)-left"] = .init(faceCount: 2, text: ["same"])
+                analyzer.descriptions["sw\(n)-right"] = .init(faceCount: n == 2 ? 3 : 2, text: ["same"])
+            }
             model.analyzer = analyzer
             return finish(model: model, library: scenario.library)
         }

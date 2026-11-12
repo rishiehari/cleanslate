@@ -101,9 +101,9 @@ final class ScanEngine {
 
     // MARK: Entry point
 
-    func run() async -> Outcome {
+    func run(scope: ScanScope = .all) async -> Outcome {
         counters.reset(); libraryItems = 0; lastTickBucket = -1
-        let outcome = await runPhases()
+        let outcome = await runPhases(scope: scope)
         endPhase()
         // Leave the counters in an honest resting state for the watchdog's phase attribution.
         counters.update { $0.phase = outcome == .finished ? .finished : .idle; $0.inFlight = 0 }
@@ -163,15 +163,15 @@ final class ScanEngine {
         }
     }
 
-    private func runPhases() async -> Outcome {
+    private func runPhases(scope: ScanScope = .all) async -> Outcome {
         guard let reporter else { return .cancelled }
         await enter(.inventory)
-        await syncInventory()
+        await syncInventory(scope: scope)
         if inventorySkipped { inventorySkipped = false; return .cancelled }
         if Task.isCancelled { return .cancelled }
         let total = await store.assetCount()
         reporter.scanUpdate { $0.photosEnumerated = total }
-        diagnostics?.record(.scanStarted(scope: .all, items: total))
+        diagnostics?.record(.scanStarted(scope: scope, items: total))
         if total == 0 { return .finished }
         libraryItems = total
 
@@ -214,7 +214,7 @@ final class ScanEngine {
 
     private typealias Meta = LibrarySync.Meta
 
-    private func syncInventory() async {
+    private func syncInventory(scope: ScanScope = .all) async {
         if await store.meta(Meta.complete) != nil, let token = await store.meta(Meta.token), await store.assetCount() > 0 {
             switch library.changes(since: token) {
             case .changes(let set):
@@ -227,7 +227,7 @@ final class ScanEngine {
                 break
             }
         }
-        await fullInventory()
+        await fullInventory(scope: scope)
     }
 
     private func applyChanges(_ set: LibraryChangeSet) async {

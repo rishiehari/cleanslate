@@ -5,7 +5,6 @@ struct DashboardView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
     @EnvironmentObject private var labels: LabelStore
-    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("onboarding.seen.v1") private var onboardingSeen = false
     @AppStorage(HapticsService.defaultsKey) private var hapticsOn = true
     @State private var showClearCache = false
@@ -32,6 +31,8 @@ struct DashboardView: View {
                     thingsToKnow
                 }
                 .padding(Spacing.m)
+                .frame(maxWidth: AdaptiveLayout.readableContentWidth)
+                .frame(maxWidth: .infinity)
             }
             .background(Color.surfaceBackground)
             .navigationTitle("CleanSlate")
@@ -48,12 +49,6 @@ struct DashboardView: View {
             .sheet(isPresented: $showTray) { TrayView(tray: tray) }
             .sheet(isPresented: $showVerifySheet) { VerifyICloudSheet(policy: model.networkPolicy) }
             .sheet(isPresented: $showHistory) { NavigationStack { HistoryView().toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { showHistory = false } } } } }
-            .fullScreenCover(isPresented: Binding(get: { tray.receipt != nil }, set: { if !$0 { tray.receipt = nil } })) {
-                if let receipt = tray.receipt { ReceiptView(receipt: receipt) { tray.receipt = nil } }
-            }
-            .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active { model.refreshPermissions() }
-            }
             .alert("Clear local index?", isPresented: $showClearCache) {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear index", role: .destructive) { model.clearIndex() }
@@ -61,18 +56,6 @@ struct DashboardView: View {
                 Text("Removes CleanSlate's saved scan data. Your photos aren't touched.")
             }
         }
-        // Outside the stack so they stay visible on pushed screens.
-        .overlay(alignment: .bottom) {
-            if let toast = tray.toast {
-                UndoToast(message: toast.message) { tray.undo(); HapticsService.shared.fire(.undo) }
-                    .padding(.bottom, Spacing.l + 56)   // clear of the approval bar
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.snappy, value: tray.toast)
-        #if DEBUG
-        .overlay(alignment: .topLeading) { debugProbe }
-        #endif
     }
 
     private var needsPermission: Bool {
@@ -110,7 +93,7 @@ struct DashboardView: View {
     private var permissionCard: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             Label("Your photos stay yours", systemImage: "lock.shield").appText(.groupTitle)
-            Text("To find copies, CleanSlate needs to look at your photos. It all happens on this iPhone, and nothing is deleted without your say-so.")
+            Text("To find copies, CleanSlate needs to look at your photos. It all happens on this device, and nothing is deleted without your say-so.")
                 .appText(.body).foregroundStyle(Color.textSecondary)
             Button("Allow Photos access") { model.requestPermission() }
                 .buttonStyle(.glassProminent).tint(Color.actionPrimary)
@@ -161,7 +144,7 @@ struct DashboardView: View {
         DisclosureGroup("Things to know") {
             VStack(alignment: .leading, spacing: Spacing.s) {
                 Text("Deleting with iCloud Photos on also removes the photo from your other devices. Recently Deleted keeps it for 30 days.")
-                Text("File sizes shown are verified sizes. Actual free space can differ, especially with Optimize iPhone Storage.")
+                Text("File sizes shown are verified sizes. Actual free space can differ, especially with Optimize Storage.")
                 Text("This version checks part of your library at a time, and can't compare photos that only live in iCloud. Similar shots are never selected for you.")
             }
             .appText(.caption).foregroundStyle(Color.textSecondary)
@@ -172,15 +155,4 @@ struct DashboardView: View {
         .accessibilityIdentifier("dashboard.thingstoknow")
     }
 
-    #if DEBUG
-    /// Lets UI tests assert how many delete requests reached the (fake) library.
-    private var debugProbe: some View {
-        let calls = (model.library as? FakePhotoLibrary)?.deleteCalls.count ?? -1
-        let remaining = (model.library as? FakePhotoLibrary)?.assets.count ?? -1
-        return Color.clear.frame(width: 1, height: 1)
-            .accessibilityElement()
-            .accessibilityIdentifier("debug.probe")
-            .accessibilityValue("deleteCalls=\(calls);assets=\(remaining);tray=\(tray.photoCount)")
-    }
-    #endif
 }

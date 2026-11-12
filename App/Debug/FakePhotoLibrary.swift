@@ -395,7 +395,7 @@ final class FakePhotoLibrary: PhotoLibraryClient {
 /// Builds a review group out of fake-library assets.
 extension FakePhotoLibrary {
     /// Deterministic data for UI tests and screenshots (never used in release builds).
-    static func uiTestScenario(authorization: PHAuthorizationStatus = .authorized) -> (library: FakePhotoLibrary, groups: [PhotoReviewGroup], standalone: [StandaloneItem]) {
+    static func uiTestScenario(authorization: PHAuthorizationStatus = .authorized, swipePairs: Bool = false) -> (library: FakePhotoLibrary, groups: [PhotoReviewGroup], standalone: [StandaloneItem]) {
         let lib = FakePhotoLibrary()
         lib.authorization = authorization
         var groups: [PhotoReviewGroup] = []
@@ -412,6 +412,16 @@ extension FakePhotoLibrary {
         lib.assets["ic-remote"]?.digests = nil
         lib.add("sim1-a", content: "sim1a"); lib.add("sim1-b", content: "sim1b"); lib.add("sim1-c", content: "sim1c")
         groups.append(lib.similarGroup(keeper: "sim1-a", copies: ["sim1-b", "sim1-c"]))
+        if swipePairs {
+            for n in 1...3 {
+                let left = "sw\(n)-left", right = "sw\(n)-right"
+                lib.add(left, content: left, spec: RenderSpec(base: 20 + n))
+                lib.add(right, content: right, spec: RenderSpec(base: 20 + n, shiftX: 1))
+                let source = lib.similarGroup(keeper: left, copies: [right])
+                groups.append(PhotoReviewGroup(id: "near-swipe-\(n)", kind: .similar, keeper: source.keeper,
+                                               candidates: source.candidates, evidence: source.evidence, verifiedCandidateBytes: [:]))
+            }
+        }
         // Keeper-less categories.
         let screenshotBit: UInt = 1 << 2, recordingBit: UInt = 1 << 19
         let day: Int64 = 86_400
