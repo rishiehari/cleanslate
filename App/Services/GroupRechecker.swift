@@ -70,12 +70,17 @@ struct TrayChecker {
     /// nil = still fine. Otherwise the reason the user needs to take another look.
     func reasonNeedingAnotherLook(_ entry: TrayEntry) -> String? {
         let involved = entry.group.all.filter { entry.involvedIDs.contains($0.id) }
+        var currents: [String: PhotoSnapshot] = [:]
+        for member in involved { currents[member.id] = library.snapshot(id: member.id, inspectAlbums: true) }
+        // A rule beats every other reason, and is checked across ALL selected photos first, so a changed or missing photo
+        // earlier in the group can't hide a protected one. A protected keeper is fine (only deletions matter).
+        // While the rules are loading or unavailable this is skipped (the commit gate still blocks) and nothing sticks.
+        for member in involved where entry.selectedIDs.contains(member.id) {
+            if let current = currents[member.id], case .protected = protection.ruleVerdict(for: current) { return Self.protectedByRuleReason }
+        }
         var fresh: [String: AssetRecord] = [:]
         for member in involved {
-            guard let current = library.snapshot(id: member.id, inspectAlbums: true) else { return "A photo was already deleted" }
-            // A rule beats every other reason. Only the photos being deleted matter; a protected keeper is fine.
-            // While the rules are loading or unavailable this is skipped (the commit gate still blocks) and nothing sticks.
-            if entry.selectedIDs.contains(member.id), case .protected = protection.ruleVerdict(for: current) { return Self.protectedByRuleReason }
+            guard let current = currents[member.id] else { return "A photo was already deleted" }
             fresh[member.id] = current.record
             if current.record.revision != member.record.revision {
                 if current.record.flags.contains(.favorite) && !member.record.flags.contains(.favorite) { return "You favorited one of these photos" }
@@ -90,10 +95,14 @@ struct TrayChecker {
     }
 
     func reasonNeedingAnotherLook(_ entry: StandaloneTrayEntry) -> String? {
+        var currents: [String: PhotoSnapshot] = [:]
+        for item in entry.items { currents[item.id] = library.snapshot(id: item.id, inspectAlbums: true) }
+        for item in entry.items {
+            if let current = currents[item.id], case .protected = protection.ruleVerdict(for: current) { return Self.protectedByRuleReason }
+        }
         var fresh: [String: AssetRecord] = [:]
         for item in entry.items {
-            guard let current = library.snapshot(id: item.id, inspectAlbums: true) else { return "A photo was already deleted" }
-            if case .protected = protection.ruleVerdict(for: current) { return Self.protectedByRuleReason }
+            guard let current = currents[item.id] else { return "A photo was already deleted" }
             fresh[item.id] = current.record
             if current.record.revision != item.snapshot.record.revision {
                 if current.record.flags.contains(.favorite) && !item.snapshot.record.flags.contains(.favorite) { return "You favorited one of these photos" }

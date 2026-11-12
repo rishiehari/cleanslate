@@ -183,15 +183,25 @@ final class DeletionTray: ObservableObject {
     func approveAll(_ items: [(group: PhotoReviewGroup, selected: Set<String>)]) {
         let before = (entries, reviewedGroupIDs)
         let invalidatedBefore = protectionInvalidatedIDs
-        for item in items where !item.selected.isEmpty {
+        var addedCount = 0
+        for item in items {
+            // N05: a protected copy never enters the tray through approve-all, and its entry keeps its invalidation.
+            var selected = item.selected
+            if let gate = protectionGate {
+                let byID = Dictionary(item.group.all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                selected = selected.filter { id in byID[id].map { gate.verdict(for: $0) == .unprotected } ?? false }
+            }
+            guard !selected.isEmpty else { continue }
+            addedCount += selected.count
             entries.removeAll { $0.id == item.group.id }
-            entries.append(TrayEntry(group: item.group, selectedIDs: item.selected, manuallyReviewedIDs: [], approvedAt: Date()))
+            entries.append(TrayEntry(group: item.group, selectedIDs: selected, manuallyReviewedIDs: [], approvedAt: Date()))
             reviewedGroupIDs.insert(item.group.id)
             if protectionInvalidatedIDs.contains(item.group.id) { needsAttention[item.group.id] = nil }
             clearProtectionInvalidation([item.group.id])
         }
+        guard addedCount > 0 else { return }
         persist()
-        let n = items.reduce(0) { $0 + $1.selected.count }
+        let n = addedCount
         show("Added \(n) \(n == 1 ? "photo" : "photos") to your tray") { [weak self] in
             self?.entries = before.0; self?.reviewedGroupIDs = before.1
             self?.markProtectionInvalidated(invalidatedBefore)
@@ -202,7 +212,12 @@ final class DeletionTray: ObservableObject {
     /// Adds keeper-less items. Items already in the tray are not added twice.
     func approveStandalone(items: [StandaloneItem]) {
         let existing = Set(standaloneEntries.flatMap { $0.items.map(\.id) })
-        let fresh = items.filter { !existing.contains($0.id) }
+        // N05: protected photos (and any the rules can't judge right now) are never added.
+        let fresh = items.filter { item in
+            guard !existing.contains(item.id) else { return false }
+            guard let gate = protectionGate else { return true }
+            return gate.verdict(for: item.snapshot) == .unprotected
+        }
         guard !fresh.isEmpty else { return }
         // One Apple prompt covers at most `maximumBatchTargets` photos, so a big selection becomes several entries.
         let size = SafetyPolicy.maximumBatchTargets
@@ -303,7 +318,10 @@ final class DeletionTray: ObservableObject {
                     // A rule blocked these: that stays true even if the rule is later removed.
                     markProtectionInvalidated(Set(reasons.filter { $0.value == TrayChecker.protectedByRuleReason }.keys))
                     let n = reasons.count
-                    batchNotice = "\(n) \(n == 1 ? "group" : "groups") changed since you approved \(n == 1 ? "it" : "them") and \(n == 1 ? "was" : "were") set aside. "
+                    let allByRule = reasons.values.allSatisfy { $0 == TrayChecker.protectedByRuleReason }
+                    batchNotice = (allByRule
+                        ? "\(n) \(n == 1 ? "group is" : "groups are") protected by your rule and \(n == 1 ? "was" : "were") set aside. "
+                        : "\(n) \(n == 1 ? "group" : "groups") changed since you approved \(n == 1 ? "it" : "them") and \(n == 1 ? "was" : "were") set aside. ")
                         + (anyCompleted ? "The earlier part was deleted; the rest is still in your tray." : "Nothing was deleted. Tap Delete again to remove the rest.")
                     return anyCompleted ? finish(total) : nil
                 case .completed(let done):

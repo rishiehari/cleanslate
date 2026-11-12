@@ -163,7 +163,8 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
                                                          storeDurable: storeIsDurable, evidenceOfExistingRules: evidence)
         if let state {
             // Always list what is stored, even when the set is unusable, so the user can still remove rules.
-            rules = state.rules; revision = state.revision
+            // Never let an older read lower the revision under a newer in-flight write (the write publishes its own).
+            if state.revision >= revision || pendingWrites == 0 { rules = state.rules; revision = state.revision }
         } else if decision == .ready {
             rules = []                                     // never created, nothing to read
         }
