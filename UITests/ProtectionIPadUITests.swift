@@ -54,7 +54,10 @@ final class ProtectionIPadUITests: XCTestCase {
         firstRuleRow(app).tap()
         XCTAssertTrue(element(app, "protection.inspector").waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(element(app, "protection.inspector").waitForExistence(timeout: 5), "the selection survives rotation")
+        let portraitDetail = element(app, "protection.detail")
+        let portraitInspector = element(app, "protection.inspector")
+        XCTAssertTrue(portraitDetail.waitForExistence(timeout: 5) || portraitInspector.exists,
+                      "the selected rule stays open; a narrow detail pushes instead of squeezing the list")
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(element(app, "protection.inspector").waitForExistence(timeout: 5))
     }
@@ -93,6 +96,21 @@ final class ProtectionIPadUITests: XCTestCase {
         field.tap()                                                  // make sure it has keyboard focus before typing
         field.typeText("album")
         XCTAssertFalse(firstRuleRow(app).waitForExistence(timeout: 2), "no album rules, so nothing matches")
+    }
+
+    func testSearchCanBeClearedAfterNarrowingTheWindow() throws {
+        let app = try launch()
+        openRules(app)
+        app.buttons["protection.search"].tap()
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("album")
+        XCTAssertFalse(firstRuleRow(app).exists)
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "an active filter must remain editable in the compact layout")
+        field.buttons["Clear text"].tap()
+        XCTAssertTrue(firstRuleRow(app).waitForExistence(timeout: 5))
     }
 
     func testEscapeCancelsTheSheetWithoutCreatingARule() throws {

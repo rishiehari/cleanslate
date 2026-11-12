@@ -23,9 +23,13 @@ struct ProtectSheet: View {
     @State private var saving = false
     @State private var errorText: String?
     @State private var coverage: Int?
+    @State private var datesByID: [String: Date] = [:]
+    @State private var loadingDates: Bool
+    @State private var ruleTimeZoneID = TimeZone.current.identifier
 
     init(assetIDs: [String], preselected: Set<String>, startWithDates: Bool = false) {
         self.assetIDs = assetIDs
+        _loadingDates = State(initialValue: !assetIDs.isEmpty)
         _chosen = State(initialValue: preselected)
         _scope = State(initialValue: startWithDates || assetIDs.isEmpty ? .dates : .photos)
         _start = State(initialValue: Date())
@@ -33,34 +37,33 @@ struct ProtectSheet: View {
     }
 
     private var service: ProtectionRuleService? { model.protectionService }
-    private var datesByID: [String: Date] {
-        Dictionary(uniqueKeysWithValues: assetIDs.compactMap { id in
-            model.library.snapshot(id: id, inspectAlbums: false)?.capturedAt.map { (id, $0) }
-        })
+    private var rangeIsValid: Bool {
+        guard let from = localDay(start), let to = localDay(end) else { return false }
+        return from <= to
     }
-    private var rangeIsValid: Bool { Calendar.current.startOfDay(for: end) >= Calendar.current.startOfDay(for: start) }
     private var canSave: Bool {
-        guard !saving, service != nil else { return false }
+        guard !saving, !loadingDates, service != nil else { return false }
         return scope == .photos ? !chosen.isEmpty : rangeIsValid
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Text("CleanSlate won't suggest deleting these on this device. Apple Photos isn't changed.")
+                        .appText(.secondary).foregroundStyle(Color.textPrimary)
+                }
                 if !assetIDs.isEmpty {
                     Section {
                         Picker("What to protect", selection: $scope) {
                             ForEach(Scope.allCases) { Text($0.rawValue).tag($0) }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
+                        .disabled(loadingDates)
                         .accessibilityIdentifier("protect.scope")
                     }
                 }
                 if scope == .photos { photosSection } else { datesSection }
-                Section {
-                    Text("CleanSlate won't suggest deleting these on this device. Apple Photos isn't changed.")
-                        .appText(.secondary).foregroundStyle(Color.textSecondary)
-                }
                 if let errorText {
                     Section {
                         Label(errorText, systemImage: "exclamationmark.triangle")
@@ -69,6 +72,10 @@ struct ProtectSheet: View {
                     }
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("protect.sheet")
+            .scrollEdgeEffectHidden(true, for: .bottom)
+            .environment(\.timeZone, TimeZone(identifier: ruleTimeZoneID) ?? .current)
             .navigationTitle("Never suggest")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -87,17 +94,24 @@ struct ProtectSheet: View {
                     }
                 }
             }
-            .task { prefillDates() }
+            .task {
+                guard let dates = await ProtectionSheetDates.load(ids: assetIDs, snapshot: {
+                    model.library.snapshot(id: $0, inspectAlbums: false)
+                }) else { return }
+                datesByID = dates
+                prefillDates()
+                loadingDates = false
+            }
             .task(id: coverageKey) { await refreshCoverage() }
         }
         .interactiveDismissDisabled(saving)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("protect.sheet")
+        .presentationSizing(.page)
     }
 
     private var photosSection: some View {
         Section("Photos") {
-            ForEach(assetIDs, id: \.self) { id in
+            if loadingDates { ProgressView("Reading photo dates…") }
+            ForEach(Array(assetIDs.enumerated()), id: \.element) { index, id in
                 Toggle(isOn: Binding(get: { chosen.contains(id) },
                                      set: { if $0 { chosen.insert(id) } else { chosen.remove(id) } })) {
                     HStack(spacing: Spacing.m) {
@@ -105,11 +119,15 @@ struct ProtectSheet: View {
                             .frame(width: 64, height: 64)
                             .clipShape(RoundedRectangle(cornerRadius: Radius.s))
                             .accessibilityHidden(true)
-                        Text(datesByID[id].map { "Photo from \($0.formatted(date: .abbreviated, time: .omitted))" } ?? "Photo")
-                            .appText(.body)
+                        Text(datesByID[id].map {
+                            "Photo \(index + 1) of \(assetIDs.count)\n\($0.formatted(date: .abbreviated, time: .omitted))"
+                        } ?? "Photo \(index + 1) of \(assetIDs.count)")
+                            .appText(.body).foregroundStyle(Color.textPrimary)
                     }
                 }
                 .frame(minHeight: 44)
+                .accessibilityLabel("Photo \(index + 1) of \(assetIDs.count)")
+                .accessibilityHint(datesByID[id].map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "Photo date unavailable")
                 .accessibilityIdentifier("protect.photo.\(id)")
             }
         }
@@ -118,8 +136,10 @@ struct ProtectSheet: View {
     private var datesSection: some View {
         Section {
             DatePicker("From", selection: $start, displayedComponents: .date)
+                .disabled(loadingDates)
                 .accessibilityIdentifier("protect.range.start")
             DatePicker("To", selection: $end, in: start..., displayedComponents: .date)
+                .disabled(loadingDates)
                 .accessibilityIdentifier("protect.range.end")
             if let coverage {
                 Text("\(coverage.formatted()) checked \(coverage == 1 ? "photo" : "photos") in this range")
@@ -148,18 +168,19 @@ struct ProtectSheet: View {
 
     private func refreshCoverage() async {
         guard scope == .dates, rangeIsValid,
-              let from = Self.localDay(start), let to = Self.localDay(end),
-              let interval = ProtectionDateResolver.interval(start: from, end: to, timeZoneID: TimeZone.current.identifier) else {
+              let from = localDay(start), let to = localDay(end),
+              let interval = ProtectionDateResolver.interval(start: from, end: to, timeZoneID: ruleTimeZoneID) else {
             coverage = nil
             return
         }
-        coverage = await model.store.protectedRangeIndexedCount(start: interval.start, end: interval.endExclusive)
+        coverage = nil
+        let count = await model.store.protectedRangeIndexedCount(start: interval.start, end: interval.endExclusive)
+        guard !Task.isCancelled else { return }
+        coverage = count
     }
 
-    private static func localDay(_ date: Date) -> LocalDay? {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        guard let y = c.year, let m = c.month, let d = c.day else { return nil }
-        return LocalDay(year: y, month: m, day: d)
+    private func localDay(_ date: Date) -> LocalDay? {
+        ProtectionDateResolver.localDay(containing: date, timeZoneID: ruleTimeZoneID)
     }
 
     private func save() {
@@ -173,8 +194,8 @@ struct ProtectSheet: View {
             case .photos:
                 ok = await service.protect(assetIDs: Array(chosen))
             case .dates:
-                if let from = Self.localDay(start), let to = Self.localDay(end), from <= to {
-                    ok = await service.protect(range: from...to)
+                if let from = localDay(start), let to = localDay(end), from <= to {
+                    ok = await service.protect(range: from...to, timeZoneID: ruleTimeZoneID)
                 } else {
                     service.reportInvalidRange(); ok = false
                 }

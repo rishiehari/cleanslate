@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 private final class ProtectionAuditFindings: @unchecked Sendable { var lines: [String] = [] }
 
@@ -226,7 +227,54 @@ final class ProtectionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["menu.protection"].exists)
     }
 
+    func testDateRangeCanBeChosenAndSavedWithoutDeletingPhotos() {
+        let app = launch(["-uiTestingProtectionStore"])
+        openGroup(app, id: "test-ex1-keep")
+        openProtectSheetFromMenu(app)
+        let scope = element(app, "protect.scope")
+        scope.tap()
+        let dates = app.buttons["Photos from these dates"]
+        XCTAssertTrue(dates.waitForExistence(timeout: 5))
+        dates.tap()
+        XCTAssertTrue(element(app, "protect.range.start").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "protect.range.end").exists)
+        XCTAssertTrue(app.buttons["protect.confirm"].isEnabled)
+        app.buttons["protect.confirm"].tap()
+        XCTAssertTrue(app.buttons["toast.undo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(probe(app).contains("deleteCalls=0"), probe(app))
+        XCTAssertTrue(probe(app).contains("tray=0"), probe(app))
+    }
+
+    func testLeavingRulesRestoresMainNavigation() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("Phone tab-visibility regression; native iPad sidebar return coverage is pending")
+        }
+        let app = launch(["-uiTestingProtectedAssets", "ex1-copy"])
+        openRules(app)
+        backToHome(app)
+        let swipeTab = app.buttons["Swipe n Save"]
+        XCTAssertTrue(swipeTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(swipeTab.isHittable)
+        swipeTab.tap()
+        XCTAssertTrue(app.navigationBars["Swipe n Save"].waitForExistence(timeout: 5))
+    }
+
     // MARK: Accessibility
+
+    func testRulesScreenAccessibilityAuditAtAX5() throws {
+        let app = launch(["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+                          "-uiTestingProtectedAssets", "ex1-copy,photo-you-no-longer-share"])
+        openRules(app)
+        XCTAssertTrue(app.staticTexts["Not available right now"].waitForExistence(timeout: 5))
+        try audit(app)
+    }
+
+    func testProtectSheetAccessibilityAuditAtAX5() throws {
+        let app = launch(["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL", "-uiTestingProtectionStore"])
+        openGroup(app, id: "test-ex1-keep")
+        openProtectSheetFromMenu(app)
+        try audit(app)
+    }
 
     func testRulesScreenAccessibilityAudit() throws {
         let app = launch(["-uiTestingProtectedAssets", "ex1-copy,photo-you-no-longer-share"])
@@ -269,6 +317,7 @@ final class ProtectionUITests: XCTestCase {
             let glass = issue.auditType == .contrast && glassControls.contains(issue.element?.identifier ?? "")
             let warning = issue.compactDescription.contains("nearly passed")
             if !artifact && !glass && !warning {
+                print("PROTECTION_AUDIT type=\(issue.auditType) detail=\(issue.detailedDescription)")
                 let element = issue.element
                 findings.lines.append("\(issue.compactDescription) [id=\(element?.identifier ?? "-") label=\(element?.label ?? "-") frame=\(element?.frame ?? .zero)]")
             }

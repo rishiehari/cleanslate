@@ -6,15 +6,19 @@ struct ProtectionRulesView: View {
     @EnvironmentObject private var model: CleaningViewModel
 
     var body: some View {
-        Group {
-            if let service = model.protectionService {
-                ProtectionRulesContent(service: service)
-            } else {
-                ContentUnavailableView("Protected photos", systemImage: "lock.shield",
-                                       description: Text("Protection rules aren't available in this build."))
+        GeometryReader { geometry in
+            Group {
+                if let service = model.protectionService {
+                    ProtectionRulesContent(service: service, availableWidth: geometry.size.width)
+                } else {
+                    ContentUnavailableView("Protected photos", systemImage: "lock.shield",
+                                           description: Text("Protection rules aren't available in this build."))
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("Protected photos")
+        .toolbar(UIDevice.current.userInterfaceIdiom == .phone ? .hidden : .automatic, for: .tabBar)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color.surfaceBackground)
         .accessibilityElement(children: .contain)
@@ -24,6 +28,7 @@ struct ProtectionRulesView: View {
 
 private struct ProtectionRulesContent: View {
     @ObservedObject var service: ProtectionRuleService
+    let availableWidth: CGFloat
     @EnvironmentObject private var model: CleaningViewModel
     @State private var pendingRemoval: ProtectionRule?
     @State private var confirmRemoveAll = false
@@ -31,13 +36,14 @@ private struct ProtectionRulesContent: View {
     @State private var addingRange = false
     @State private var query = ""
     @State private var searching = false
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
     /// Survives rotation, resizing and relaunch of the scene.
     @SceneStorage("protection.selectedRule") private var selectedRuleID = ""
 
     /// iPad-width windows get a list plus an inspector; compact windows and accessibility sizes push the detail instead.
-    private var wide: Bool { sizeClass == .regular && !typeSize.isAccessibilitySize }
+    private var wide: Bool {
+        AdaptiveLayout.showsProtectionInspector(width: availableWidth, accessibilityText: typeSize.isAccessibilitySize)
+    }
     private var selectedRule: ProtectionRule? { service.rules.first { $0.id.uuidString == selectedRuleID } }
 
     private func matches(_ rule: ProtectionRule) -> Bool {
@@ -94,7 +100,7 @@ private struct ProtectionRulesContent: View {
                         .accessibilityIdentifier("protection.addRange")
                 }
             }
-            if wide, !service.rules.isEmpty, service.availability == .ready {
+            if (wide || !query.isEmpty || searching), !service.rules.isEmpty, service.availability == .ready {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Search", systemImage: "magnifyingglass") { searching = true }
                         .keyboardShortcut("f", modifiers: .command)
@@ -205,16 +211,17 @@ private struct ProtectionRulesContent: View {
             }
         }
         .listStyle(.insetGrouped)
-        .modifier(RuleSearch(enabled: wide, query: $query, searching: $searching))
+        .scrollEdgeEffectHidden(true, for: .bottom)
+        .modifier(RuleSearch(enabled: wide || !query.isEmpty || searching, query: $query, searching: $searching))
         // The setter ignores `false`: the system may collapse the inspector while rotating or resizing, and that must not
         // forget the selection. The inspector's own Close button clears it.
         .inspector(isPresented: Binding(get: { wide && selectedRule != nil }, set: { _ in })) {
             if let rule = selectedRule {
                 ProtectionRuleDetail(rule: rule, wide: true, onClose: { selectedRuleID = "" }) { pendingRemoval = rule }
-                    .inspectorColumnWidth(ideal: 320)
+                    .inspectorColumnWidth(ideal: AdaptiveLayout.protectionInspectorWidth)
             }
         }
-        .navigationDestination(isPresented: Binding(get: { !wide && selectedRule != nil }, set: { if !$0 { selectedRuleID = "" } })) {
+        .navigationDestination(isPresented: Binding(get: { !wide && selectedRule != nil }, set: { if !$0 && !wide { selectedRuleID = "" } })) {
             if let rule = selectedRule { ProtectionRuleDetail(rule: rule, wide: false, onClose: nil) { pendingRemoval = rule } }
         }
     }
@@ -236,7 +243,7 @@ private struct ProtectionRulesContent: View {
         return AnyView(row(rule,
                            title: snapshot == nil ? "Not available right now" : "Photo",
                            subtitle: snapshot?.capturedAt.map { $0.formatted(date: .abbreviated, time: .omitted) }
-                               ?? (snapshot == nil ? "Still protected. CleanSlate just can't see this photo at the moment." : "No date")) {
+                               ?? (snapshot == nil ? "Still protected." : "No date")) {
             if snapshot != nil {
                 PhotoThumbnailView(assetID: id, target: 160)
                     .frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: Radius.s))
@@ -251,8 +258,14 @@ private struct ProtectionRulesContent: View {
     private func dateRow(_ rule: ProtectionRule) -> some View {
         guard case .dateRange(let start, let end, let zone, _, _) = rule.scope else { return AnyView(EmptyView()) }
         func format(_ day: LocalDay) -> String {
-            Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day))
-                .map { $0.formatted(date: .abbreviated, time: .omitted) } ?? day.iso
+            guard let interval = ProtectionDateResolver.interval(start: day, end: day, timeZoneID: zone),
+                  let timeZone = TimeZone(identifier: zone) else { return day.iso }
+            let formatter = DateFormatter()
+            formatter.locale = .current
+            formatter.timeZone = timeZone
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .none
+            return formatter.string(from: interval.start)
         }
         let title = start == end ? format(start) : "\(format(start)) to \(format(end))"
         return AnyView(row(rule, title: title, subtitle: "Every photo taken on these days (\(zone))") {
@@ -263,20 +276,35 @@ private struct ProtectionRulesContent: View {
 
     private func row<Leading: View>(_ rule: ProtectionRule, title: String, subtitle: String,
                                     @ViewBuilder leading: () -> Leading) -> some View {
-        HStack(spacing: Spacing.m) {
-            leading()
-            VStack(alignment: .leading, spacing: Spacing.xxs) {
-                Text(title).appText(.groupTitle).foregroundStyle(Color.textPrimary)
-                Text(subtitle).appText(.secondary).foregroundStyle(Color.textSecondary)
+        let details = VStack(alignment: .leading, spacing: Spacing.xxs) {
+            Text(title).appText(.groupTitle).foregroundStyle(Color.textPrimary)
+            Text(subtitle).appText(.secondary).foregroundStyle(Color.textSecondary)
+        }
+        .accessibilityElement(children: .combine)
+        let remove = Button { pendingRemoval = rule } label: {
+            Image(systemName: "minus.circle").frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Stop protecting")
+        .accessibilityIdentifier("protection.rule.\(rule.id.uuidString).remove")
+        return Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: Spacing.m) {
+                    details
+                    HStack {
+                        leading()
+                        Spacer(minLength: Spacing.s)
+                        remove
+                    }
+                }
+            } else {
+                HStack(spacing: Spacing.m) {
+                    leading()
+                    details
+                    Spacer(minLength: Spacing.s)
+                    remove
+                }
             }
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: Spacing.s)
-            Button { pendingRemoval = rule } label: {
-                Image(systemName: "minus.circle").frame(minWidth: 44, minHeight: 44)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Stop protecting")
-            .accessibilityIdentifier("protection.rule.\(rule.id.uuidString).remove")
         }
         .contentShape(Rectangle())
         .onTapGesture { selectedRuleID = rule.id.uuidString }

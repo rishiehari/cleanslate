@@ -43,6 +43,13 @@ extension Color {
 
 /// Provisional window-layout values; validate at AX5 and on physical iPad before release.
 enum AdaptiveLayout {
+    static let protectionInspectorWidth: CGFloat = 320
+    static let minimumProtectionListWidth: CGFloat = 360
+
+    static func showsProtectionInspector(width: CGFloat, accessibilityText: Bool) -> Bool {
+        !accessibilityText && width >= protectionInspectorWidth + minimumProtectionListWidth + Spacing.l
+    }
+
     static let minimumComparisonPhotoWidth: CGFloat = 300
     static let readableContentWidth: CGFloat = 760
     static let minimumTileWidth: CGFloat = 100
