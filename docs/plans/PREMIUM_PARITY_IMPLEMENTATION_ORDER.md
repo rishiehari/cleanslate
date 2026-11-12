@@ -28,4 +28,4 @@ Source: [owner-supplied research report](../research/PREMIUM_PARITY_REPORT_2026-
 - Commit and push each coherent validated increment under standing authorization. Do not start the next feature while fixable failures in the current one remain.
 - Distinguish implemented, automated-validated, owner-device-validated and release-enabled. Physical-device and release/distribution gates cannot be inferred from autonomous coding permission.
 
-No concurrent implementation agents: the owner designated this session the sole coding owner. Use successive planning, implementation, validation and review passes; never label self-review an independent review.
+This closed session had one coding owner. Any subsequent agent/tool can resume using docs/HANDOFF.md and docs/PROGRESS.md. Coordinate file ownership, implement one feature at a time, and use successive planning, implementation, validation and review passes; never label self-review an independent review.

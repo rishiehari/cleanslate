@@ -45,7 +45,7 @@ session switched models. Role responsibilities and safety gates are the same acr
 
 ## Shared handoff between agents and tools
 
-- Start with `docs/PROGRESS.md`, current `git status` / recent commits, and the tail of `docs/VALIDATION_LOG.md`.
+- Start with the tool-neutral `docs/HANDOFF.md`, then `docs/PROGRESS.md`, current `git status` / recent commits, and the tail of `docs/VALIDATION_LOG.md`.
   A previous tool's chat or sub-agent ID is not a resumable project state.
 - Update `PROGRESS.md` whenever a feature, fix round, gate, interruption, or blocker changes. Include current scope,
   completed commit hashes, actual test evidence, pending reviews/device gates, and the next concrete action.

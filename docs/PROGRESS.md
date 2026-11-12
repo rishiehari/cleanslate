@@ -3,17 +3,19 @@
 Shared status page for Kimi, Codex and Claude (orchestrator → planner/reasoner → executor/implementer → validator/edge-tester → gatekeeper/evaluator).
 **Update this file whenever progress is made** — every feature gate, every fix round, every blocked item.
 
-_Last updated: 2026-11-12 — sole-agent first-scan integration; session closure requested by owner._
+_Last updated: 2026-11-12 — session closed; tool-neutral handoff ready for another agent._
 
 ---
 
 ## Current session closure
 
+**Code committed and pushed:** `df429a3` on `main`. Working app checkpoint, not release approval. Start with [HANDOFF.md](HANDOFF.md) for tool-neutral reproduction, exact known failures and next tasks. Owner requested no new feature work in this session and may test on their iPhone using [PHONE_TESTING.md](PHONE_TESTING.md).
+
 Owner requested a buildable checkpoint for physical iPhone testing and to stop starting new work as quota runs low. Initial scan integration is implemented: metadata-only weekly activity overview (up to 5,000 items), bounded month/two-month/suggested-week scans (2,000 cap), count scopes, serial off-main inventory with timeout/cancellation, shared progress/Pause, and iPhone/iPad feature access. Scope selection is actually applied; old full-library index state cannot bypass the limit. The default does not scan all photos. No personal-library tests or new deletion authority.
 
-Validation: Core 118 PASS; fixtures 7 PASS; eval/lint PASS; clean iOS unit run 309 tests / 2 simulator skips / 0 failures; separate 10k watchdog PASS; tier-M budget+soak 2 PASS (47 MB peak, 6.7 MB marginal retained growth, 33.1/33.1/33.1 MB released soak). Phone bounded-scan/overview/iCloud/behavioral Swipe checks and iPad overview/Compare/queue rotation checks passed. Full initial iOS invocation failed and exposed issues corrected in focused runs; it is NOT a full green CI claim. Home contrast audit still flags partially occluded text at the floating tab edge; last default Swipe audit result is in VALIDATION_LOG. Other late accessibility checks were fixed without weakening assertions. Physical-device hang resolution, full window/AX5/manual VoiceOver matrix and release remain unverified.
+Validation: Core 118 PASS; fixtures 7 PASS; eval/lint PASS; clean iOS unit run 309 tests / 2 simulator skips / 0 failures; separate 10k watchdog PASS; tier-M budget+soak 2 PASS (47 MB peak, 6.7 MB marginal retained growth, 33.1/33.1/33.1 MB released soak). Phone bounded-scan/overview/iCloud/behavioral Swipe checks and iPad overview/Compare/queue rotation checks passed. Full initial iOS invocation failed and exposed issues corrected in focused runs; it is NOT a full green CI claim. Home contrast audit still flags partially occluded text at the floating tab edge; final default Swipe audit still fails a ~19.7×15.3 pt image hit region (`swipe.photo.sw1-left`); details are in HANDOFF.md and VALIDATION_LOG. Other late accessibility checks were fixed without weakening assertions. Physical-device hang resolution, full window/AX5/manual VoiceOver matrix and release remain unverified.
 
-**Next session:** read the final validation-log entry and PHONE_TESTING.md; reproduce owner's device results; resolve remaining accessibility audit issues and run full integrated CI before declaring closure. Then follow plans/PREMIUM_PARITY_IMPLEMENTATION_ORDER.md. N05 protected rules is specified but NOT implemented; no other premium-parity feature has started. User supplied only the research summary, not the linked full specification bundle. All prior dated logs below are history, not current completion evidence.
+**Next agent (any tool):** read HANDOFF.md and the final validation-log entry and PHONE_TESTING.md; reproduce owner's device results; resolve remaining accessibility audit issues and run full integrated CI before declaring closure. Then follow plans/PREMIUM_PARITY_IMPLEMENTATION_ORDER.md. N05 protected rules is specified but NOT implemented; no other premium-parity feature has started. User supplied only the research summary, not the linked full specification bundle. All prior dated logs below are history, not current completion evidence.
 
 ## Historical status (2026-11-11; superseded by current session closure)
 

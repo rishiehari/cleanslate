@@ -1,6 +1,6 @@
 # Repository instructions for all agents
 
-Read `docs/AGENT_ROLES.md`, `docs/PROGRESS.md`, and recent `docs/VALIDATION_LOG.md` entries before work. Preserve concurrent agents' edits and staged changes.
+Read `docs/HANDOFF.md`, `docs/AGENT_ROLES.md`, `docs/PROGRESS.md`, and recent `docs/VALIDATION_LOG.md` entries before work. Preserve concurrent agents' edits and staged changes.
 
 ## Standing authorization to commit and push
 
