@@ -104,6 +104,15 @@ public enum ProtectionAvailability: Equatable, Sendable {
 }
 
 public enum ProtectionDateResolver {
+    /// DatePicker selections are instants even when displayed in a non-Gregorian calendar.
+    /// Persist the Gregorian local day expected by the rule schema, in the rule's chosen zone.
+    public static func localDay(containing date: Date, timeZoneID: String) -> LocalDay? {
+        guard let zone = TimeZone(identifier: timeZoneID) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        return localDay(of: date, calendar)
+    }
+
     /// Resolves an inclusive local-day range to `[start, end)` instants in `timeZoneID`.
     /// Each day is anchored at noon so a day without a midnight (DST at 00:00) still resolves.
     public static func interval(start: LocalDay, end: LocalDay, timeZoneID: String) -> (start: Date, endExclusive: Date)? {
