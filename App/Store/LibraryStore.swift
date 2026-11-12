@@ -9,7 +9,7 @@ actor LibraryStore {
     /// Derived from the migration list so a new migration can never be forgotten here.
     static var schemaVersion: Int { migrations.count }
 
-    enum StoreError: Error { case open(String), sql(String) }
+    enum StoreError: Error { case open(String), sql(String), malformedProtectionRule(String) }
 
     // Only touched by this actor (and its deinit, which has exclusive access).
     nonisolated(unsafe) private var db: OpaquePointer?
@@ -584,7 +584,7 @@ actor LibraryStore {
     private static let protectionColumns = "rule_id,kind,target_id,start_local_day,end_local_day,time_zone_id,start_utc,end_utc_exclusive,created_at,updated_at,enabled,rule_version"
 
     private func protectionRule(from s: OpaquePointer?) -> Result<ProtectionRule, StoreError> {
-        func bad(_ why: String) -> Result<ProtectionRule, StoreError> { .failure(.sql("malformed protection rule: \(why)")) }
+        func bad(_ why: String) -> Result<ProtectionRule, StoreError> { .failure(.malformedProtectionRule(why)) }
         guard let idText = str(s, 0), let id = UUID(uuidString: idText) else { return bad("rule_id") }
         guard sqlite3_column_int(s, 11) == 1 else { return bad("rule_version") }
         let scope: ProtectionScope
