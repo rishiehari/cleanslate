@@ -36,6 +36,11 @@ Approving moves photos into a **Deletion tray**; it never deletes. The tray's su
 ## Non-goals
 No cloud or accounts. No ads, tracking, subscriptions or analytics. No automatic deletion of anything that is not byte-identical. No merging of photo metadata. No iPad-optimized layout in 1.0 (runs in compatibility mode). No claims of exhaustive duplicate detection.
 
+**2026-11-11 planning update:** the owner requested an iPad expansion plan and a detailed Swipe n Save interaction,
+onboarding and calibration plan. iPad implementation has not started. Swipe n Save's initial implementation reuses
+existing directly compared similar pairs; choices are explicit and approval still only adds to the tray. Personalization
+is planning-only and does not change the [ML gate](ML_GATE.md) or authorize automatic deletion.
+
 ## Success metrics
 - Verified bytes recovered per session (receipts).
 - Harmful-deletion reports: **0** (hard launch gate).

@@ -5,7 +5,7 @@
 ## Build and permissions
 
 1. Run `./scripts/generate_and_build_macos.sh` on a recent Xcode environment. Verify that `NSPhotoLibraryUsageDescription` is included in the generated app plist and read-write Photos requests appear only after user action.
-2. Run `CleanSlateTests` on simulator; ensure Vision feature print test passes and note any SDK availability differences.
+2. Run `CleanSlateTests` on simulator; record the documented Vision hardware skip and any SDK availability differences. Verify Vision on a physical test device; a simulator skip is not a device pass.
 3. Test Photos `.authorized`, `.limited`, `.denied`, `.restricted`, and revoke-while-scanning; check UI always reports coverage correctly.
 4. Import synthetic photos using `./scripts/seed_simulator.sh` and compare exact originals, re-encoded variations, manipulated text, changed subjects and changed expressions.
 5. Test no network permission and iCloud-only originals. `completeDigests` must fail safely; never mark an asset exact because of missing hashes.
@@ -13,7 +13,7 @@
 ## Deletion canary tests
 
 - Two byte-identical assets with no flags: keeper survives, only reviewed duplicate can be selected, system confirms, then deletion reconciles.
-- Favorite / user-picked burst / RAW / edited / Live Photo / curated album / shared-source: cannot be selected without future explicit product redesign.
+- Favorites, user-picked bursts, curated albums and shared-source photos stay protected. RAW/edited/Live and other conditional flags remain blocked for similar or standalone deletion; the implemented exact-equality exception requires matching conditional keeper flags and complete resource equality. The historical Step 3 safety change still needs owner review; see RELEASE_CHECKLIST.
 - Three images A~B and B~C but A not~C: do not combine into an automatically deletable group.
 - Asset disappears, edits or becomes favorited after recommendation and before approval: commit aborts.
 - The selected ID equals keeper ID, missing keeper, empty selection: commit aborts.
@@ -32,6 +32,9 @@
 - Validate bundle icons, privacy manifest, in-app copy, export compliance, App Store screenshots and support URL before submitting.
 
 ## Acceptance evidence template
+
+The rows below are the original device-evidence template, not current simulator status. Record actual runs in
+`VALIDATION_LOG.md`; current pending gates are tracked in `PROGRESS.md` and `RELEASE_CHECKLIST.md`.
 
 | Gate | Result | Evidence | Reviewer |
 |---|---|---|---|

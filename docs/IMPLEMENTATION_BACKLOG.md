@@ -1,5 +1,9 @@
 # Ordered next implementation milestones, with hard exit conditions
 
+Historical initial backlog. For current sequence and measured status, use [PROGRESS.md](PROGRESS.md),
+[IMPLEMENTATION_ORDER.md](IMPLEMENTATION_ORDER.md), and dated [VALIDATION_LOG.md](VALIDATION_LOG.md) entries.
+The Linux-only environment and uncompiled-app statements below describe the original baseline, not current status.
+
 ## M1: compile native application on macOS (blocking)
 - Install XcodeGen, generate and compile `.xcodeproj`; correct any SDK-level API errors.
 - Execute `iOSTests` in CI. Do not publish signed binaries until this gate passes.

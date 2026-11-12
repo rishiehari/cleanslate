@@ -1,5 +1,7 @@
 # Feature roadmap: top 10, in build order
 
+**2026-11-11 owner override:** Swipe n Save is now the next implementation task, ahead of F04, while F03's device gate remains PENDING. The earlier L28 deferral below is historical. See [S01](features/S01-swipe-n-save.md) and [current progress](PROGRESS.md). iPad expansion and richer swipe onboarding/calibration are planning work, not authorization to implement iPad support or automatic similar-photo deletion.
+
 *Planner, 2026-11-09. Owner constraints applied: quality over quantity, **one feature at a time** with a stability
 gate between features, low-end devices first (iPhone SE 2nd gen at 3 GB RAM is the floor iOS 26 supports; XR/XS and
 the iPhone 8 cannot run iOS 26, see the note at the end), scope-first, never a frozen screen.*
@@ -30,7 +32,7 @@ Score = V + T − R − E. Items folded into a top-10 feature are marked → Fxx
 | L25 | Storage composition | 3 | 1 | 2 | 2 | 0 | not now |
 | L26 | Milestones | 2 | 1 | 1 | 1 | 1 | not now |
 | L27 | Share card | 2 | −1 | 3 | 2 | −4 | **NOT now** (privacy optics) |
-| L28 | Swipe mode | 3 | 1 | 3 | 2 | −1 | not now |
+| L28 | Swipe mode | 3 | 1 | 3 | 2 | −1 | owner override 2026-11-11 → S01 |
 | L29–31 | Review-while-scanning / sort / done summary | 3 | 2 | 1 | 1 | 3 | L29 → F05; L30, L31 later |
 | L32 | Compare face crops | 2 | 2 | 2 | 2 | 0 | not now |
 | L41 | Live Activity | 2 | 1 | 3 | 3 | −3 | NOT now (new target, more surface) |
@@ -62,7 +64,7 @@ recovery is folded into F06.
 - Album transfer (Step 8.4); albums stay always-protected.
 - Anything networked: accounts, cloud sync, remote config, crash SDKs, analytics. MetricKit payloads are stored locally only.
 - Live Activities, widgets, App Intents/Shortcuts, notifications. Each adds a surface and a target.
-- Swipe-to-delete game modes, streaks, share cards.
+- Streaks and share cards. Owner-requested Swipe n Save uses staged choices and the normal approval/tray path (S01).
 - Wider opt-in iCloud original downloads (keep the existing budgeted path unchanged).
 - Faster full-library scans (parallel Vision, GPU batching). Do 100 photos well first. Optimize after F08 with data from F02.
 - Subscriptions / paywall.

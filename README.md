@@ -2,7 +2,7 @@
 
 Native iOS SwiftUI prototype. All duplicate search and best-shot ranking runs on your iPhone using PhotoKit, Vision and a local SQLite feature cache. There is **no backend, account, subscription, ad, or photo upload**.
 
-**Status:** The Swift core was verified with **30 passing tests on Linux**. iOS Xcode builds, simulator tests and destructive PhotoKit operations are **not yet independently verified**. Do not test deletion against personal/iCloud-synchronized libraries.
+**Status:** Active implementation; see [current progress](docs/PROGRESS.md) and [validation evidence](docs/VALIDATION_LOG.md). The current macOS Core baseline is **115 passing tests** (2026-11-11). F01–F03 have recorded simulator validation and review; the F03 physical-device stability gate remains **PENDING**, and the app is not release-ready. Do not test deletion against personal/iCloud-synchronized libraries.
 
 ## Local Mac setup
 
@@ -37,8 +37,8 @@ The generator creates exactly identical copies as well as recompressed images, a
 ## Current architecture
 
 - `Core/`: independently tested deterministic candidate retrieval, resource signatures, keeper ranker and fail-closed deletion policy.
-- `App/Services/PhotoCatalog.swift`: PhotoKit permissions, inventory, local thumbnails and streamed resource hashes.
-- `App/Services/CleaningViewModel.swift`: bounded on-device scan, exact matches and manual-review near duplicates.
+- `App/Services/PhotoKitLibraryClient.swift`: PhotoKit permissions, inventory, local thumbnails and streamed resource hashes behind `PhotoLibraryClient`.
+- `App/Services/CleaningViewModel.swift` and `ScanEngine.swift`: resumable on-device scan, exact matches and manual-review similar photos, backed by `LibraryStore`.
 - `App/Services/PhotoDeletionCoordinator.swift`: fresh library-state checks, exact resource rehashing, OS-confirmed deletion and reconciliation.
 - `App/Views/`: dashboard, image comparison and selected deletion review.
 - `fixtures/`: deterministic mock photo scenarios.
@@ -48,14 +48,17 @@ The generator creates exactly identical copies as well as recompressed images, a
 
 ## Known limitations
 
-- Initial inventory is a bounded preview (1,500 assets; up to 25,000 through Scan More). Not a 250,000-image production scan.
-- Cloud-only originals are not downloaded. No claim of exhaustive duplicate detection.
+- Inventory is paged and resumable; per-pass exact verification and visual comparisons are capped. Recent-100 scope is planned in F04 and is not implemented yet. Fake-library scale results do not establish device performance.
+- Default scans use local data. Original downloads require the existing opt-in, path-checked, budgeted PhotoKit verification setting. No claim of exhaustive duplicate detection.
 - Best-shot ranking is heuristic, not human-calibrated.
-- App Store icon is not yet included in the GitHub import; simulator build can proceed without it, production builds require a validated 1024×1024 icon.
+- An app icon placeholder is included; production artwork still requires owner review.
 - Production signing, TestFlight and public release require additional work and review.
 
 ## Next steps
 
-Read [device test plan](docs/DEVICE_TEST_PLAN.md) and [engineering backlog](docs/IMPLEMENTATION_BACKLOG.md). If GitHub Actions fails, share the failing macOS job log so the source can be patched. Keep any signing keys, real photos and private datasets out of GitHub.
+Start with [current progress](docs/PROGRESS.md), [implementation order](docs/IMPLEMENTATION_ORDER.md), and the
+[device test plan](docs/DEVICE_TEST_PLAN.md). The older engineering backlog is historical context. Detailed planning:
+[iPad expansion](docs/plans/IPAD_APP_PLAN.md) and [Swipe n Save, onboarding and calibration](docs/plans/SWIPE_N_SAVE_PLAN.md).
+iPad remains planning-only. Keep signing keys, real photos and private datasets out of GitHub.
 
 MIT licensed. The app is intended to be free forever, but public App Store distribution normally requires the developer's Apple Developer Program membership.
