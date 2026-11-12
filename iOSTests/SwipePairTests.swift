@@ -202,7 +202,7 @@ final class SwipePairTests: XCTestCase {
         XCTAssertTrue(pair.approve())
         let entry = try XCTUnwrap(cleaning.tray.entries.first)
         library.update("a", revision: "changed")
-        let coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: cleaning.networkPolicy)
+        let coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: cleaning.networkPolicy, protection: StaticProtectionGate())
         do {
             _ = try await coordinator.commit(group: entry.group, selected: entry.selectedIDs,
                                              manuallyReviewed: entry.manuallyReviewedIDs, keeperIDs: entry.effectiveKeeperIDs)

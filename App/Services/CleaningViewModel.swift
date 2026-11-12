@@ -101,6 +101,10 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     let library: PhotoLibraryClient
     private let coordinator: PhotoDeletionCoordinator
     let tray: DeletionTray
+    /// N05: the user's protection rules. Every commit consults this gate; it fails closed until loaded.
+    let protection: ProtectionGate
+    /// The concrete service behind `protection`, when the real one is in use (nil when a test injects a gate).
+    let protectionService: ProtectionRuleService?
     let networkPolicy: NetworkPolicy
     let store: LibraryStore
     let governor: ResourceGovernor
@@ -134,7 +138,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
          governor: ResourceGovernor? = nil,
          visual: VisualAnalyzing = VisionVisualAnalyzer(),
          diagnostics: DiagnosticsLog? = nil,
-         scanCounters: ScanCounters = ScanCounters()) {
+         scanCounters: ScanCounters = ScanCounters(),
+         protection: ProtectionGate? = nil) {
         self.visual = visual
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
@@ -144,7 +149,15 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         self.diagnostics = diagnostics ?? DiagnosticsLog.shared
         self.scanCounters = scanCounters
         self.governor.diagnostics = self.diagnostics
-        self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy)
+        if let protection {
+            self.protection = protection
+            self.protectionService = protection as? ProtectionRuleService
+        } else {
+            let service = ProtectionRuleService(store: self.store)
+            self.protection = service
+            self.protectionService = service
+        }
+        self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy, protection: self.protection)
         self.authorization = library.authorization
         // @Published notifies before the value changes, so use the emitted value, not tray.standaloneEntries.
         trayObserver = self.tray.$standaloneEntries.sink { [weak self] entries in self?.recomputeStandalone(trayEntries: entries) }
@@ -153,6 +166,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             self?.libraryDidChange()
         }
         self.governor.dropCachesRequested = { [weak self] in self?.engine.dropCaches() }
+        if let service = protectionService { Task { [weak service] in await service?.load() } }     // commits stay blocked until this finishes
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
     }
 

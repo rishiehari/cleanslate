@@ -63,6 +63,8 @@ struct GroupRechecker {
 @MainActor
 struct TrayChecker {
     let library: PhotoLibraryClient
+    /// Shown for an approved photo that a protection rule now covers.
+    static let protectedByRuleReason = "Protected by your rule — always kept"
 
     /// nil = still fine. Otherwise the reason the user needs to take another look.
     func reasonNeedingAnotherLook(_ entry: TrayEntry) -> String? {
