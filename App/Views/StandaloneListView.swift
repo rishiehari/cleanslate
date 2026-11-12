@@ -5,6 +5,7 @@ import SwiftUI
 struct StandaloneListView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
     let category: ScanCategory
 
@@ -98,7 +99,9 @@ struct StandaloneListView: View {
     }
 
     private var grid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Spacing.xs), count: 3), spacing: Spacing.xs) {
+        let minimum = dynamicTypeSize.isAccessibilitySize
+            ? AdaptiveLayout.accessibleTileWidth : AdaptiveLayout.minimumTileWidth
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: minimum), spacing: Spacing.xs)], spacing: Spacing.xs) {
             ForEach(items) { item in
                 SelectableTile(item: item, isSelected: selected.contains(item.id)) { toggle(item) }
             }

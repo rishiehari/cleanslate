@@ -128,6 +128,7 @@ struct CategoryGroupsView: View {
 struct GroupRowView: View {
     let group: PhotoReviewGroup
     var status: String?
+    var showsDisclosure = true
     var body: some View {
         HStack(spacing: Spacing.m) {
             PhotoThumbnailView(assetID: group.keeper.id, target: 160)
@@ -144,7 +145,9 @@ struct GroupRowView: View {
                 }
             }
             Spacer()
-            Image(systemName: "chevron.right").foregroundStyle(Color.textSecondary).accessibilityHidden(true)
+            if showsDisclosure {
+                Image(systemName: "chevron.right").foregroundStyle(Color.textSecondary).accessibilityHidden(true)
+            }
         }
         .padding(Spacing.s + Spacing.xs)
         .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.m))

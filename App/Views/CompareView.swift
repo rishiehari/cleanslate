@@ -5,6 +5,7 @@ struct CompareView: View {
     let keeperID: String
     @State var otherID: String
     let otherChoices: [String]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,9 +17,16 @@ struct CompareView: View {
     var body: some View {
         NavigationStack {
             GeometryReader { proxy in
-                VStack(spacing: Spacing.xs) {
-                    pane(keeperID, label: "Keep", height: proxy.size.height / 2 - Spacing.xs)
-                    pane(otherID, label: "Compare", height: proxy.size.height / 2 - Spacing.xs)
+                let horizontal = AdaptiveLayout.usesHorizontalComparison(
+                    width: proxy.size.width, accessibilityText: dynamicTypeSize.isAccessibilitySize)
+                let layout = horizontal ? AnyLayout(HStackLayout(spacing: Spacing.xs))
+                    : AnyLayout(VStackLayout(spacing: Spacing.xs))
+                let size = CGSize(
+                    width: horizontal ? (proxy.size.width - Spacing.xs) / 2 : proxy.size.width,
+                    height: horizontal ? proxy.size.height : (proxy.size.height - Spacing.xs) / 2)
+                layout {
+                    pane(keeperID, label: "Keep", size: size)
+                    pane(otherID, label: "Compare", size: size)
                 }
                 .gesture(zoomAndPan)
                 .onTapGesture(count: 2) { reset() }
@@ -41,11 +49,11 @@ struct CompareView: View {
         .accessibilityIdentifier("compare.screen")
     }
 
-    private func pane(_ id: String, label: String, height: CGFloat) -> some View {
+    private func pane(_ id: String, label: String, size: CGSize) -> some View {
         PhotoThumbnailView(assetID: id, target: 1400)
             .scaleEffect(scale)
             .offset(offset)
-            .frame(height: height)
+            .frame(width: size.width, height: size.height)
             .clipped()
             .overlay(alignment: .topLeading) {
                 Text(label).appText(.badge).foregroundStyle(.white)

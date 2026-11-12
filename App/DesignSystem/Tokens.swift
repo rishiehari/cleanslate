@@ -40,3 +40,21 @@ extension Color {
     static let textPrimary = Color("textPrimary")
     static let textSecondary = Color("textSecondary")
 }
+
+/// Provisional window-layout values; validate at AX5 and on physical iPad before release.
+enum AdaptiveLayout {
+    static let minimumComparisonPhotoWidth: CGFloat = 300
+    static let readableContentWidth: CGFloat = 760
+    static let minimumTileWidth: CGFloat = 100
+    static let accessibleTileWidth: CGFloat = 200
+    static let reviewQueueWidth: CGFloat = 300
+    static let minimumReviewDetailWidth: CGFloat = 640
+
+    static func showsReviewQueue(width: CGFloat, accessibilityText: Bool) -> Bool {
+        !accessibilityText && width >= reviewQueueWidth + minimumReviewDetailWidth
+    }
+
+    static func usesHorizontalComparison(width: CGFloat, accessibilityText: Bool) -> Bool {
+        !accessibilityText && width >= minimumComparisonPhotoWidth * 2 + Spacing.xs
+    }
+}
