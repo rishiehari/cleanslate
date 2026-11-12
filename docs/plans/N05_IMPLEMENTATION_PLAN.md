@@ -293,3 +293,7 @@ Commands: `make core-test fixtures-test eval lint build`, then targeted `-only-t
 ## 8. Recommended next action
 
 The orchestrator confirms the a11y fixes have landed, or explicitly allows parallel Core-only work. It then briefs the executor for **C1** on `feature/N05-protection-rules` and schedules the owner safety review before any merge to `main`.
+
+## Continuation checkpoint (2026-11-12)
+
+Claude completed C1–C9 through 410b924; main9037790 was reconciled before this continuation. C10 documentation and calendar/time-zone, presentation-metadata, adaptive-layout and accessibility fixes are recorded in [N05_REVIEW_PACKET.md](N05_REVIEW_PACKET.md). Original planner assumptions above are retained as historical rationale; the V2 package is now present. This checkpoint does not close owner C1/C4/C5 review, full N05 scope, the physical-device matrix or release. Read the latest VALIDATION_LOG entry for failures, focused fixes and exact measured results; an earlier full failing run is not a final CI pass.
