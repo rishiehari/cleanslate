@@ -4,6 +4,16 @@
     "%@" : {
 
     },
+    "%@ · up to %@ items" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · up to %2$@ items"
+          }
+        }
+      }
+    },
     "%@ %@" : {
       "localizations" : {
         "en" : {
@@ -29,6 +39,26 @@
     },
     "%@ GB" : {
 
+    },
+    "%@ items · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ items · %2$@"
+          }
+        }
+      }
+    },
+    "%@ items · %@ burst photos in the overview" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ items · %2$@ burst photos in the overview"
+          }
+        }
+      }
     },
     "%@ of verified file sizes · %@" : {
       "localizations" : {
@@ -61,8 +91,18 @@
     "A few minutes. A little more room." : {
 
     },
-    "A private record of how scans ran on this iPhone. It never leaves your phone unless you share it." : {
+    "A private record of how scans ran on this device. It never leaves this device unless you share it." : {
 
+    },
+    "Activity in your latest %@ accessible items%@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Activity in your latest %1$@ accessible items%2$@."
+          }
+        }
+      }
     },
     "Approve 1 photo" : {
 
@@ -77,6 +117,9 @@
         }
       }
     },
+    "Approve or skip to move to the next group." : {
+
+    },
     "Approve photos in a review and they'll wait here. Nothing is deleted until you confirm." : {
 
     },
@@ -84,6 +127,9 @@
 
     },
     "Contains timings and counts only. No photos, names, dates or places." : {
+
+    },
+    "Dates and burst information only. No image analysis or downloads." : {
 
     },
     "Delete %@ %@" : {
@@ -99,7 +145,7 @@
     "Delete %@ photos?" : {
 
     },
-    "Deleted photos stay in Recently Deleted for 30 days. Space on your iPhone and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time." : {
+    "Deleted photos stay in Recently Deleted for 30 days. Space on this device and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time." : {
 
     },
     "Deleting with iCloud Photos on also removes the photo from your other devices. Recently Deleted keeps it for 30 days." : {
@@ -111,25 +157,28 @@
     "Favorites, photos in your albums, and identical copies (see Exact copies and Videos) are left out. Nothing here is selected for you." : {
 
     },
-    "File sizes shown are verified sizes. Actual free space can differ, especially with Optimize iPhone Storage." : {
+    "File sizes of copies found in this scan. Actual free space can differ. Nothing is deleted until you confirm." : {
 
     },
-    "Free space on this iPhone right now: %@ → %@" : {
+    "File sizes shown are verified sizes. Actual free space can differ, especially with Optimize Storage." : {
+
+    },
+    "Free space on this device right now: %@ → %@" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Free space on this iPhone right now: %1$@ → %2$@"
+            "value" : "Free space on this device right now: %1$@ → %2$@"
           }
         }
       }
     },
-    "Free space on this iPhone: %@ → %@" : {
+    "Free space on this device: %@ → %@" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Free space on this iPhone: %1$@ → %2$@"
+            "value" : "Free space on this device: %1$@ → %2$@"
           }
         }
       }
@@ -143,7 +192,19 @@
     "Needs another look" : {
 
     },
+    "No dated photos found in this overview. Try Latest 100 or change the scan range below." : {
+
+    },
+    "Photo activity is a starting point, not a duplicate result. Each scan checks up to 2,000 items. Savings appear only after file sizes are verified." : {
+
+    },
     "Photos access is off. Turn it on in Settings to continue." : {
+
+    },
+    "Photos and videos stay on this device. iCloud originals are not downloaded unless you separately enable iCloud checking. Missing previews are reported as unavailable, not assumed to be in iCloud. Older photos remain untouched and outside this scan." : {
+
+    },
+    "Recommended" : {
 
     },
     "Removed %@ %@" : {
@@ -159,10 +220,19 @@
     "Removes CleanSlate's saved scan data. Your photos aren't touched." : {
 
     },
+    "Review queue" : {
+
+    },
     "Skip" : {
 
     },
-    "Some photos live only in iCloud to save space on your iPhone, so CleanSlate can't compare them. With this on, it downloads them temporarily to check for copies. Nothing is uploaded, and it only uses Wi-Fi." : {
+    "Some photos live only in iCloud to save space on this device, so CleanSlate can't compare them. With this on, it downloads them temporarily to check for copies. Nothing is uploaded, and it only uses Wi-Fi." : {
+
+    },
+    "Start with a busy week or a burst-heavy period. Check a small part of your library before going further." : {
+
+    },
+    "Start with a recent part of your library. Review available results while the scan continues. Nothing is deleted by scanning." : {
 
     },
     "Swipe a group to take it out of the tray." : {
@@ -183,22 +253,25 @@
     "This version checks part of your library at a time, and can't compare photos that only live in iCloud. Similar shots are never selected for you." : {
 
     },
-    "To find copies, CleanSlate needs to look at your photos. It all happens on this iPhone, and nothing is deleted without your say-so." : {
+    "To find copies, CleanSlate needs to look at your photos. It all happens on this device, and nothing is deleted without your say-so." : {
+
+    },
+    "Up to %@ items" : {
 
     },
     "Verified file sizes removed from your library." : {
 
     },
-    "Verified file sizes. Space on your iPhone and in iCloud is freed after you empty Recently Deleted." : {
+    "Verified potential removals" : {
+
+    },
+    "Week of %@" : {
 
     },
     "What to review" : {
 
     },
     "When you delete photos with CleanSlate, a record shows up here." : {
-
-    },
-    "You can free up" : {
 
     },
     "You choose what to remove" : {

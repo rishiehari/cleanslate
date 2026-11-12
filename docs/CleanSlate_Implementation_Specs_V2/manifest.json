@@ -1,0 +1,70 @@
+{
+  "name": "CleanSlate implementation specs V2",
+  "date": "2026-11-12",
+  "feature_count": 10,
+  "feature_words": 19993,
+  "shared_words": 9069,
+  "gherkin_scenarios": 42,
+  "features": [
+    {
+      "id": "N01",
+      "path": "features/N01-moment-intelligence.md",
+      "words": 2179,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N02",
+      "path": "features/N02-similar-video-finder.md",
+      "words": 1952,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N03",
+      "path": "features/N03-compression-lab.md",
+      "words": 2234,
+      "gherkin_scenarios": 5
+    },
+    {
+      "id": "N04",
+      "path": "features/N04-storage-goal-planner.md",
+      "words": 2006,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N05",
+      "path": "features/N05-protection-rules.md",
+      "words": 2134,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N06",
+      "path": "features/N06-mistake-finder.md",
+      "words": 1675,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N07",
+      "path": "features/N07-screenshot-intelligence.md",
+      "words": 2040,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N08",
+      "path": "features/N08-album-inbox.md",
+      "words": 1819,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N09",
+      "path": "features/N09-rescue-gems.md",
+      "words": 1890,
+      "gherkin_scenarios": 4
+    },
+    {
+      "id": "N10",
+      "path": "features/N10-local-taste.md",
+      "words": 2064,
+      "gherkin_scenarios": 5
+    }
+  ]
+}
