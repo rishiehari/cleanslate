@@ -45,6 +45,7 @@ struct PhotoTile: View {
         if traits.contains(.livePhoto) { items.append(("livephoto", "Live Photo")) }
         if traits.contains(.edited) { items.append(("slider.horizontal.3", "Edited")) }
         if traits.contains(.raw) { items.append(("camera.aperture", "RAW")) }
+        if traits.contains(.userProtected) { items.append(("lock.shield.fill", "Protected by your rule")) }
         return items
     }
 

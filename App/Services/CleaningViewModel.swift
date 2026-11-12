@@ -103,6 +103,15 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     let tray: DeletionTray
     /// N05: the user's protection rules. Every commit consults this gate; it fails closed until loaded.
     let protection: ProtectionGate
+    private let shielding: SessionShieldingGate
+    private var protectionObserver: AnyCancellable?
+    /// Groups hidden because a protection rule covers every photo they could remove. Drives "Kept safe by your rule".
+    @Published private(set) var hiddenByRulesGroupIDs: Set<String> = []
+    private enum WithholdReason { case rule, rulesNotReady }
+    /// Groups kept out of `groups` by the rules (or because the rules could not answer yet), with the group as scanned.
+    private var withheldGroups: [String: (group: PhotoReviewGroup, reason: WithholdReason)] = [:]
+    /// True when the rules are loaded and no write is in flight. Bulk approval is hidden otherwise.
+    var protectionIsReady: Bool { protection.availability == .ready && protection.pendingWrites == 0 }
     /// The concrete service behind `protection`, when the real one is in use (nil when a test injects a gate).
     let protectionService: ProtectionRuleService?
     let networkPolicy: NetworkPolicy
@@ -157,14 +166,17 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         self.diagnostics = diagnostics ?? DiagnosticsLog.shared
         self.scanCounters = scanCounters
         self.governor.diagnostics = self.diagnostics
+        let rules: ProtectionGate
         if let protection {
-            self.protection = protection
+            rules = protection
             self.protectionService = protection as? ProtectionRuleService
         } else {
             let service = ProtectionRuleService(store: self.store, onDiskDatabasePath: openedFallbackStore ? LibraryStore.defaultPath() : nil)
-            self.protection = service
+            rules = service
             self.protectionService = service
         }
+        self.shielding = SessionShieldingGate(rules)
+        self.protection = self.shielding
         self.coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: self.networkPolicy, protection: self.protection)
         self.authorization = library.authorization
         // @Published notifies before the value changes, so use the emitted value, not tray.standaloneEntries.
@@ -175,6 +187,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         }
         self.governor.dropCachesRequested = { [weak self] in self?.engine.dropCaches() }
         self.tray.protectionGate = self.protection
+        protectionObserver = protectionService?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         protectionService?.onChange = { [weak self] change in self?.protectionDidChange(change) }
         if let service = protectionService { Task { [weak service] in await service?.load() } }     // commits stay blocked until this finishes
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
@@ -248,6 +261,9 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         standaloneItems = []
         membership = GroupMembershipIndex()
         exactMemberIDs = []
+        withheldGroups = [:]
+        hiddenByRulesGroupIDs = []
+        shielding.resetSession()                 // a new scan is a new protection session
         recomputeStandalone()
     }
 
@@ -255,6 +271,95 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     /// re-render bound counts objectWillChange), the membership index incrementally, and (only when
     /// exact membership moved) the standalone cache. Replaces the old didSet.
     func didChangeGroups(added: [PhotoReviewGroup] = [], removed: [String] = []) {
+        guard !added.isEmpty || !removed.isEmpty else { return }
+        // N05: groups whose every actionable photo is protected (or whose protection can't be judged yet) are withheld.
+        var visible: [PhotoReviewGroup] = []
+        var toRemove = removed
+        var withheldExactChanged = false
+        for id in removed { if withheldGroups.removeValue(forKey: id)?.group.kind == .exact { withheldExactChanged = true } }
+        for group in added {
+            if let reason = withholdReason(group) {
+                withheldGroups[group.id] = (group, reason)
+                if group.kind == .exact { withheldExactChanged = true }
+                if groups.contains(where: { $0.id == group.id }) { toRemove.append(group.id) }
+            } else {
+                if withheldGroups.removeValue(forKey: group.id)?.group.kind == .exact { withheldExactChanged = true }
+                visible.append(group)
+            }
+        }
+        publishHiddenByRules()
+        applyGroupChanges(added: visible, removed: toRemove)
+        if withheldExactChanged { recomputeStandalone() }
+    }
+
+    // MARK: Protection (N05)
+
+    private func publishHiddenByRules() {
+        let hidden = Set(withheldGroups.filter { $0.value.reason == .rule }.keys)
+        if hidden != hiddenByRulesGroupIDs { hiddenByRulesGroupIDs = hidden }
+    }
+
+    /// nil = the group may be shown. Withheld when it had something actionable before the rules and nothing after.
+    private func withholdReason(_ group: PhotoReviewGroup) -> WithholdReason? {
+        var anyProtected = false, anyUnknown = false
+        for photo in group.all {
+            switch protection.ruleVerdict(for: photo) {
+            case .protected: anyProtected = true
+            case .indeterminate: anyUnknown = true
+            case .unprotected: break
+            }
+        }
+        guard anyProtected || anyUnknown else { return nil }
+        let before = SafetyPolicy.evaluate(group.coreCluster)
+        guard !before.preselected.isEmpty || !before.reviewOnly.isEmpty else { return nil }
+        let after = SafetyPolicy.evaluate(protection.decoratedGroup(group, settled: true).coreCluster)
+        guard after.preselected.isEmpty && after.reviewOnly.isEmpty else { return nil }
+        return anyProtected ? .rule : .rulesNotReady
+    }
+
+    /// Re-judges every listed group after the rules changed. Groups only ever LEAVE the list because of a rule; the only ones
+    /// that come back are those withheld because the rules had not loaded yet. Removing a rule never restores anything.
+    func redecorateGroupsForProtection() {
+        var withheldNow: [String] = []
+        var exactChanged = false
+        for group in groups {
+            if let reason = withholdReason(group) {
+                withheldGroups[group.id] = (group, reason)
+                withheldNow.append(group.id)
+                if group.kind == .exact { exactChanged = true }
+            }
+        }
+        var restored: [PhotoReviewGroup] = []
+        for (id, entry) in withheldGroups where entry.reason == .rulesNotReady {
+            if let reason = withholdReason(entry.group) {
+                withheldGroups[id] = (entry.group, reason)
+            } else {
+                withheldGroups[id] = nil
+                restored.append(entry.group)
+                if entry.group.kind == .exact { exactChanged = true }
+            }
+        }
+        publishHiddenByRules()
+        applyGroupChanges(added: restored, removed: withheldNow)
+        if exactChanged { recomputeStandalone() }
+    }
+
+    /// What "Approve all" may add for this group: only the copies the policy allows once the rules are applied.
+    func approvableCopies(in group: PhotoReviewGroup) -> Set<String> {
+        guard protectionIsReady else { return [] }
+        return SafetyPolicy.evaluate(protection.decoratedGroup(group).coreCluster).preselected
+    }
+
+    /// Adds keeper-less items to the tray, skipping any the rules protect. false = something was refused.
+    @discardableResult
+    func approveStandalone(_ items: [StandaloneItem]) -> Bool {
+        let allowed = items.filter { protection.verdict(for: $0.snapshot) == .unprotected }
+        if !allowed.isEmpty { tray.approveStandalone(items: allowed) }
+        if allowed.count != items.count { recomputeStandalone() }
+        return allowed.count == items.count
+    }
+
+    private func applyGroupChanges(added: [PhotoReviewGroup], removed: [String]) {
         guard !added.isEmpty || !removed.isEmpty else { return }
         var exactTouched = !removed.isEmpty
         let removedIDs = Set(removed)
@@ -344,11 +449,16 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
 
     /// A rule was added, removed or (re)loaded. Adding is judged from the tray's STORED snapshots (no PhotoKit), then only
     /// the matching entries are rechecked against the live library. A reload rechecks everything.
-    private func protectionDidChange(_ change: ProtectionChange) {
+    func protectionDidChange(_ change: ProtectionChange) {
         switch change {
-        case .removed: break                         // removing a rule never makes an invalidated entry deletable again
-        case .reloaded: revalidateTray(touched: nil)
+        case .removed: break                         // removing a rule never makes an invalidated entry or a hidden suggestion come back
+        case .reloaded:
+            revalidateTray(touched: nil)
+            redecorateGroupsForProtection()
+            recomputeStandalone()
         case .added:
+            redecorateGroupsForProtection()
+            recomputeStandalone()
             var touched: Set<String> = []
             for entry in tray.entries {
                 let photos = entry.group.all.filter { entry.selectedIDs.contains($0.id) }
@@ -383,7 +493,11 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         let inTray = Set((trayEntries ?? tray.standaloneEntries).flatMap { $0.items.map(\.id) })
         // Members of an exact-copy group are handled there (one is always kept). Offering them here
         // would let someone delete every copy of the same photo or video.
-        let hidden = inTray.union(exactMemberIDs).union(albumMembers)
+        var hidden = inTray.union(exactMemberIDs).union(albumMembers)
+        // Photos in a group withheld by the rules are still "handled there": never offered here as standalone either.
+        for entry in withheldGroups.values where entry.group.kind == .exact { hidden.formUnion(entry.group.all.map(\.id)) }
+        // N05: protected photos (and any the rules cannot judge) are not suggested. The session shield makes this only grow.
+        for item in standaloneItems where protection.ruleVerdict(for: item.snapshot) != .unprotected { hidden.insert(item.id) }
         var cache: [ScanCategory: [StandaloneItem]] = [:]
         for category in ScanCategory.allCases {
             guard let kind = category.standaloneKind else { continue }
@@ -414,7 +528,7 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
     func selectionBlockReason(for item: StandaloneItem) -> String? {
         guard let fresh = library.snapshot(id: item.id, inspectAlbums: true) else { return "No longer in your library" }
         guard fresh.record.revision == item.snapshot.record.revision else { return "Changed since the scan. Scan again" }
-        if let flag = fresh.record.flags.sorted(by: { $0.rawValue < $1.rawValue }).first { return flag.userFacingReason }
+        if let flag = protection.decoratedRecord(fresh).flags.sorted(by: { $0.rawValue < $1.rawValue }).first { return flag.userFacingReason }
         return nil
     }
 

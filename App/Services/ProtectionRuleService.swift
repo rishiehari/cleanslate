@@ -47,6 +47,25 @@ extension ProtectionGate {
                                    startRevision: startRevision, currentRevision: revision)
     }
 
+    /// Decorates every member of a group. `settled` uses `ruleVerdict` (a pending write does not make photos "uncertain").
+    func decoratedGroup(_ group: PhotoReviewGroup, settled: Bool = false) -> PhotoReviewGroup {
+        func decorate(_ snapshot: PhotoSnapshot) -> PhotoSnapshot {
+            guard settled else { return decorated(snapshot) }
+            let flag: PreservationFlag
+            switch ruleVerdict(for: snapshot) {
+            case .unprotected: return snapshot
+            case .protected: flag = .userProtected
+            case .indeterminate: flag = .uncertainMetadata
+            }
+            var copy = snapshot
+            copy.record = Self.record(snapshot.record, adding: flag)
+            return copy
+        }
+        return PhotoReviewGroup(id: group.id, kind: group.kind, keeper: decorate(group.keeper),
+                                candidates: group.candidates.map(decorate), evidence: group.evidence,
+                                verifiedCandidateBytes: group.verifiedCandidateBytes)
+    }
+
     private static func record(_ record: AssetRecord, adding flag: PreservationFlag) -> AssetRecord {
         AssetRecord(id: record.id, revision: record.revision, flags: record.flags.union([flag]),
                     verifiedLogicalBytes: record.verifiedLogicalBytes)
@@ -288,4 +307,32 @@ private extension ProtectionRuleSet {
     static let empty: ProtectionRuleSet = {
         do { return try ProtectionRuleSet(rules: [], revision: 0) } catch { fatalError("an empty rule set is always valid") }
     }()
+}
+
+/// Wraps the real gate for one scan session: a photo that was protected at any point this session stays protected until
+/// the next scan, so removing a rule mid-session can never bring a suggestion back ("protection only grows").
+@MainActor
+final class SessionShieldingGate: ProtectionGate {
+    private let inner: ProtectionGate
+    private var shieldedIDs: Set<String> = []
+
+    init(_ inner: ProtectionGate) { self.inner = inner }
+
+    var availability: ProtectionAvailability { inner.availability }
+    var revision: Int64 { inner.revision }
+    var pendingWrites: Int { inner.pendingWrites }
+
+    func verdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict { shield(inner.verdict(for: snapshot), snapshot.id) }
+    func ruleVerdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict { shield(inner.ruleVerdict(for: snapshot), snapshot.id) }
+
+    /// A new scan starts a new session.
+    func resetSession() { shieldedIDs.removeAll() }
+
+    private func shield(_ verdict: ProtectionVerdict, _ id: String) -> ProtectionVerdict {
+        switch verdict {
+        case .protected: shieldedIDs.insert(id); return verdict
+        case .unprotected: return shieldedIDs.contains(id) ? .protected(ruleIDs: []) : verdict
+        case .indeterminate: return verdict
+        }
+    }
 }

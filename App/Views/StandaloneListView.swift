@@ -151,7 +151,12 @@ struct StandaloneListView: View {
     }
 
     private func approve() {
-        tray.approveStandalone(items: selectedItems)
+        guard model.approveStandalone(selectedItems) else {
+            notice = TrayChecker.protectedByRuleReason          // a rule now covers something that was selected
+            HapticsService.shared.fire(.blocked)
+            selected = []
+            return
+        }
         HapticsService.shared.fire(.approve)
         selected = []
     }

@@ -17,7 +17,8 @@ struct CategoryGroupsView: View {
     /// Exact groups whose copies the safety policy allows to pre-mark.
     private var approvable: [PhotoReviewGroup] {
         guard category == .exact || category == .videos else { return [] }
-        return pending.filter { !SafetyPolicy.evaluate($0.coreCluster).preselected.isEmpty }
+        // Hidden unless the protection rules are loaded; copies a rule protects are never counted.
+        return pending.filter { !model.approvableCopies(in: $0).isEmpty }
     }
 
     var body: some View {
@@ -52,7 +53,7 @@ struct CategoryGroupsView: View {
         .sheet(isPresented: $showApproveAll) {
             ApproveAllSheet(groups: approvable) { chosen in
                 let items = chosen.map { group in
-                    (group: group, selected: SafetyPolicy.evaluate(group.coreCluster).preselected)
+                    (group: group, selected: model.approvableCopies(in: group))
                 }
                 tray.approveAll(items)
                 HapticsService.shared.fire(.approve)
@@ -64,7 +65,7 @@ struct CategoryGroupsView: View {
     }
 
     private var approveAllButton: some View {
-        let count = approvable.reduce(0) { $0 + SafetyPolicy.evaluate($1.coreCluster).preselected.count }
+        let count = approvable.reduce(0) { $0 + model.approvableCopies(in: $1).count }
         let bytes = approvable.reduce(Int64(0)) { $0 + $1.estimatedVerifiedBytes }
         return Button { showApproveAll = true } label: {
             HStack {

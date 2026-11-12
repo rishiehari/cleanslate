@@ -53,6 +53,7 @@ final class GroupReviewProtectionTests: XCTestCase {
 
     func testRulesNotReadyBlocksApproval() {
         for state: ProtectionAvailability in [.loading, .unavailable("x"), .lost] {
+            gate.availability = .ready              // each draft is opened while the rules are fine (C6 locks drafts opened while not ready)
             let review = model()
             gate.availability = state
             XCTAssertFalse(review.approve(), "\(state)")

@@ -11,7 +11,7 @@ final class ApproveGuardTests: XCTestCase {
     private func model(analyzer: PhotoAnalyzer?) -> (GroupReviewModel, DeletionTray) {
         for id in ["a", "b", "c"] { library.add(id, content: id) }
         let tray = DeletionTray(fileURL: nil)
-        return (GroupReviewModel(group: library.reviewSet(["a", "b", "c"]), tray: tray, haptics: HapticsService(), analyzer: analyzer), tray)
+        return (GroupReviewModel(group: library.reviewSet(["a", "b", "c"]), tray: tray, haptics: HapticsService(), analyzer: analyzer, protection: StaticProtectionGate()), tray)
     }
 
     func testApproveRefusedWhileAnalysisIsIncomplete() async {
