@@ -37,16 +37,15 @@ Older dated entries and the large-library proposal documents contain historical/
 - Pinned tier-M memory run: 2 tests pass. 10k peak 47 MB against 160 MB budget; 6.7 MB marginal settled growth; released three-run soak 33.1/33.1/33.1 MB. Simulator tier pinning is not physical-device evidence.
 - Phone scoped/background/overview/iCloud opt-in and behavioral Swipe checks pass. iPad overview/Compare/queue rotation checks pass; queue test collapses the system sidebar to supply sufficient detail width.
 
-## Known failures — do these next
+## Known failures — status (updated 2026-11-12, Claude Code session)
 
-The initial full `make ios-test` completed with failures. Subsequent focused runs fixed functional/model/fixture/watchdog failures, but there is NO fully green final integrated CI claim.
+The two audit failures above are CLOSED (Swipe hit region; Home contrast via a geometry-bound chrome-zone exemption with re-audit). A full integrated `xcodebuild test` is green (see VALIDATION_LOG 2026-11-12 "Real-library simulator stability fixes"). Three crash/function defects that only real PhotoKit exposes were fixed (Swift 6 isolation traps incl. the delete change block, fastFormat thumbnail 3303, BGTask submit without registration), plus a pre-existing cross-chunk deletion-safety bug (Core `TrayConsistency`).
 
-1. `ReviewFlowUITests.testAccessibilityAuditOnHomeAndReview`: contrast sampling still flags text near the floating-tab/occluded scroll edge. Failing text moved as layout changed; last observed label was “What to review.” Bottom-edge fade was disabled and content made readable, but the audit has not passed. Verify actual visible geometry/screenshots; do not silently whitelist/remove assertions.
-2. `SwipeSaveUITests.testSwipeAccessibilityAudit`: final closure run still fails hit-region audit on the photo image accessibility representation: `swipe.photo.sw1-left`, reported bounds about 19.7 × 15.3 pt. Named keep/compare actions are now on the review deck and visible buttons; investigate SwiftUI representation/action propagation and give interactive focus an actual 44-point minimum without losing photo labels/decision values or changing approval guards.
-3. The separate AX3 Swipe audit passed in a prior final-source iteration. Re-run default/AX3/AX5 and behavior after fixing the representation; do not assume the full matrix passed.
-4. Re-run full integrated CI and appropriate budgets after these fixes. Do not start N05 implementation while fixable current regressions remain.
+Still open: AX5 Swipe audit (no test), physical-device gates, ~2 s launch main-thread block on simulator, and the owner decision on Swipe n Save's empty feed on real libraries (`seq-` sets vs `near-` pairs).
 
-Test execution rule: do not run two xcodebuild test sessions against the same simulator simultaneously. One attempted overlap interrupted a unit run; it was excluded from passing evidence and a clean run followed.
+Real-library simulator testing: `CleanSlate-RealLib` simulator holds an owner-provided copy of recent photos for local text-metric testing only. Never view, upload or log its images/screenshots/metadata. Run `TEST_RUNNER_CLEANSLATE_REALLIB=1 xcodebuild … -destination 'platform=iOS Simulator,name=CleanSlate-RealLib' test -only-testing:CleanSlateUITests/RealLibrarySmokeUITests` (add `TEST_RUNNER_CLEANSLATE_REALLIB_ALLOW_DELETE=1` only for the one-copy deletion test).
+
+N05 (protection rules) is being implemented on branch `feature/N05-protection-rules` (planner → executor → validator rounds). It changes the deletion coordinator and adds a hard preservation flag, so it is NOT merged to main until the owner reviews the safety diff (AGENTS.md: push authorization excludes safety-policy changes). Plan: docs/plans/N05_IMPLEMENTATION_PLAN.md.
 
 ## Reproduce and collect evidence
 

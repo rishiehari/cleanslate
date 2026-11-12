@@ -473,3 +473,38 @@ Closure is a buildable development checkpoint, not release approval or a claim t
 ### Final handoff result
 
 Code checkpoint df429a3 committed and pushed to origin/main. Final default Swipe audit DID NOT pass: hit-region failure on image `swipe.photo.sw1-left`, reported 19.7 × 15.3 pt, after actions were moved to the review deck. Home contrast audit also remains unresolved. No test assertions were waived to obtain green. Both generic simulator and unsigned physical-device builds passed on the committed source. docs/HANDOFF.md and current PROGRESS.md contain the exact continuation order; the session is closed at the owner's request. No background implementation task or new feature is left running.
+
+## 2026-11-12 — Real-library simulator stability fixes + known-failure closure (main)
+
+Start HEAD: f694156. Orchestrator: Claude Code (Opus 5.5) with planner/executor/validator/gatekeeper agents per AGENT_ROLES.md.
+
+**Owner authorization (recorded):** the owner asked in-session to copy photos from their Mac Photos library into a simulator "purely for simulators only" and forbade uploading them anywhere. 1,757 items since 2026-07-01 were exported with osxphotos to a session scratch folder outside the repo and imported (1,759 files; 4 AVIF/WEBP rejected) into a dedicated simulator "CleanSlate-RealLib" (iPhone 17 Pro, iOS 27.2). Agents consumed **text metrics only** (counts, timings, salted diagnostics); no image, screenshot, filename or metadata was viewed, logged or committed. One screenshot copy was deleted inside that simulator by the end-to-end test; the Mac library was never touched. This is simulator evidence with an owner-provided media copy, NOT physical-device evidence.
+
+### Defects found only with real PhotoKit (fake library could not expose them)
+1. **Crash ~6 s into every scan** — Swift 6 runtime isolation trap (`BUG IN CLIENT OF LIBDISPATCH: Block was expected to execute on queue [main-thread]`). Closures handed to PhotoKit (requestImage/requestAVAsset/requestData/requestAuthorization), Dispatch timers, NWPathMonitor and BGTaskScheduler from `@MainActor` types inherited main-actor isolation and trapped on background queues. Fixed with explicit `@Sendable` closures (`LockedSHA256: @unchecked Sendable`, `nonisolated(unsafe)` BGTask binding). Validator M1: the single `performChanges { deleteAssets }` block had the same trap and would have crashed at the final Delete step — fixed the same way; still exactly one `deleteAssets`.
+2. **100% of thumbnails unavailable** (0/295) — `.fastFormat` + network disabled returns PHPhotosErrorDomain 3303 when PhotoKit holds no cached derivative. One local-only retry with `.highQualityFormat` + `.fast` resize (network still disabled, own 10 s deadline, never after cancel/timeout/cloud-only); decision is `PhotoKitLibraryClient.shouldRetryLocally` (unit-tested). After: 20/20 diagnostic; 2 of 1,242 unavailable on the 2,000 scan.
+3. **Crash on the Latest-2,000 scan** — `BGTaskScheduler` ObjC assertion (submit without registration) from `requestContinuedProcessing`. Submits are now gated on `register()`'s returned Bool.
+
+### Pre-existing deletion-safety defect (validator B-1, both rounds)
+`DeletionTray.deleteAll` chunks >500 targets and `validateBatch` sees one chunk, so a photo KEPT by one entry could be DELETED as a target by an entry in a later chunk (or by a ready entry while the keeper's entry was set aside). New Core `TrayConsistency.problems` (9 Core tests) runs over **every** tray entry before chunking and only ever sets entries aside; single >500 entries get an honest reason; raw `CancellationError` during the commit recheck is a Stop; a notice is shown when nothing is ready. 11 iOS tests in `WholeTrayConflictTests` incl. both validator repros.
+
+### HANDOFF known failures (closed)
+- Swipe hit-region audit: photo accessibility representation is now a clear view spanning the card with `.isImage` (label/value/identifier unchanged). Caption moved into the bottom bar (copy unchanged); choices are Keep left/Keep right then Keep both at standard sizes, one column at accessibility sizes (disclosed layout change). Default + AX3 Swipe audits PASS. AX5 Swipe audit NOT run (no such test) — PENDING.
+- Home contrast audit: geometry-bound exemption — a contrast issue is waived only while the element intersects a system-chrome zone (floating tab bar + 44 pt scroll-edge fade band; status/nav + 44 pt), each waived element must resolve uniquely, be scrolled fully clear (else FAIL) and pass a re-audit with no exemption for itself. Run waived and re-audited "What to review" and "File sizes of copies found in this scan…". Gatekeeper judged it legitimate, not a weakened assertion. No existing assertion removed.
+
+### Evidence
+- Core: 127 tests, 0 failures (118 + 9 TrayConsistency). Lint/policy separation PASS (one `deleteAssets`). Fixtures 7 PASS, eval GATE PASS, build PASS.
+- Full integrated `xcodebuild test` on iPhone 17 Pro (iOS 26.5), prior to the simulator-guard/Core move: **unit 324 (3 skipped) 0 failures; UI 45 (12 skipped) 0 failures — TEST SUCCEEDED.** Independent validator run (iPhone 17): unit 320 (3 skipped)/UI 44 (11 skipped), 0 failures. Final-diff run: see the entry appended below.
+- Real-library simulator (text metrics): past month 375 items in 10 s, 46 groups; Latest 2,000 = 1,759 items in 41.5 s (inventory 10.9 s, thumbnails 12.4 s, vision 9.2 s), 248 similar groups, 62 large files (8.55 GB verified), 65 screenshots; max main-thread probe 0.16 s; Pause→stopped 2.3 s; relaunch to Home 6.4 s; peak RSS ~458 MB (simulator RSS, not a device footprint). End-to-end real-PhotoKit delete of one screenshot: Apple prompt shown, receipt 728 KB, no isolation trap. One video size request hung and was bounded by the 10 s deadline.
+- Opt-in tests (`RealLibrarySmokeUITests`, `RealLibraryThumbnailDiagnosticsTests`) skip unless on a simulator AND `CLEANSLATE_REALLIB=1`; the deleting test additionally needs `CLEANSLATE_REALLIB_ALLOW_DELETE=1` (gatekeeper blocker fixed).
+
+### Open / PENDING
+- Physical-device gates: PhotoKit latency, thumbnail retry time (worst case 2×10 s per asset) and `.highQualityFormat` memory, real BGTask registration/submission, Apple prompt + deletion on device, Instruments. Simulator governor shows "lowMemory" shrink because `os_proc_available_memory()` is 0 there (known; no device effect).
+- Launch shows a ~2 s `mainThreadBlocked` (phase idle) on every simulator cold launch — needs device/Instruments confirmation.
+- **Owner decision:** Swipe n Save shows "No pairs ready" on a real library: real similar photos form `seq-` review sets, while the V1 feed accepts only directly compared `near-` pairs (S01 contract). Widening the feed changes what is offered for deletion.
+- Candidate-phase progress counter reports done=0 although candidates exist (cosmetic).
+
+### Final-diff evidence (after gatekeeper blocker fixes: simulator-only guard + delete-specific opt-in, Core TrayConsistency)
+- `make build`: BUILD SUCCEEDED, zero compile warnings (only the appintentsmetadataprocessor notice).
+- Full `xcodebuild test` on iPhone 17 Pro (0C142434…, iOS 26.5): **CleanSlateTests 324 executed, 3 skipped, 0 failures; CleanSlateUITests 45 executed, 12 skipped, 0 failures; TEST SUCCEEDED.** Skips: 2 pre-existing device-only + 1 real-library diagnostic (unit); UI: capture/screenshot tests, 5 opt-in real-library tests, `IPadLayoutUITests/testComparisonRotationPreservesChoiceWithoutApproving` and `ReviewQueueUITests/testRotationPreservesUnapprovedDraftAndQueueAdvancesWithSkip` (iPad-only, skipped on iPhone). Gatekeeper: APPROVE (second round; first round REJECTED for an unguarded deleting opt-in test, fixed).
+- `make core-test`: 127 / 0 failures. `make lint`: PASS.

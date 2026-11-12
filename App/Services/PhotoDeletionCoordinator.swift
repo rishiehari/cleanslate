@@ -214,6 +214,7 @@ extension PhotoDeletionCoordinator {
                 let digests: [ResourceDigest]
                 do { digests = try await DigestFetcher(library: library, policy: networkPolicy).fetch(id: id).digests }
                 catch let error as LibraryResourceError where error == .cancelled { throw CancellationError() }
+                catch is CancellationError { throw CancellationError() }   // PhotoKit reader's Task.checkCancellation: a Stop, not a change
                 catch { return .blocked([entry.id: "Couldn't re-check the original files"]) }
                 guard let signature = ResourceSignatures.canonical(digests) else { return .blocked([entry.id: "Couldn't re-check the original files"]) }
                 if let reference, reference != signature { return .blocked([entry.id: "These files are no longer identical"]) }

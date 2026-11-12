@@ -159,11 +159,62 @@ final class ReviewFlowUITests: XCTestCase {
     /// controls of the approval bar (adaptive material). Their legibility was verified on screenshots
     /// (docs/screens/step2b-v2) and by using solid-fade backing + system label colors. Every other
     /// element, and every other audit type, stays enforced.
+    ///
+    ///
+    /// Second, geometry-bound exemption (2026-11-12): scroll content that is physically overlapped by system
+    /// chrome at the current scroll offset is sampled against adaptive material or the iOS 26 scroll-edge fade.
+    /// Chrome zones are (a) the floating tab bar plus the 44 pt fade band above it and (b) the status/navigation
+    /// area plus the 44 pt fade band below it. A contrast issue is waived ONLY while the element intersects a
+    /// zone; every waived element is then scrolled fully on screen and clear of all zones and re-audited with no
+    /// exemption, so its real contrast is still enforced.
     private func audit(_ app: XCUIApplication) throws {
         let glassControls: Set<String> = ["approval.skip", "approval.approve"]
+        let zones = chromeZones(app)
+        let inChrome: @Sendable (CGRect) -> Bool = { frame in zones.contains { $0.intersects(frame) } }
+        let waived = WaivedElements()
         try app.performAccessibilityAudit(for: [.contrast, .elementDetection, .hitRegion, .sufficientElementDescription, .trait]) { issue in
-            issue.auditType == .contrast && glassControls.contains(issue.element?.identifier ?? "")
+            guard issue.auditType == .contrast, let element = issue.element else { return false }
+            if glassControls.contains(element.identifier) { return true }
+            if inChrome(element.frame) { waived.append(element.identifier, element.label); return true }
+            return false
         }
+        let occluded = waived.items
+        print("AUDIT_CHROME_WAIVED count=\(occluded.count) \(occluded.map { $0.id.isEmpty ? $0.label : $0.id })")
+        guard !occluded.isEmpty else { return }
+        let window = app.windows.firstMatch.frame
+        for (id, label) in occluded {
+            // Resolve the flagged element unambiguously: a duplicate label/identifier could otherwise make the
+            // clear-of-chrome check (and the re-audit) look at a different element than the one waived.
+            let query = id.isEmpty ? app.staticTexts.matching(NSPredicate(format: "label == %@", label))
+                                   : app.descendants(matching: .any).matching(identifier: id)
+            XCTAssertEqual(query.count, 1, "Waived element '\(id.isEmpty ? label : id)' is not unique; cannot re-audit it reliably")
+            guard query.count == 1 else { continue }
+            let element = query.element(boundBy: 0)
+            for _ in 0..<6 where element.exists && inChrome(element.frame) {
+                if let bottom = zones.last, element.frame.intersects(bottom) { app.swipeUp() } else { app.swipeDown() }
+            }
+            let clear = element.exists && !inChrome(element.frame) && window.contains(element.frame)
+            XCTAssertTrue(clear, "Waived element '\(id.isEmpty ? label : id)' could not be moved clear of system chrome for re-audit")
+            guard clear else { continue }
+            try app.performAccessibilityAudit(for: [.contrast]) { issue in
+                guard let other = issue.element, !(other.identifier == id && other.label == label) else { return false }
+                return glassControls.contains(other.identifier) || inChrome(other.frame)
+            }
+        }
+        for _ in 0..<6 { app.swipeDown() }
+    }
+
+    /// [top zone, bottom zone] in screen points; see `audit`.
+    private func chromeZones(_ app: XCUIApplication) -> [CGRect] {
+        let fadeBand: CGFloat = 44
+        let window = app.windows.firstMatch.frame
+        let nav = app.navigationBars.firstMatch
+        let topEdge = max(nav.exists ? nav.frame.maxY : 0, app.statusBars.firstMatch.exists ? app.statusBars.firstMatch.frame.maxY : 62)
+        let top = CGRect(x: window.minX, y: window.minY, width: window.width, height: topEdge + fadeBand)
+        let bar = app.tabBars.firstMatch
+        let barTop = bar.exists ? bar.frame.minY : window.maxY - 83
+        let bottom = CGRect(x: window.minX, y: barTop - fadeBand, width: window.width, height: window.maxY - barTop + fadeBand)
+        return [top, bottom]
     }
 
     // MARK: Step 7 — similar shots
@@ -195,4 +246,12 @@ final class ReviewFlowUITests: XCTestCase {
         app.buttons["review.undo"].tap()
         XCTAssertTrue(app.buttons["tile.sim1-c"].label.hasPrefix("Not decided"))
     }
+}
+
+/// Thread-safe collector for audit issues waived while overlapped by the tab bar (audit handlers are @Sendable).
+private final class WaivedElements: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [(id: String, label: String)] = []
+    func append(_ id: String, _ label: String) { lock.lock(); storage.append((id, label)); lock.unlock() }
+    var items: [(id: String, label: String)] { lock.lock(); defer { lock.unlock() }; return storage }
 }

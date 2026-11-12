@@ -80,7 +80,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                 DiagnosticsLog.shared.record(.requestTimedOut(kind: .videoSize, asset: DiagnosticsLog.shared.salted(id),
                                                               seconds: Int(Self.sizeTimeout)))
             }) { (once: OneShotResume<Int64>) in
-                let requestID = PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                let requestID = PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { @Sendable avAsset, _, _ in
                     // PhotoKit may call this more than once; only the first call may resume.
                     guard let url = (avAsset as? AVURLAsset)?.url,
                           let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
@@ -125,8 +125,12 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
             guard let expected = expectedRevisions[asset.localIdentifier],
                   snapshot(asset).record.revision == expected else { throw LibraryResourceError.changed }
         }
-        try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.deleteAssets(assets as NSArray)
+        // Photos invokes the change block on an arbitrary serial queue: it must not be main-actor isolated
+        // (Swift 6 would insert an executor check that traps there). PHAsset is not Sendable, but these
+        // objects are only handed to PhotoKit, which owns them for the duration of the change block.
+        nonisolated(unsafe) let approved = assets as NSArray
+        try await PHPhotoLibrary.shared().performChanges { @Sendable in
+            PHAssetChangeRequest.deleteAssets(approved)
         }
     }
 
@@ -134,7 +138,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
 
     func requestAccess() async -> PHAuthorizationStatus {
         let status = await withCheckedContinuation { continuation in
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { @Sendable status in
                 continuation.resume(returning: status)
             }
         }
@@ -273,30 +277,59 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
 
     /// A local-only thumbnail. May return nil when an optimized iCloud original is unavailable,
     /// and nil when the request outlives `thumbnailTimeout` (treated the same as "no local rendition").
+    ///
+    /// `.fastFormat` only succeeds when PhotoKit already holds a cached small derivative. Freshly imported,
+    /// restored or synced items may not have one yet (PHPhotosErrorDomain 3303 "No resource found matching
+    /// image request spec"), so a nil fast result that is neither cancelled nor cloud-only is retried ONCE with
+    /// `.highQualityFormat` + `.fast` resize — still network-disabled and under its own deadline — which
+    /// decodes a small rendition from the local original. Found on a real-photo simulator library (2026-11-12).
     func thumbnail(_ id: String, target: CGFloat = 280) async -> UIImage? {
         guard let asset = fetchAsset(id) else { return nil }
+        let fast = await localImage(asset, id: id, target: target, mode: .fastFormat)
+        if let image = fast.image { return image }
+        guard fast.retryable, !Task.isCancelled else { return nil }
+        return await localImage(asset, id: id, target: target, mode: .highQualityFormat).image
+    }
+
+    /// The one-time local retry is only for "no cached derivative": never after a cancellation, never for a
+    /// cloud-only original (that would need the network), and never after a deadline (handled by the caller).
+    nonisolated static func shouldRetryLocally(imageMissing: Bool, cancelled: Bool, inCloud: Bool) -> Bool {
+        imageMissing && !cancelled && !inCloud
+    }
+
+    private struct LocalImageResult: Sendable {
+        let image: UIImage?
+        /// Nil result that is not a cancellation, timeout or cloud-only original.
+        let retryable: Bool
+    }
+
+    private func localImage(_ asset: PHAsset, id: String, target: CGFloat, mode: PHImageRequestOptionsDeliveryMode) async -> LocalImageResult {
         let opts = PHImageRequestOptions()
         opts.isNetworkAccessAllowed = false
-        opts.deliveryMode = .fastFormat
+        opts.deliveryMode = mode
         opts.resizeMode = .fast
         let box = RequestIDBox()
-        return await Deadline.withDeadline(Self.thumbnailTimeout, onExpire: { [weak self] in
+        let result = await Deadline.withDeadline(Self.thumbnailTimeout, onExpire: { [weak self] in
             if let requestID = box.requestID {
                 Task { @MainActor in self?.imageManager.cancelImageRequest(requestID) }
             }
             DiagnosticsLog.shared.record(.requestTimedOut(kind: .thumbnail, asset: DiagnosticsLog.shared.salted(id),
                                                           seconds: Int(Self.thumbnailTimeout)))
-        }) { (once: OneShotResume<UIImage>) in
+        }) { (once: OneShotResume<LocalImageResult>) in
             let requestID = self.imageManager.requestImage(for: asset,
                                                            targetSize: CGSize(width: target, height: target),
                                                            contentMode: .aspectFit,
-                                                           options: opts) { image, _ in
+                                                           options: opts) { @Sendable image, info in
                 // PhotoKit callbacks can be repeated or arrive from arbitrary queues.
                 // Only the first completion may resume the Swift continuation.
-                once.resume(image)
+                let cancelled = (info?[PHImageCancelledKey] as? Bool) == true
+                let inCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
+                once.resume(LocalImageResult(image: image, retryable: Self.shouldRetryLocally(imageMissing: image == nil,
+                                                                                         cancelled: cancelled, inCloud: inCloud)))
             }
             box.set(requestID)
         }
+        return result ?? LocalImageResult(image: nil, retryable: false)   // deadline expired: never retried
     }
 
     /// Full resource hashes, network strictly disabled. No KVC private fileSize API.
@@ -324,7 +357,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                 let watchdog = InactivityWatchdog()
                 let timer = DispatchSource.makeTimerSource(queue: Self.resourceQueue)
                 timer.schedule(deadline: .now() + 1, repeating: 1)
-                timer.setEventHandler {
+                timer.setEventHandler { @Sendable in
                     guard watchdog.inactive(for: Self.digestInactivityTimeout) else { return }
                     timer.cancel()
                     watchdog.cancelRequest()
@@ -335,11 +368,11 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
                 }
                 timer.resume()
                 let requestID = PHAssetResourceManager.default().requestData(for: resource, options: options,
-                    dataReceivedHandler: { data in
+                    dataReceivedHandler: { @Sendable data in
                         watchdog.touch()                 // inactivity clock resets per chunk
                         accumulator.update(data)
                     },
-                    completionHandler: { error in
+                    completionHandler: { @Sendable error in
                         timer.cancel()
                         if let error { once.resume(throwing: error); return }
                         let result = accumulator.finish(type: resourceType)
@@ -363,7 +396,7 @@ final class PhotoKitLibraryClient: PhotoLibraryClient {
 }
 
 /// Serializes incremental SHA updates delivered by PhotoKit without buffering the photo.
-private final class LockedSHA256 {
+private final class LockedSHA256: @unchecked Sendable {   // NSLock-guarded
     private let lock = NSLock()
     private var context = SHA256()
     private var bytes: Int64 = 0

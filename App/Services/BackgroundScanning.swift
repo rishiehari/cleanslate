@@ -17,6 +17,11 @@ enum BackgroundScanning {
     /// True once `register()` ran (the real app). Unit tests never register, so the BG submit
     /// stays inert there — BGTaskScheduler asserts on submissions without registration.
     static var didRegister = false
+    /// What BGTaskScheduler actually accepted. `register` returns false when an identifier is not permitted
+    /// or the runtime refuses it; submitting an unregistered request raises an ObjC assertion that aborts the
+    /// app (found on a real-photo simulator run, 2026-11-12), so every submit is gated on these.
+    static private(set) var processingRegistered = false
+    static private(set) var continuedRegistered = false
 
     #if DEBUG
     /// Test seam: the simulator has no BG runtime; tests assert the request/registration logic instead.
@@ -26,18 +31,22 @@ enum BackgroundScanning {
     /// Registers handlers. Must be called before the app finishes launching.
     static func register() {
         didRegister = true
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: processingIdentifier, using: nil) { task in
-            guard let task = task as? BGProcessingTask else { return }
+        processingRegistered = BGTaskScheduler.shared.register(forTaskWithIdentifier: processingIdentifier, using: nil) { @Sendable task in
+            guard let processing = task as? BGProcessingTask else { return }
+            // BGTask is not Sendable, but its completion/expiration API is documented thread-safe; the launch
+            // handler runs on a background queue, so it must not be main-actor isolated (runtime trap otherwise).
+            nonisolated(unsafe) let task = processing
             let work = Task { @MainActor in
                 guard let model else { task.setTaskCompleted(success: false); return }
                 await model.runSelectedScan()
                 task.setTaskCompleted(success: model.phase == .finished)
             }
-            task.expirationHandler = { work.cancel() }   // bounded inventory restarts; revision-matched feature work can be reused
+            task.expirationHandler = { @Sendable in work.cancel() }   // bounded inventory restarts; revision-matched feature work can be reused
         }
         if #available(iOS 26.0, *) {
-            BGTaskScheduler.shared.register(forTaskWithIdentifier: continuedWildcard, using: nil) { task in
-                guard let task = task as? BGContinuedProcessingTask else { return }
+            continuedRegistered = BGTaskScheduler.shared.register(forTaskWithIdentifier: continuedWildcard, using: nil) { @Sendable task in
+                guard let continued = task as? BGContinuedProcessingTask else { return }
+                nonisolated(unsafe) let task = continued   // see above
                 let work = Task { @MainActor in
                     guard let model else { task.setTaskCompleted(success: false); return }
                     task.progress.totalUnitCount = 100
@@ -52,7 +61,7 @@ enum BackgroundScanning {
                     reporter.cancel()
                     task.setTaskCompleted(success: model.phase == .finished)
                 }
-                task.expirationHandler = { work.cancel() }
+                task.expirationHandler = { @Sendable in work.cancel() }
             }
         }
     }
@@ -63,6 +72,7 @@ enum BackgroundScanning {
         request.requiresExternalPower = true
         request.requiresNetworkConnectivity = false
         request.earliestBeginDate = Date(timeIntervalSinceNow: 6 * 3600)
+        guard processingRegistered else { return }
         try? BGTaskScheduler.shared.submit(request)
     }
 
@@ -73,7 +83,7 @@ enum BackgroundScanning {
         #endif
         // Only the launched app submits: the unit-test host also runs init, and BGTaskScheduler
         // asserts on submits without a working registration (its plist entries are device-only).
-        guard didRegister, NSClassFromString("XCTestCase") == nil else { return }
+        guard didRegister, continuedRegistered, NSClassFromString("XCTestCase") == nil else { return }
         guard #available(iOS 26.0, *) else { return }
         let request = BGContinuedProcessingTaskRequest(identifier: continuedIdentifier, title: "Looking for copies",
                                                        subtitle: "CleanSlate is scanning your photos on this device")

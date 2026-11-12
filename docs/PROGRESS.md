@@ -3,11 +3,19 @@
 Shared status page for Kimi, Codex and Claude (orchestrator → planner/reasoner → executor/implementer → validator/edge-tester → gatekeeper/evaluator).
 **Update this file whenever progress is made** — every feature gate, every fix round, every blocked item.
 
-_Last updated: 2026-11-12 — session closed; tool-neutral handoff ready for another agent._
+_Last updated: 2026-11-12 — Claude Code session: main stability fixes; N05 in progress on branch._
 
 ---
 
-## Current session closure
+## 2026-11-12 — Claude Code autonomous session (V2 specs)
+
+Owner asked to catch up and implement docs/CleanSlate_Implementation_Specs_V2 (N05→N04→N07→N06→N01→N02→N03→N08→N09→N10) autonomously with full validation and sign-off. Spec package committed f694156.
+
+- **Main (this commit):** known audit failures closed; real-library simulator run (owner-authorized copy, text metrics only) exposed and fixed 3 crash/function bugs + validator found a pre-existing cross-chunk deletion bug (now Core `TrayConsistency`). Full integrated suite green. Gatekeeper review recorded in VALIDATION_LOG.
+- **N05 protection rules:** branch `feature/N05-protection-rules`: C1 Core types + hard `userProtected` flag, C2 migration v2, C3 rule service, C4 commit enforcement, C5 sticky tray revalidation, C6 suggestion filtering, fix rounds 1–2 (two validator rounds: no protection fail-open to deletion found). C7 iPhone UI in progress; C8 Swipe entry, C9 iPad, C10 docs next. Owner safety review required before merge to main.
+- **Owner decisions pending:** N05 merge review; Swipe n Save feed widening (`seq-` sets); physical-device run per PHONE_TESTING.md.
+
+## Current session closure (previous session, superseded)
 
 **Code committed and pushed:** `df429a3` on `main`. Working app checkpoint, not release approval. Start with [HANDOFF.md](HANDOFF.md) for tool-neutral reproduction, exact known failures and next tasks. Owner requested no new feature work in this session and may test on their iPhone using [PHONE_TESTING.md](PHONE_TESTING.md).
 

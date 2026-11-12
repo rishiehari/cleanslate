@@ -29,7 +29,7 @@ final class NetworkPolicy: ObservableObject {
         // Production: unknown connection == not allowed, until the monitor reports a real path.
         self.pathCheck = pathCheck ?? { false }
         if pathCheck == nil {
-            monitor.pathUpdateHandler = { [weak self] path in Task { @MainActor in self?.latestPath = path } }
+            monitor.pathUpdateHandler = { @Sendable [weak self] path in Task { @MainActor in self?.latestPath = path } }
             monitor.start(queue: DispatchQueue(label: "org.cleanslate.networkpolicy"))
         }
     }

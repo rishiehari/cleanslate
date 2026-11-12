@@ -223,8 +223,29 @@ final class DeletionTray: ObservableObject {
         var total = DeletionReceipt()
         total.freeBytesBefore = FreeSpace.available()
         var anyCompleted = false
+        // Whole-tray consistency BEFORE chunking, over EVERY entry (ready or set aside): the batch policy only
+        // sees one chunk at a time, and a set-aside entry's kept photo is still a photo the user chose to keep,
+        // so a ready entry must never delete it. Entries already set aside keep their existing reason.
+        let conflicts = Self.wholeTrayConflicts(groups: entries, standalone: standaloneEntries,
+                                                limit: SafetyPolicy.maximumBatchTargets)
+        let newlySetAside = conflicts.filter { needsAttention[$0.key] == nil }
+        if !newlySetAside.isEmpty {
+            var attention = needsAttention
+            for (id, reason) in newlySetAside { attention[id] = reason }
+            needsAttention = attention
+            let n = newlySetAside.count
+            let rest = readyEntries.isEmpty && readyStandaloneEntries.isEmpty
+                ? "Nothing was deleted." : "Nothing was deleted. Tap Delete again to remove the rest."
+            batchNotice = "\(n) \(n == 1 ? "item needs" : "items need") another look and \(n == 1 ? "was" : "were") set aside. " + rest
+            return nil
+        }
         let chunks = Self.chunks(groups: readyEntries, standalone: readyStandaloneEntries, limit: SafetyPolicy.maximumBatchTargets)
-        guard !chunks.isEmpty else { return nil }            // nothing ready to delete
+        guard !chunks.isEmpty else {                       // nothing ready to delete
+            if !entries.isEmpty || !standaloneEntries.isEmpty {
+                batchNotice = "Nothing is ready to delete. Items that need another look stay in your tray."
+            }
+            return nil
+        }
         do {
             for chunk in chunks {
                 let outcome = try await coordinator.commitBatch(groups: chunk.groups, standalone: chunk.standalone) { [weak self] done, count in
@@ -266,6 +287,23 @@ final class DeletionTray: ObservableObject {
         done.date = Date()
         receipt = done
         return done
+    }
+
+    nonisolated static let overlapAcrossTrayReason = "This photo is also kept or chosen in another group, so these need another look"
+    nonisolated static let tooLargeReason = "This group has too many photos for one deletion. Review it in smaller parts"
+
+    /// Entries that must be set aside before any chunk is committed (entry id → user-facing reason).
+    /// The decision is `CleanSlateCore.TrayConsistency` (Core, tested); this only adapts tray entries to it.
+    nonisolated static func wholeTrayConflicts(groups: [TrayEntry], standalone: [StandaloneTrayEntry],
+                                               limit: Int) -> [String: String] {
+        let entries = groups.map { TrayConsistency.Entry(id: $0.id, targets: $0.selectedIDs, keepers: $0.effectiveKeeperIDs) }
+            + standalone.map { TrayConsistency.Entry(id: $0.id, targets: Set($0.items.map(\.id)), keepers: []) }
+        return TrayConsistency.problems(entries, limit: limit).mapValues { problem in
+            switch problem {
+            case .overlapsAnotherEntry: overlapAcrossTrayReason
+            case .tooLarge: tooLargeReason
+            }
+        }
     }
 
     /// Apple's single prompt is limited to `limit` photos here (a safety bound), so a bigger tray is split into batches.

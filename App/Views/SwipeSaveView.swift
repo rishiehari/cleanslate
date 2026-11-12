@@ -128,8 +128,6 @@ private struct SwipePairContent: View {
                     Text(notice).appText(.secondary).foregroundStyle(Color.textSecondary)
                         .accessibilityIdentifier("swipe.notice")
                 }
-                Text("Approving never deletes. Your tray has a separate confirmation, followed by Apple's prompt.")
-                    .appText(.caption).foregroundStyle(Color.textSecondary)
             }
             .padding(Spacing.m)
         }
@@ -147,15 +145,20 @@ private struct SwipePairContent: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            GlassEffectContainer(spacing: Spacing.m) {
-                Button { pair.approve() } label: {
-                    Text("Approve 1 photo").appText(.groupTitle)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+            VStack(spacing: Spacing.s) {
+                Text("Approving never deletes. Your tray has a separate confirmation, followed by Apple's prompt.")
+                    .appText(.caption).foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                GlassEffectContainer(spacing: Spacing.m) {
+                    Button { pair.approve() } label: {
+                        Text("Approve 1 photo").appText(.groupTitle)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(AccessiblePrimaryButtonStyle())
+                    .disabled(pair.choiceType == nil || !review.canApprove || review.isCheckingPhotos || !pair.isCurrent)
+                    .accessibilityHint("Adds the Delete-marked photo to your tray. Does not delete it.")
+                    .accessibilityIdentifier("swipe.approve")
                 }
-                .buttonStyle(AccessiblePrimaryButtonStyle())
-                .disabled(pair.choiceType == nil || !review.canApprove || review.isCheckingPhotos || !pair.isCurrent)
-                .accessibilityHint("Adds the Delete-marked photo to your tray. Does not delete it.")
-                .accessibilityIdentifier("swipe.approve")
             }
             .padding(Spacing.m)
             .background(Color.surfaceBackground)
@@ -176,9 +179,14 @@ private struct SwipePairContent: View {
 
     private var choices: some View {
         VStack(spacing: Spacing.s) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Spacing.s) { keepLeft; keepBoth; keepRight }
+            if typeSize.isAccessibilitySize {
                 VStack(spacing: Spacing.s) { keepLeft; keepBoth; keepRight }
+            } else {
+                // Two rows (not three) so the deck, choices and approval bar fit without scrolling at standard sizes.
+                VStack(spacing: Spacing.s) {
+                    HStack(spacing: Spacing.s) { keepLeft; keepRight }
+                    keepBoth
+                }
             }
             if review.isCheckingPhotos {
                 ProgressView("Checking faces and text…").appText(.caption)
@@ -214,7 +222,10 @@ private struct SwipePairContent: View {
         .padding(Spacing.s)
         .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.photo))
         .accessibilityRepresentation {
-            Image(systemName: "photo")
+            // A symbol Image is exposed at its intrinsic ~20 pt, which the hit-region audit rejects. A flexible
+            // clear view takes the card's whole frame and carries the image trait instead.
+            Color.clear
+                .accessibilityAddTraits(.isImage)
                 .accessibilityLabel("\(name) photo")
                 .accessibilityValue(decisionText(photo))
                 .accessibilityIdentifier("swipe.photo.\(photo.id)")
