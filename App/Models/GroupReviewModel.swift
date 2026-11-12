@@ -16,6 +16,7 @@ extension PreservationFlag {
         case .incompleteResources: "Not fully on this iPhone — kept"
         case .cinematicVideo: "Cinematic video — kept"
         case .spatialMedia: "Spatial photo or video — kept"
+        case .userProtected: "Protected by your rule — always kept"
         case .unknownOwnership, .uncertainMetadata: "Can't be sure — kept"
         }
     }
