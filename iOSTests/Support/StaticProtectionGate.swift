@@ -16,12 +16,16 @@ final class StaticProtectionGate: ProtectionGate {
 
     func verdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict {
         onVerdict?(snapshot)
+        if availability == .ready, pendingWrites > 0 { return .indeterminate(.ruleWritePending) }
+        return ruleVerdict(for: snapshot)
+    }
+
+    func ruleVerdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict {
         switch availability {
         case .loading: return .indeterminate(.rulesLoading)
         case .unavailable, .lost: return .indeterminate(.rulesUnavailable)
         case .ready: break
         }
-        if pendingWrites > 0 { return .indeterminate(.ruleWritePending) }
         return protectedIDs.contains(snapshot.id) ? .protected(ruleIDs: [UUID()]) : .unprotected
     }
 }

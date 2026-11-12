@@ -17,6 +17,9 @@ protocol ProtectionGate: AnyObject {
     var pendingWrites: Int { get }
     /// `.indeterminate` unless the rules are ready and no write is pending.
     func verdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict
+    /// Like `verdict`, but a pending write does not make the answer indeterminate. For MARKING things as protected
+    /// (tray invalidation), where "protected by the rules loaded so far" is already enough. Never use it to allow a deletion.
+    func ruleVerdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict
 }
 
 extension ProtectionGate {
@@ -83,12 +86,16 @@ final class ProtectionRuleService: ObservableObject, ProtectionGate {
     // MARK: Gate
 
     func verdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict {
+        if availability == .ready, pendingWrites > 0 { return .indeterminate(.ruleWritePending) }
+        return ruleVerdict(for: snapshot)
+    }
+
+    func ruleVerdict(for snapshot: PhotoSnapshot) -> ProtectionVerdict {
         switch availability {
         case .loading: return .indeterminate(.rulesLoading)
         case .unavailable, .lost: return .indeterminate(.rulesUnavailable)
         case .ready: break
         }
-        if pendingWrites > 0 { return .indeterminate(.ruleWritePending) }
         // The App cannot resolve album membership yet, so album rules answer "unknown" (fail closed).
         return ruleSet.verdict(ProtectionSubject(id: snapshot.id, capturedAt: snapshot.capturedAt, albumIDs: nil))
     }

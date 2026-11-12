@@ -67,6 +67,11 @@ final class DeletionTray: ObservableObject {
     @Published private(set) var standaloneEntries: [StandaloneTrayEntry] = []
     /// Entries that changed since approval, with the plain-words reason. They are never deleted until the user looks again.
     @Published private(set) var needsAttention: [String: String] = [:]
+    /// Entries a protection rule invalidated. Persisted, and only ever cleared by the user (send back to review, remove,
+    /// clear, or approving the same group again), so removing a rule or relaunching can never make them deletable again.
+    @Published private(set) var protectionInvalidatedIDs: Set<String> = []
+    /// Set by the owner of the rules (CleaningViewModel). Used to check a review draft against the rules when it is approved.
+    weak var protectionGate: ProtectionGate?
     @Published private(set) var reviewedGroupIDs: Set<String> = []
     @Published private(set) var toast: ToastState?
     @Published var receipt: DeletionReceipt?
@@ -93,8 +98,9 @@ final class DeletionTray: ObservableObject {
     }
 
     /// Only entries that are still fine count toward what will be deleted.
-    var readyEntries: [TrayEntry] { entries.filter { needsAttention[$0.id] == nil } }
-    var readyStandaloneEntries: [StandaloneTrayEntry] { standaloneEntries.filter { needsAttention[$0.id] == nil } }
+    var readyEntries: [TrayEntry] { entries.filter { isReady($0.id) } }
+    var readyStandaloneEntries: [StandaloneTrayEntry] { standaloneEntries.filter { isReady($0.id) } }
+    private func isReady(_ id: String) -> Bool { needsAttention[id] == nil && !protectionInvalidatedIDs.contains(id) }
     var photoCount: Int {
         readyEntries.reduce(0) { $0 + $1.selectedIDs.count } + readyStandaloneEntries.reduce(0) { $0 + $1.items.count }
     }
@@ -104,7 +110,27 @@ final class DeletionTray: ObservableObject {
     var isEmpty: Bool { entries.isEmpty && standaloneEntries.isEmpty }
     var hasReadyItems: Bool { !readyEntries.isEmpty || !readyStandaloneEntries.isEmpty }
 
-    func setNeedsAttention(_ reasons: [String: String]) { needsAttention = reasons }
+    /// Replaces the recomputed reasons. Entries a protection rule invalidated always keep their reason.
+    func setNeedsAttention(_ reasons: [String: String]) {
+        var merged = reasons
+        let live = Set(entries.map(\.id) + standaloneEntries.map(\.id))
+        for id in protectionInvalidatedIDs where live.contains(id) { merged[id] = TrayChecker.protectedByRuleReason }
+        needsAttention = merged
+    }
+
+    /// A protection rule now covers these entries. They need the user's fresh review before they can be deleted again.
+    func markProtectionInvalidated(_ ids: Set<String>) {
+        let live = Set(entries.map(\.id) + standaloneEntries.map(\.id))
+        let relevant = ids.intersection(live)
+        guard !relevant.isEmpty else { return }
+        protectionInvalidatedIDs.formUnion(relevant)
+        for id in relevant { needsAttention[id] = TrayChecker.protectedByRuleReason }
+        persist()
+    }
+
+    private func clearProtectionInvalidation(_ ids: Set<String>) {
+        protectionInvalidatedIDs.subtract(ids)
+    }
 
     /// Takes an entry out of the tray and returns the group to the review inbox.
     func sendBackToReview(_ id: String) {
@@ -112,6 +138,7 @@ final class DeletionTray: ObservableObject {
         standaloneEntries.removeAll { $0.id == id }
         reviewedGroupIDs.remove(id)
         needsAttention[id] = nil
+        clearProtectionInvalidation([id])
         persist()
     }
     func contains(_ groupID: String) -> Bool { entries.contains { $0.id == groupID } }
@@ -124,15 +151,20 @@ final class DeletionTray: ObservableObject {
                               keeperIDs: keepers)
         let previous = entries.first { $0.id == group.id }
         let wasReviewed = reviewedGroupIDs.contains(group.id)
+        let wasInvalidated = protectionInvalidatedIDs.contains(group.id)
         entries.removeAll { $0.id == group.id }
         entries.append(entry)
         reviewedGroupIDs.insert(group.id)
+        if wasInvalidated { needsAttention[group.id] = nil }
+        clearProtectionInvalidation([group.id])
         persist()
         show("Added \(selected.count) \(selected.count == 1 ? "photo" : "photos") to your tray") { [weak self] in
             guard let self else { return }
             self.entries.removeAll { $0.id == group.id }
             if let previous { self.entries.append(previous) }
             if !wasReviewed { self.reviewedGroupIDs.remove(group.id) }
+            // Undoing a re-approval must not resurrect an entry a rule had invalidated.
+            if wasInvalidated, previous != nil { self.markProtectionInvalidated([group.id]) }
             self.persist()
         }
     }
@@ -150,15 +182,20 @@ final class DeletionTray: ObservableObject {
 
     func approveAll(_ items: [(group: PhotoReviewGroup, selected: Set<String>)]) {
         let before = (entries, reviewedGroupIDs)
+        let invalidatedBefore = protectionInvalidatedIDs
         for item in items where !item.selected.isEmpty {
             entries.removeAll { $0.id == item.group.id }
             entries.append(TrayEntry(group: item.group, selectedIDs: item.selected, manuallyReviewedIDs: [], approvedAt: Date()))
             reviewedGroupIDs.insert(item.group.id)
+            if protectionInvalidatedIDs.contains(item.group.id) { needsAttention[item.group.id] = nil }
+            clearProtectionInvalidation([item.group.id])
         }
         persist()
         let n = items.reduce(0) { $0 + $1.selected.count }
         show("Added \(n) \(n == 1 ? "photo" : "photos") to your tray") { [weak self] in
-            self?.entries = before.0; self?.reviewedGroupIDs = before.1; self?.persist()
+            self?.entries = before.0; self?.reviewedGroupIDs = before.1
+            self?.markProtectionInvalidated(invalidatedBefore)
+            self?.persist()
         }
     }
 
@@ -184,10 +221,17 @@ final class DeletionTray: ObservableObject {
     func remove(groupID: String) {
         entries.removeAll { $0.id == groupID }
         standaloneEntries.removeAll { $0.id == groupID }
+        if protectionInvalidatedIDs.contains(groupID) { needsAttention[groupID] = nil }
+        clearProtectionInvalidation([groupID])
         persist()
     }
 
-    func clear() { entries = []; standaloneEntries = []; persist() }
+    func clear() {
+        entries = []; standaloneEntries = []
+        needsAttention = needsAttention.filter { !protectionInvalidatedIDs.contains($0.key) }
+        protectionInvalidatedIDs = []
+        persist()
+    }
 
     func undo() {
         undoAction?()
@@ -256,6 +300,8 @@ final class DeletionTray: ObservableObject {
                     var attention = needsAttention
                     for (id, reason) in reasons { attention[id] = reason }
                     needsAttention = attention
+                    // A rule blocked these: that stays true even if the rule is later removed.
+                    markProtectionInvalidated(Set(reasons.filter { $0.value == TrayChecker.protectedByRuleReason }.keys))
                     let n = reasons.count
                     batchNotice = "\(n) \(n == 1 ? "group" : "groups") changed since you approved \(n == 1 ? "it" : "them") and \(n == 1 ? "was" : "were") set aside. "
                         + (anyCompleted ? "The earlier part was deleted; the rest is still in your tray." : "Nothing was deleted. Tap Delete again to remove the rest.")
@@ -327,7 +373,11 @@ final class DeletionTray: ObservableObject {
 
     // MARK: Persistence
 
-    private struct Stored: Codable { var entries: [TrayEntry]; var reviewed: Set<String>; var standalone: [StandaloneTrayEntry]? }
+    private struct Stored: Codable {
+        var entries: [TrayEntry]; var reviewed: Set<String>; var standalone: [StandaloneTrayEntry]?
+        /// Added by N05. Optional so a tray file written by an older build still decodes.
+        var protectionInvalidated: Set<String>?
+    }
 
     private func load() {
         guard let fileURL, let data = try? Data(contentsOf: fileURL),
@@ -335,11 +385,17 @@ final class DeletionTray: ObservableObject {
         entries = stored.entries
         standaloneEntries = stored.standalone ?? []
         reviewedGroupIDs = stored.reviewed
+        let live = Set(entries.map(\.id) + standaloneEntries.map(\.id))
+        protectionInvalidatedIDs = (stored.protectionInvalidated ?? []).intersection(live)
+        for id in protectionInvalidatedIDs { needsAttention[id] = TrayChecker.protectedByRuleReason }
     }
 
     private func persist() {
         guard let fileURL else { return }
-        let data = try? JSONEncoder().encode(Stored(entries: entries, reviewed: reviewedGroupIDs, standalone: standaloneEntries))
+        let live = Set(entries.map(\.id) + standaloneEntries.map(\.id))
+        if !protectionInvalidatedIDs.isSubset(of: live) { protectionInvalidatedIDs.formIntersection(live) }
+        let data = try? JSONEncoder().encode(Stored(entries: entries, reviewed: reviewedGroupIDs, standalone: standaloneEntries,
+                                                    protectionInvalidated: protectionInvalidatedIDs))
         if let data { try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
         // Photo identifiers are private and the tray is rebuildable: keep it out of device backups.
         var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true

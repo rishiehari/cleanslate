@@ -45,11 +45,17 @@ final class GroupReviewModel: ObservableObject {
     private let haptics: HapticsService
     private let analyzer: PhotoAnalyzer?
     private let protectedReasons: [String: String]
+    /// N05: the rules, checked again at approval so a draft opened before a rule existed cannot slip through.
+    /// Falls back to the tray's gate (set by CleaningViewModel).
+    private let protection: ProtectionGate?
     static let historyLimit = 20
+    static let rulesNotReadyNotice = "Protection rules aren't ready yet. Try again in a moment."
 
-    init(group: PhotoReviewGroup, tray: DeletionTray, haptics: HapticsService = .shared, analyzer: PhotoAnalyzer? = nil) {
+    init(group: PhotoReviewGroup, tray: DeletionTray, haptics: HapticsService = .shared, analyzer: PhotoAnalyzer? = nil,
+         protection: ProtectionGate? = nil) {
         self.group = group
         self.tray = tray
+        self.protection = protection
         self.haptics = haptics
         self.analyzer = analyzer
         // Exact copies are byte-verified, so they do not wait for analysis. With no analyzer configured there is nothing to wait for.
@@ -198,10 +204,24 @@ final class GroupReviewModel: ObservableObject {
     @discardableResult
     func approve() -> Bool {
         guard draft.canApprove, approvalAllowedByAnalysis else { haptics.fire(.blocked); return false }
+        if let blockedNotice = protectionNoticeForMarkedPhotos() { notice = blockedNotice; haptics.fire(.blocked); return false }
         tray.approve(group: group, selected: draft.deleteIDs,
                      manuallyReviewed: isExact ? [] : draft.userMarkedDelete, keepers: draft.keepIDs)
         haptics.fire(.approve)
         return true
+    }
+
+    /// nil = every photo marked for deletion is clear of the rules right now. Photos being kept may be protected.
+    private func protectionNoticeForMarkedPhotos() -> String? {
+        guard let gate = protection ?? tray.protectionGate else { return nil }
+        for photo in group.all where draft.deleteIDs.contains(photo.id) {
+            switch gate.verdict(for: photo) {
+            case .unprotected: continue
+            case .protected: return PreservationFlag.userProtected.userFacingReason
+            case .indeterminate: return Self.rulesNotReadyNotice
+            }
+        }
+        return nil
     }
 
     func skip() {

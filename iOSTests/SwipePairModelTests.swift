@@ -10,7 +10,7 @@ final class SwipePairModelTests: XCTestCase {
 
     override func setUp() async throws {
         library = FakePhotoLibrary()
-        cleaning = CleaningViewModel(library: library, tray: DeletionTray(fileURL: nil), store: try LibraryStore(path: nil))
+        cleaning = CleaningViewModel(library: library, tray: DeletionTray(fileURL: nil), store: try LibraryStore(path: nil), protection: StaticProtectionGate())
         analyzer = FakePhotoAnalyzer()
         cleaning.analyzer = analyzer
         for id in ["a", "b", "c", "d"] {

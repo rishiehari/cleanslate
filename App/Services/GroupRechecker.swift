@@ -63,6 +63,7 @@ struct GroupRechecker {
 @MainActor
 struct TrayChecker {
     let library: PhotoLibraryClient
+    let protection: ProtectionGate
     /// Shown for an approved photo that a protection rule now covers.
     static let protectedByRuleReason = "Protected by your rule — always kept"
 
@@ -72,6 +73,9 @@ struct TrayChecker {
         var fresh: [String: AssetRecord] = [:]
         for member in involved {
             guard let current = library.snapshot(id: member.id, inspectAlbums: true) else { return "A photo was already deleted" }
+            // A rule beats every other reason. Only the photos being deleted matter; a protected keeper is fine.
+            // While the rules are loading or unavailable this is skipped (the commit gate still blocks) and nothing sticks.
+            if entry.selectedIDs.contains(member.id), case .protected = protection.ruleVerdict(for: current) { return Self.protectedByRuleReason }
             fresh[member.id] = current.record
             if current.record.revision != member.record.revision {
                 if current.record.flags.contains(.favorite) && !member.record.flags.contains(.favorite) { return "You favorited one of these photos" }
@@ -89,6 +93,7 @@ struct TrayChecker {
         var fresh: [String: AssetRecord] = [:]
         for item in entry.items {
             guard let current = library.snapshot(id: item.id, inspectAlbums: true) else { return "A photo was already deleted" }
+            if case .protected = protection.ruleVerdict(for: current) { return Self.protectedByRuleReason }
             fresh[item.id] = current.record
             if current.record.revision != item.snapshot.record.revision {
                 if current.record.flags.contains(.favorite) && !item.snapshot.record.flags.contains(.favorite) { return "You favorited one of these photos" }

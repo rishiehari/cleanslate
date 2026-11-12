@@ -166,6 +166,8 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
             self?.libraryDidChange()
         }
         self.governor.dropCachesRequested = { [weak self] in self?.engine.dropCaches() }
+        self.tray.protectionGate = self.protection
+        protectionService?.onChange = { [weak self] change in self?.protectionDidChange(change) }
         if let service = protectionService { Task { [weak service] in await service?.load() } }     // commits stay blocked until this finishes
         revalidateTray(touched: nil)          // anything approved earlier may have changed while the app was closed
     }
@@ -315,16 +317,43 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
 
     /// Re-judges approved entries. `touched == nil` checks everything (at launch).
     func revalidateTray(touched: Set<String>?) {
-        let checker = TrayChecker(library: library)
+        let checker = TrayChecker(library: library, protection: protection)
         var reasons = tray.needsAttention
+        var protectedNow: Set<String> = []
         for entry in tray.entries where touched.map({ !$0.isDisjoint(with: entry.involvedIDs) }) ?? true {
             reasons[entry.id] = checker.reasonNeedingAnotherLook(entry)
+            if reasons[entry.id] == TrayChecker.protectedByRuleReason { protectedNow.insert(entry.id) }
         }
         for entry in tray.standaloneEntries where touched.map({ !$0.isDisjoint(with: entry.items.map(\.id)) }) ?? true {
             reasons[entry.id] = checker.reasonNeedingAnotherLook(entry)
+            if reasons[entry.id] == TrayChecker.protectedByRuleReason { protectedNow.insert(entry.id) }
         }
         let live = Set(tray.entries.map(\.id) + tray.standaloneEntries.map(\.id))
         tray.setNeedsAttention(reasons.filter { live.contains($0.key) })
+        // A rule invalidation is sticky: it outlives removing the rule and relaunching.
+        tray.markProtectionInvalidated(protectedNow)
+    }
+
+    /// A rule was added, removed or (re)loaded. Adding is judged from the tray's STORED snapshots (no PhotoKit), then only
+    /// the matching entries are rechecked against the live library. A reload rechecks everything.
+    private func protectionDidChange(_ change: ProtectionChange) {
+        switch change {
+        case .removed: break                         // removing a rule never makes an invalidated entry deletable again
+        case .reloaded: revalidateTray(touched: nil)
+        case .added:
+            var touched: Set<String> = []
+            for entry in tray.entries {
+                let photos = entry.group.all.filter { entry.selectedIDs.contains($0.id) }
+                if photos.contains(where: { if case .protected = protection.ruleVerdict(for: $0) { true } else { false } }) {
+                    touched.formUnion(entry.selectedIDs)
+                }
+            }
+            for entry in tray.standaloneEntries
+            where entry.items.contains(where: { if case .protected = protection.ruleVerdict(for: $0.snapshot) { true } else { false } }) {
+                touched.formUnion(entry.items.map(\.id))
+            }
+            if !touched.isEmpty { revalidateTray(touched: touched) }
+        }
     }
 
     func groups(in category: ScanCategory) -> [PhotoReviewGroup] {
