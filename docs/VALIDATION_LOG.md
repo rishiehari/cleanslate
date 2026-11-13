@@ -562,3 +562,12 @@ Calendar fix **ba80f92** and presentation/performance fixes **5196133** are comm
 C10 generic documentation is current. Limited continuation diff review found no blocking correctness issue, subject to the now-passing phone rerun; no full-feature/owner/device/release approval was granted. Main merge remains gated by the owner's C1/C4/C5 review and remaining automated/device evidence. No N04 work started.
 
 Publication: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2), code5196133 / evidence5e794d1. Generic handoff/progress/review documents are synchronized to main as documentation only so any next tool finds the correct branch. This does not merge the safety feature or approve its gates.
+
+
+## 2026-11-12 evening — N05 permission-free onboarding demo
+
+Base: feature4769b7b / main documentation5a7c98c. New `ProtectionDemoView` has isolated local sample state with no Photos/library/service/store/tray dependency. First onboarding page optionally opens it behind existing protection creation-UI flag. Birthday illustration and all counts explicitly say sample; no claimed real savings. Protect/reset/dismiss/reopen cannot confer deletion authority. Existing3page flow retained and content made scrollable.
+
+Personally measured: phone SE/iOS26.5 **4 tests PASS**, iPadPro11/iOS26.5 **4 PASS**: demo protect/reset/reopen, AX5 reachability/dismiss, flagoff original completion, existing authorized-onboarding completion. Phone run used the test's initial name and redundant menu assertion; iPad run includes the final descriptive name and removal of that vacuous assertion. App behavior was unchanged by the test edit. Logs `/tmp/n05-demo-phone.log`, `/tmp/n05-demo-ipad.log`. Fake PhotoKit requestAccess returns authorization unchanged, so a visible permission card does not count zero permission requests; source isolation establishes demo nonaccess. These are behavioral AX5 checks, not accessibility-audit or VoiceOver evidence. No new audit exemption.
+
+`make core-test`: **171 PASS**; `make lint` and `git diff --check`: **PASS**. Unsigned generic iOS device compilation: **BUILD SUCCEEDED** (`/tmp/n05-demo-device-build.log`). Independent read-only limited-diff review: **APPROVE** after verifying nonzero phone/iPad results; no blocking privacy/code finding. Full `make ios-test SIM_ID=1D5EA6D9-4090-4033-8159-DED0CEA0F214` is running (`/tmp/n05-demo-full-ios.log`); no full green CI claim yet. Device, full demo accessibility, native iPad sidebar-return automation, full N05 scope and owner C1/C4/C5 review remain **PENDING**.

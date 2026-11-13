@@ -1,5 +1,11 @@
 # Engineering handoff — 2026-11-12
 
+## Latest implementation — permission-free protection example
+
+N05 first-session demo is implemented on the existing feature branch. On onboarding's first page, choose **Try protecting a sample**. This opens an explicitly labeled birthday illustration: Protect removes its simulated suggestion, Try again resets it, and dismiss/reopen starts fresh. It owns local view state only; no Photos/service/store/tray access. The existing three onboarding pages remain; their content now scrolls at large text sizes. The entry follows the existing protection creation-UI flag (Debug on / Release off). For an existing development install, launch Debug with `-resetOnboarding` to revisit onboarding.
+
+Four focused tests pass on phone and four on iPad, including AX5 interaction and flag-off/onboarding completion. Core171, lint and unsigned device build pass; independent limited-increment review approved. Full integrated regression is running and will be recorded separately. AX5 reachability is not a VoiceOver/audit pass; fake authorization does not measure request counts. Remaining N05/owner/device/native iPad navigation gates below are unchanged.
+
 ## Current continuation — N05 (2026-11-12)
 
 Draft review: [GitHub PR #2](https://github.com/rishiehari/cleanslate/pull/2). Code is on the feature branch; main receives documentation only.
