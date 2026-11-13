@@ -13,6 +13,19 @@ struct ScanProgressSnapshot: Equatable {
     var pauseReason: String?
     var isStalled = false
     var startedAt: Date?
+    
+    // F05 additions
+    var stage: ScanStage = .reading
+    var stageDone = 0
+    var stageTotal = 0
+    var foundExactGroups = 0
+    var foundSimilarGroups = 0
+    var foundVerifiedBytes: Int64 = 0
+    var lastBeatAt: ContinuousClock.Instant?
+    var eta: Duration?
+    
+    // F05 additions for the scan control buttons
+    var isScanning = false
 }
 
 /// Engine -> view-model write buffer. The engine's reporting calls are frequent; publishing is
@@ -580,7 +593,17 @@ final class CleaningViewModel: ObservableObject, ScanReporting {
         let snapshot = ScanProgressSnapshot(phase: phase, done: counters.done, total: counters.total,
                                             foundGroups: groups.count, foundBytesVerified: potentialVerifiedBytes,
                                             pauseReason: pauseReason, isStalled: isScanStalled,
-                                            startedAt: scanStartedAtDate)
+                                            startedAt: scanStartedAtDate,
+                                            // F05 fields
+                                            stage: ScanStage.from(phase),
+                                            stageDone: counters.done,
+                                            stageTotal: counters.total,
+                                            foundExactGroups: groups.filter { $0.kind == .exact }.count,
+                                            foundSimilarGroups: groups.filter { $0.kind != .exact }.count,
+                                            foundVerifiedBytes: potentialVerifiedBytes,
+                                            lastBeatAt: nil, // We don't have direct access to heartbeat time
+                                            eta: nil, // This will be computed separately in EtaEstimator
+                                            isScanning: isScanning)
         if snapshot != progressSnapshot { progressSnapshot = snapshot }
     }
 }

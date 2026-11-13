@@ -160,6 +160,8 @@ final class ScanEngine {
         if bucket != lastTickBucket {
             lastTickBucket = bucket
             diagnostics?.record(.progress(phase: counters.snapshot.phase, done: done, total: total))
+            // Report progress to the view model for F05
+            reporter?.scanProgress(Double(done) / Double(max(1, total)))
         }
     }
 

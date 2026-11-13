@@ -20,7 +20,13 @@ struct DashboardView: View {
                     if needsPermission {
                         permissionCard
                     } else {
-                        ScanStatusCard()
+                        // Show scan progress card while scanning
+                        if model.isScanning {
+                            ScanProgressCard(snapshot: model.progressSnapshot)
+                                .accessibilityIdentifier("scan.progress")
+                        } else {
+                            ScanStatusCard(snapshot: model.progressSnapshot)
+                        }
                         PhotoActivityCard()
                         if model.potentialVerifiedBytes > 0 { StorageHero(verifiedBytes: model.potentialVerifiedBytes) }
                         if model.authorization == .limited {
