@@ -5,6 +5,7 @@ struct HistoryView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @State private var receipts: [DeletionReceipt] = []
     @State private var loaded = false
+    @State private var showRecoverSheet = false
 
     var body: some View {
         Group {
@@ -17,12 +18,20 @@ struct HistoryView: View {
                         ForEach(receipts) { receipt in row(receipt) }
                     } footer: {
                         Text("Deleted photos stay in Recently Deleted for 30 days. Space on this device and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time.")
+                            .padding(.top, Spacing.s)
+                            .padding(.bottom, Spacing.m)
+                            .onTapGesture {
+                                showRecoverSheet = true
+                            }
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityLabel("How to get photos back")
                     }
                 }
             }
         }
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showRecoverSheet) { HowToRecoverSheet() }
         .task { receipts = await model.loadHistory(); loaded = true }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("history.screen")

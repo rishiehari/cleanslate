@@ -5,6 +5,7 @@ import SwiftUI
 struct StandaloneListView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
+    @EnvironmentObject private var trustState: TrustState
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
     let category: ScanCategory
@@ -12,6 +13,7 @@ struct StandaloneListView: View {
     @State private var selected: Set<String> = []
     @State private var olderThanThirtyDays = false
     @State private var notice: String?
+    @State private var showHowDeletingSheet = false
 
     private var all: [StandaloneItem] { model.standalone(in: category) }
     private var items: [StandaloneItem] {
@@ -30,6 +32,11 @@ struct StandaloneListView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " + ")
     }
     private var isLargeFiles: Bool { category == .largeFiles }
+    
+    /// Preview gate: if user hasn't read how deleting works, show the preview bar
+    private var shouldShowPreviewBar: Bool {
+        !trustState.hasReadHowDeletingWorks && !selected.isEmpty
+    }
 
     var body: some View {
         ScrollView {
@@ -68,11 +75,30 @@ struct StandaloneListView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            ApprovalBar(approveTitle: selected.isEmpty ? "Approve" : "Approve \(selected.count)",
-                        subtitle: barSubtitle,
-                        canApprove: !selected.isEmpty,
-                        onSkip: { selected = [] },
-                        onApprove: approve)
+            if shouldShowPreviewBar {
+                ApprovalBar(approveTitle: "Ready to choose? See how deleting works",
+                            subtitle: nil,
+                            canApprove: true,
+                            onSkip: { selected = [] },
+                            onApprove: { showHowDeletingSheet = true })
+                    .accessibilityIdentifier("approval.preview")
+            } else {
+                ApprovalBar(approveTitle: selected.isEmpty ? "Approve" : "Approve \(selected.count)",
+                            subtitle: barSubtitle,
+                            canApprove: !selected.isEmpty,
+                            onSkip: { selected = [] },
+                            onApprove: approve)
+                    .accessibilityIdentifier("approval.approve")
+            }
+        }
+        .sheet(isPresented: $showHowDeletingSheet) { 
+            HowDeletingWorksSheet { 
+                trustState.setHasReadHowDeletingWorks(true)
+                // After reading, we can proceed with normal approval
+                if !selected.isEmpty {
+                    approve()
+                }
+            } 
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("standalone.\(category.rawValue)")

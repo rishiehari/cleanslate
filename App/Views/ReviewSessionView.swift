@@ -54,7 +54,14 @@ struct ReviewSessionView: View {
                         }
                         .accessibilityAddTraits(position == index ? .isSelected : [])
                         .accessibilityIdentifier("review.queue.\(original.id)")
-                        .id(position)
+                        .onTapGesture {
+                            // When tapping on a queue item, open that group
+                            if position == index {
+                                // If we're already on this group, just refresh it
+                                return
+                            }
+                            index = position
+                        }
                     }
                 }
                 .padding(Spacing.m)

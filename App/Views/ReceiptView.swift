@@ -5,6 +5,7 @@ struct ReceiptView: View {
     let receipt: DeletionReceipt
     let onDone: () -> Void
     @State private var shownBytes: Double = 0
+    @State private var showRecoverSheet = false
 
     var body: some View {
         VStack(spacing: Spacing.l) {
@@ -46,6 +47,7 @@ struct ReceiptView: View {
         .task {
             withAnimation(.easeOut(duration: 1.0)) { shownBytes = Double(receipt.logicalBytesRemoved) }
         }
+        .sheet(isPresented: $showRecoverSheet) { HowToRecoverSheet() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("receipt.screen")
     }

@@ -6,10 +6,12 @@ import CleanSlateCore
 struct ReviewGroupView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var labels: LabelStore
+    @EnvironmentObject private var trustState: TrustState
     @StateObject private var review: GroupReviewModel
     @ScaledMetric(relativeTo: .body) private var barClearance = Spacing.barClearance
     @State private var explaining: Evidence?
     @State private var comparing: PhotoSnapshot?
+    @State private var showHowDeletingSheet = false
 
     /// Called after Approve or Skip so the next group can open (or the session can end).
     private let onFinished: () -> Void
@@ -25,6 +27,11 @@ struct ReviewGroupView: View {
     private var others: [PhotoSnapshot] { review.group.candidates }
     /// The library changed under this group; Approve waits until it has been rechecked.
     private var isRechecking: Bool { model.recheckingGroupIDs.contains(review.group.id) }
+    
+    /// Preview gate: if user hasn't read how deleting works, show the preview bar
+    private var shouldShowPreviewBar: Bool {
+        !trustState.hasReadHowDeletingWorks && review.canApprove && !isRechecking
+    }
 
     var body: some View {
         ScrollView {
@@ -39,6 +46,27 @@ struct ReviewGroupView: View {
                     .accessibilityLabel("Keep, suggested photo, photo 1 of \(review.group.all.count)")
                     .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("tile.\(review.group.keeper.id)")
+                // iPad-specific keyboard shortcuts
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    HStack(spacing: Spacing.s) {
+                        Button("Keep") { review.tap(review.group.keeper.id) }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("review.keep")
+                            .accessibilityLabel("Keep the suggested photo")
+                        
+                        Button("Delete") { 
+                            let keeperID = review.group.keeper.id
+                            let keeperDecision = review.decision(for: keeperID)
+                            if keeperDecision != .delete {
+                                review.tap(keeperID)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("review.delete")
+                        .accessibilityLabel("Delete the suggested photo")
+                    }
+                    .padding(.bottom, Spacing.s)
+                }
                 HStack {
                     Text(review.isExact ? "Copies" : "Other shots")
                         .appText(.groupTitle).foregroundStyle(Color.textPrimary)
@@ -90,18 +118,38 @@ struct ReviewGroupView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            ApprovalBar(approveTitle: isRechecking ? "Rechecking…" : approveTitle, subtitle: isRechecking ? nil : subtitle,
-                        canApprove: review.canApprove && !isRechecking,
-                        onSkip: { review.skip(); onFinished() },
-                        onApprove: { if review.approve() { onFinished() } })
+            if shouldShowPreviewBar {
+                ApprovalBar(approveTitle: "Ready to choose? See how deleting works",
+                            subtitle: nil,
+                            canApprove: true,
+                            onSkip: { review.skip(); onFinished() },
+                            onApprove: { showHowDeletingSheet = true })
+                    .accessibilityIdentifier("approval.preview")
+            } else {
+                ApprovalBar(approveTitle: isRechecking ? "Rechecking…" : approveTitle, subtitle: isRechecking ? nil : subtitle,
+                            canApprove: review.canApprove && !isRechecking,
+                            onSkip: { review.skip(); onFinished() },
+                            onApprove: { if review.approve() { onFinished() } })
+                    .accessibilityIdentifier("approval.approve")
+            }
+        }
+        .sheet(isPresented: $showHowDeletingSheet) { 
+            HowDeletingWorksSheet { 
+                trustState.setHasReadHowDeletingWorks(true)
+                // After reading, we can proceed with normal approval
+                if review.canApprove && !isRechecking {
+                    _ = review.approve()
+                    onFinished()
+                }
+            } 
         }
         .sheet(item: $explaining) { evidence in
             EvidenceExplanation(evidence: evidence)
         }
         .sheet(item: Binding(get: { review.warningPromptFor.map(WarningPrompt.init) }, set: { review.warningPromptFor = $0?.id })) { prompt in
             WarningSheet(warnings: review.warnings[prompt.id] ?? [], couldntCompare: review.couldntCompare.contains(prompt.id),
-                         onRemoveAnyway: { review.acknowledgeAndDelete(prompt.id) },
-                         onCancel: { review.warningPromptFor = nil })
+                          onRemoveAnyway: { review.acknowledgeAndDelete(prompt.id) },
+                          onCancel: { review.warningPromptFor = nil })
         }
         .task { await review.loadWarnings() }
         .fullScreenCover(item: $comparing) { photo in
