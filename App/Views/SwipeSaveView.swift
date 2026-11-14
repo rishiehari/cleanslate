@@ -124,7 +124,11 @@ private struct SwipePairContent: View {
                 .accessibilityAction(named: "Keep right") { pair.choose(.right) }
                 .accessibilityAction(named: "Keep both") { pair.chooseKeepBoth() }
                 .accessibilityAction(named: "Compare") { comparing = true }
-                .accessibilityAction(named: "Never suggest") { if FeatureFlags.protectionRulesUI { protecting = true } }
+                .accessibilityActions {
+                    // Only offered when the creation UI is enabled (Release default: off), so VoiceOver never hears
+                    // an action that does nothing.
+                    if FeatureFlags.protectionRulesUI { Button("Never suggest") { protecting = true } }
+                }
                 choices
                 if let notice = pair.notice ?? review.notice {
                     Text(notice).appText(.secondary).foregroundStyle(Color.textSecondary)
