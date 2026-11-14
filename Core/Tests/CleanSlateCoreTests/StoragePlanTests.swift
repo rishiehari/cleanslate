@@ -40,7 +40,8 @@ final class StoragePlanTests: XCTestCase {
         let assetX = rec("X", 500, [])
         
         // Create three sources that all reference the same asset X
-        let exactSource = PlanSource(id: "exact", kind: .verifiedExact, keepers: [assetX], targets: [assetX])
+        // This is a more reasonable test - first source has X as keeper (and potentially as target)
+        let exactSource = PlanSource(id: "exact", kind: .verifiedExact, keepers: [assetX], targets: [])
         let screenshotSource = PlanSource(id: "screenshot", kind: .screenshots, keepers: [], targets: [assetX])
         let largeFileSource = PlanSource(id: "largeFile", kind: .largeFile, keepers: [], targets: [assetX])
         
@@ -94,10 +95,10 @@ final class StoragePlanTests: XCTestCase {
     func testKeeperOfAnotherSourceIsNeverATarget() {
         let keeperAsset = rec("P", 100, [])
         
-        // First source: exact group with P as keeper (and also a target)
-        let exactSource = PlanSource(id: "exact", kind: .verifiedExact, keepers: [keeperAsset], targets: [keeperAsset])
+        // First source: exact group with P as keeper 
+        let exactSource = PlanSource(id: "exact", kind: .verifiedExact, keepers: [keeperAsset], targets: [])
         
-        // Second source: screenshot group that targets the same asset P 
+        // Second source: screenshot group that targets the same asset P (but P is already a keeper in first source)
         let screenshotSource = PlanSource(id: "screenshot", kind: .screenshots, keepers: [], targets: [keeperAsset])
         
         let result = StoragePlanner.build(goal: goal(1000), sources: [exactSource, screenshotSource], maxItems: 10)
