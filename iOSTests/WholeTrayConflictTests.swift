@@ -16,7 +16,7 @@ final class WholeTrayConflictTests: XCTestCase {
     override func setUp() async throws {
         library = FakePhotoLibrary()
         coordinator = PhotoDeletionCoordinator(library: library,
-            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }))
+            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }), protection: StaticProtectionGate())
         tray = DeletionTray(fileURL: nil)
     }
 
@@ -131,7 +131,7 @@ final class WholeTrayConflictTests: XCTestCase {
         }
         let raw = RawCancellationLibrary(library)
         let stoppable = PhotoDeletionCoordinator(library: raw,
-            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }))
+            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }), protection: StaticProtectionGate())
         var task: Task<DeletionReceipt?, Never>?
         raw.afterDigest = { task?.cancel() }
         task = Task { await self.tray.deleteAll(using: stoppable) }

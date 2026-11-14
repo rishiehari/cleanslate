@@ -5,13 +5,15 @@ public enum PreservationFlag: String, Codable, CaseIterable, Hashable, Sendable 
     case favorite, hidden, edited, raw, livePhoto, shared, userBurstPick
     case curatedAlbum, incompleteResources, unknownOwnership, uncertainMetadata
     case cinematicVideo, spatialMedia
+    /// Evaluation-time overlay from the user's protection rules (N05). Never stored with an asset.
+    case userProtected
 }
 
 extension PreservationFlag {
     /// Always blocks deletion of the target, whatever the evidence.
     public static let hard: Set<PreservationFlag> = [
         .favorite, .hidden, .userBurstPick, .shared, .curatedAlbum,
-        .incompleteResources, .unknownOwnership, .uncertainMetadata]
+        .incompleteResources, .unknownOwnership, .uncertainMetadata, .userProtected]
     /// Allowed on a deletion target ONLY when its full resource set is byte-identical to a keeper
     /// that carries at least the same conditional flags. Never allowed for near-duplicates.
     public static let conditional: Set<PreservationFlag> = [.livePhoto, .edited, .raw, .cinematicVideo, .spatialMedia]

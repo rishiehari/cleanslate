@@ -25,7 +25,7 @@ final class AnalysisGateTests: XCTestCase {
     private func model(_ ids: [String], analyzer: PhotoAnalyzer?) -> (GroupReviewModel, DeletionTray) {
         for id in ids { library.add(id, content: id) }
         let tray = DeletionTray(fileURL: nil)
-        return (GroupReviewModel(group: library.reviewSet(ids), tray: tray, haptics: HapticsService(), analyzer: analyzer), tray)
+        return (GroupReviewModel(group: library.reviewSet(ids), tray: tray, haptics: HapticsService(), analyzer: analyzer, protection: StaticProtectionGate()), tray)
     }
 
     private func same(_ ids: [String]) -> [String: PhotoDescription] {
@@ -107,7 +107,7 @@ final class AnalysisGateTests: XCTestCase {
         for id in ["a", "b"] { library.add(id, content: "same") }
         let tray = DeletionTray(fileURL: nil)
         let analyzer = GatedAnalyzer()
-        let m = GroupReviewModel(group: library.exactGroup(keeper: "a", copies: ["b"]), tray: tray, haptics: HapticsService(), analyzer: analyzer)
+        let m = GroupReviewModel(group: library.exactGroup(keeper: "a", copies: ["b"]), tray: tray, haptics: HapticsService(), analyzer: analyzer, protection: StaticProtectionGate())
         XCTAssertFalse(m.isCheckingPhotos)
         XCTAssertEqual(m.decision(for: "b"), .delete, "pre-marked from the start")
         XCTAssertTrue(m.canApprove)
@@ -125,7 +125,7 @@ final class AnalysisGateTests: XCTestCase {
         await model.runScan()
         XCTAssertFalse(model.groups.isEmpty)
         for group in model.groups {
-            let review = GroupReviewModel(group: group, tray: tray)
+            let review = GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate())
             XCTAssertFalse(review.draft.deleteIDs.contains("fav-b"), "a favorite copy is never pre-marked")
             review.tap("fav-b")
             XCTAssertFalse(review.draft.deleteIDs.contains("fav-b"))

@@ -10,7 +10,7 @@ final class DeletionCoordinatorTests: XCTestCase {
 
     override func setUp() async throws {
         library = FakePhotoLibrary()
-        coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: Self.policy(enabled: false))
+        coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: Self.policy(enabled: false), protection: StaticProtectionGate())
     }
 
     private static func policy(enabled: Bool) -> NetworkPolicy {
@@ -91,7 +91,7 @@ final class DeletionCoordinatorTests: XCTestCase {
         library.assets["c"]?.digests = nil                                  // only in iCloud right now
         library.assets["c"]?.cloudDigests = [FakePhotoLibrary.digest("same")]
         let group = library.exactGroup(keeper: "k", copies: ["c"], bytes: 100)
-        let optedIn = PhotoDeletionCoordinator(library: library, networkPolicy: Self.policy(enabled: true))
+        let optedIn = PhotoDeletionCoordinator(library: library, networkPolicy: Self.policy(enabled: true), protection: StaticProtectionGate())
         let result = try await optedIn.commit(group: group, selected: ["c"], manuallyReviewed: [])
         XCTAssertEqual(result.verifiedRemoved, 1)
         XCTAssertTrue(library.digestRequests.contains { $0.allowNetwork }, "the recheck read the iCloud original")

@@ -56,3 +56,11 @@ Current work and review status: [PROGRESS.md](PROGRESS.md). Dated validation ent
 - [ ] Owner review of C1/C4/C5 before main merge; independent full-feature gate remains pending.
 - [ ] Physical iPhone/iPad, limited-access/relaunch/loss, keyboard/pointer and full accessibility matrix.
 - [ ] Album-rule UI/full N05 acceptance and owner decision on Release creation flag. N04 not started.
+
+
+### N05 permission-free demo increment
+
+- [x] Explicitly labeled local sample, optional first-page entry, protect/reset/reopen and unchanged three-page completion. No service/store/Photos/tray access; entry follows existing feature flag.
+- [x] Four focused tests each on synthetic phone/iPad; includes AX5 reachability, flag-off and onboarding regression. Independent limited-increment review approved.
+- [ ] Demo VoiceOver/contrast/audit/full accessibility matrix and physical-device validation. AX5 interaction is not an audit result.
+- [ ] Full integrated regression on demo diff (running); previous full-CI limitation remains until measured completion.

@@ -4,6 +4,7 @@ import SwiftUI
 struct OnboardingView: View {
     let onFinish: () -> Void
     @State private var page = 0
+    @State private var showingProtectionDemo = false
 
     private struct Page { let symbol: String; let title: String; let body: String }
     private let pages = [
@@ -19,22 +20,32 @@ struct OnboardingView: View {
         VStack {
             TabView(selection: $page) {
                 ForEach(pages.indices, id: \.self) { index in
-                    VStack(spacing: 20) {
-                        Spacer()
-                        Image(systemName: pages[index].symbol)
-                            .font(.system(size: IconSize.hero))
-                            .foregroundStyle(.tint)
-                            .accessibilityHidden(true)
-                        Text(pages[index].title)
-                            .appText(.title)
-                            .multilineTextAlignment(.center)
-                        Text(pages[index].body)
-                            .appText(.body)
-                            .foregroundStyle(Color.textSecondary)
-                            .multilineTextAlignment(.center)
-                        Spacer()
+                    ScrollView {
+                        VStack(spacing: Spacing.l) {
+                            Image(systemName: pages[index].symbol)
+                                .font(.system(size: IconSize.hero))
+                                .foregroundStyle(.tint)
+                                .accessibilityHidden(true)
+                            Text(pages[index].title)
+                                .appText(.title)
+                                .multilineTextAlignment(.center)
+                            Text(pages[index].body)
+                                .appText(.body)
+                                .foregroundStyle(Color.textSecondary)
+                                .multilineTextAlignment(.center)
+                            if index == 0, FeatureFlags.protectionRulesUI {
+                                Button("Try protecting a sample") { showingProtectionDemo = true }
+                                    .appText(.body)
+                                    .frame(minHeight: 44)
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier("onboarding.protectionDemo")
+                            }
+                        }
+                        .frame(maxWidth: AdaptiveLayout.readableContentWidth)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, Spacing.l)
+                        .padding(.vertical, Spacing.l)
                     }
-                    .padding(.horizontal, Spacing.l)
                     .tag(index)
                 }
             }
@@ -52,5 +63,6 @@ struct OnboardingView: View {
             .padding(.bottom, Spacing.l)
             .accessibilityIdentifier(page < pages.count - 1 ? "onboarding.next" : "onboarding.done")
         }
+        .sheet(isPresented: $showingProtectionDemo) { ProtectionDemoView() }
     }
 }

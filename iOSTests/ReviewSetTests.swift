@@ -11,7 +11,7 @@ final class ReviewSetTests: XCTestCase {
     override func setUp() async throws {
         library = FakePhotoLibrary()
         coordinator = PhotoDeletionCoordinator(library: library,
-            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }))
+            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }), protection: StaticProtectionGate())
     }
 
     private func makeModel() throws -> CleaningViewModel {
@@ -113,7 +113,7 @@ final class ReviewSetTests: XCTestCase {
     private func reviewModel(_ ids: [String], analyzer: PhotoAnalyzer? = nil) -> (GroupReviewModel, DeletionTray) {
         for id in ids { library.add(id, content: id) }
         let tray = DeletionTray(fileURL: nil)
-        return (GroupReviewModel(group: library.reviewSet(ids), tray: tray, haptics: HapticsService(), analyzer: analyzer), tray)
+        return (GroupReviewModel(group: library.reviewSet(ids), tray: tray, haptics: HapticsService(), analyzer: analyzer, protection: StaticProtectionGate()), tray)
     }
 
     func testApprovePassesTheUsersKeepersToTheTray() {

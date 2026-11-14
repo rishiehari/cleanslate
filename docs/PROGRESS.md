@@ -7,6 +7,12 @@ _Last updated: 2026-11-12 — Codex continuation: N05 fixes and regression valid
 
 ---
 
+## 2026-11-12 — N05 permission-free sample demo (implemented increment)
+
+Continuing the unimplemented N05 first-session requirement on `feature/N05-protection-rules`. Optional first-onboarding-page action opens an explicitly labeled synthetic birthday illustration; Protect removes its simulated suggestion, Try again resets it, and reopening starts fresh. Local view state only: no Photos calls, rule writes, store/tray injection, authority or claimed savings. Existing three onboarding pages remain; their content now scrolls for accessibility text. Entry follows the existing creation-UI flag (Debug on / Release off).
+
+Phone and iPad targeted checks: 4 PASS each (existing onboarding completion + demo protect/reset/reopen, AX5 reachability and flag-off). Core171, lint/diff checks and unsigned device build PASS. Independent limited-diff review APPROVE. Full integrated phone regression is running; AX5 behavior is not an audit or VoiceOver claim, and fake authorization state is not an authorization-call counter. Not a complete N05, release or owner safety gate.
+
 ## 2026-11-12 — V2 continuation after Claude stopped
 
 Published for review: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2), feature HEAD 5e794d1 before this documentation pointer. Code commits ba80f92 and 5196133; documentation-only synchronization to main does not merge the safety feature.
