@@ -46,7 +46,7 @@ final class StoragePlanTests: XCTestCase {
         
         let result = StoragePlanner.build(goal: goal(1000 * 1024 * 1024), sources: [exactSource, screenshotSource, largeFileSource], maxItems: 10)
         
-        // Asset X should only be counted once (in the first source - exact group)
+        // Asset X should only be counted once (in the first source - exact group)  
         XCTAssertEqual(result.potentialKnownBytes, 500)
         XCTAssertEqual(result.items.count, 1) // Only one item (the exact group)
         XCTAssertEqual(result.coverage.targetsSkippedDuplicate, 2) // Two duplicates skipped
@@ -93,13 +93,12 @@ final class StoragePlanTests: XCTestCase {
     
     func testKeeperOfAnotherSourceIsNeverATarget() {
         let keeperAsset = rec("P", 100, [])
-        let targetAsset = rec("P", 50, []) // Same ID but different asset (for testing purposes)
         
-        // First source: exact group with P as keeper
-        let exactSource = PlanSource(id: "exact", kind: .verifiedExact, keepers: [keeperAsset], targets: [targetAsset])
+        // First source: exact group with P as keeper (and also a target)
+        let exactSource = PlanSource(id: "exact", kind: .verifiedExact, keepers: [keeperAsset], targets: [keeperAsset])
         
         // Second source: screenshot group that targets the same asset P 
-        let screenshotSource = PlanSource(id: "screenshot", kind: .screenshots, keepers: [], targets: [targetAsset])
+        let screenshotSource = PlanSource(id: "screenshot", kind: .screenshots, keepers: [], targets: [keeperAsset])
         
         let result = StoragePlanner.build(goal: goal(1000), sources: [exactSource, screenshotSource], maxItems: 10)
         
