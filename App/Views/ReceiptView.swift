@@ -28,13 +28,18 @@ struct ReceiptView: View {
             }
             VStack(alignment: .leading, spacing: Spacing.s) {
                 Label("They're in Recently Deleted for 30 days. Empty it in Photos to free the space right away.", systemImage: "clock.arrow.circlepath")
+                    .accessibilityIdentifier("receipt.recently.deleted")
                 if receipt.uncertain > 0 {
                     Label("\(receipt.uncertain) couldn't be confirmed as removed. Check Photos.", systemImage: "questionmark.circle")
+                        .accessibilityIdentifier("receipt.uncertain")
                 }
                 ForEach(receipt.setAside.keys.sorted(), id: \.self) { key in
                     Label(receipt.setAside[key] ?? "", systemImage: "arrow.uturn.backward.circle")
                         .foregroundStyle(Color.warningAccent)
+                        .accessibilityIdentifier("receipt.set.aside.\(key)")
                 }
+                NavigationLink("How to get photos back", destination: HowToRecoverSheet())
+                    .accessibilityIdentifier("receipt.recover.link")
             }
             .appText(.secondary).foregroundStyle(Color.textSecondary)
             Spacer()

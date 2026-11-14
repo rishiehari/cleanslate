@@ -17,6 +17,8 @@ struct HistoryView: View {
                         ForEach(receipts) { receipt in row(receipt) }
                     } footer: {
                         Text("Deleted photos stay in Recently Deleted for 30 days. Space on this device and in iCloud is freed after they're removed from there. Free-space numbers are measurements taken at the time.")
+                        NavigationLink("How to get photos back", destination: HowToRecoverSheet())
+                            .accessibilityIdentifier("history.recover.link")
                     }
                 }
             }

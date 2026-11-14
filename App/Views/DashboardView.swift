@@ -5,6 +5,7 @@ struct DashboardView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
     @EnvironmentObject private var labels: LabelStore
+    @EnvironmentObject private var trustState: TrustState
     @AppStorage("onboarding.seen.v1") private var onboardingSeen = false
     @AppStorage(HapticsService.defaultsKey) private var hapticsOn = true
     @State private var showClearCache = false
@@ -12,6 +13,8 @@ struct DashboardView: View {
     @State private var showVerifySheet = false
     @State private var showHistory = false
     @State private var showDiagnostics = false
+    @State private var showPrivacy = false
+    @State private var showDataOnPhone = false
 
     var body: some View {
         NavigationStack {
@@ -52,6 +55,8 @@ struct DashboardView: View {
             .sheet(isPresented: $showTray) { TrayView(tray: tray) }
             .sheet(isPresented: $showVerifySheet) { VerifyICloudSheet(policy: model.networkPolicy) }
             .sheet(isPresented: $showHistory) { NavigationStack { HistoryView().toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { showHistory = false } } } } }
+            .sheet(isPresented: $showPrivacy) { NavigationStack { PrivacyView().toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { showPrivacy = false } } } } }
+            .sheet(isPresented: $showDataOnPhone) { NavigationStack { DataOnPhoneView().toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { showDataOnPhone = false } } } } }
             .alert("Clear local index?", isPresented: $showClearCache) {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear index", role: .destructive) { model.clearIndex() }
@@ -72,6 +77,8 @@ struct DashboardView: View {
             Button("Diagnostics", systemImage: "stethoscope") { showDiagnostics = true }
                 .accessibilityIdentifier("menu.diagnostics")
             Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }
+            Button("Your privacy", systemImage: "lock.shield") { showPrivacy = true }
+            Button("Data on this iPhone", systemImage: "iphone") { showDataOnPhone = true }
             Button("Show intro again", systemImage: "questionmark.circle") { onboardingSeen = false }
             if labels.corrections > 0 {
                 Label("Suggestions you corrected: \(labels.corrections)", systemImage: "hand.thumbsdown")
