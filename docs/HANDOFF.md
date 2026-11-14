@@ -1,5 +1,21 @@
 # Engineering handoff — 2026-11-12
 
+## Night shift 2026-11-13 — read this first
+
+N05 is MERGED to main (9bbbead, PR #2). Main is green: Core 171, unit 452/0 failures, UI 75/0 failures (iPhone 17 sim). Work tonight on these branches, one at a time, in this order. Each already contains main and builds.
+
+1. `feature/F05-progress` — spec `docs/features/F05-progress-experience.md`. INCOMPLETE: these tests fail and must pass:
+   - `CleanSlateTests/EtaEstimatorTests/testEtaEstimatorStable` (XCTAssertNotNil at line 22, then a force-unwrap crash at line 23 — never force-unwrap in tests);
+   - `CleanSlateUITests/ScanProgressUITests` (all 4 tests);
+   - regressions this branch caused (they PASS on main): `CleanSlateUITests/ActivityStartUITests/testOverviewDoesNotScanAndRangePickerContainsOnlyBoundedChoices` and `CleanSlateUITests/ReviewFlowUITests/testAccessibilityAuditOnHomeAndReview` ("Contrast nearly passed").
+2. `feature/F06A-trust-screens` — spec `docs/features/F06-first-run-trust.md`, ONLY the Privacy / Data on this iPhone (read-only, NO "Forget everything") / How deleting works / How to get photos back screens + menu items + Receipt/History links. INCOMPLETE: the required tests do not exist yet. Write `UITests/TrustUITests.swift` and `iOSTests/LocalDataInventoryTests.swift` from the spec's acceptance criteria and test plan, run them, fix the code until green. Do NOT add the preview gate, forgetEverything, or onboarding changes.
+3. `feature/IP4-ipad-input` (create from main) — `docs/plans/IPAD_APP_PLAN.md` row IP4 + sections "Touch, keyboard, pointer and accessibility" and "Window lifecycle and state"; history in `docs/plans/IPAD_IMPLEMENTATION_LOG.md`. Scope: tap a queue row to open that group; keyboard shortcuts that each have a visible button; drafts kept when switching sections. Test on "iPad Pro 11-inch (M5)".
+
+Small warm-up (on main via a branch `fix/n05-voiceover-flag`): `App/Views/SwipeSaveView.swift` around line 127 adds a "Never suggest" accessibilityAction even when `FeatureFlags.protectionRulesUI` is off — only add it when the flag is on; add a test.
+
+Rules: never edit `docs/VALIDATION_LOG.md` except by APPENDING a new section at the end; never delete or rewrite earlier text in any doc. Never commit to main; push only your branch. Report exact test counts.
+
+
 ## Latest implementation — permission-free protection example
 
 N05 first-session demo is implemented on the existing feature branch. On onboarding's first page, choose **Try protecting a sample**. This opens an explicitly labeled birthday illustration: Protect removes its simulated suggestion, Try again resets it, and dismiss/reopen starts fresh. It owns local view state only; no Photos/service/store/tray access. The existing three onboarding pages remain; their content now scrolls at large text sizes. The entry follows the existing protection creation-UI flag (Debug on / Release off). For an existing development install, launch Debug with `-resetOnboarding` to revisit onboarding.
