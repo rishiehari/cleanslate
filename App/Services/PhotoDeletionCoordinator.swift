@@ -6,17 +6,21 @@ import CleanSlateCore
 final class PhotoDeletionCoordinator {
     private let library: PhotoLibraryClient
     private let networkPolicy: NetworkPolicy
+    /// N05: user protection rules. Required (no default) so a call site can never forget it. Enforcement is never behind a feature flag.
+    private let protection: ProtectionGate
     private var activeCommit = false
 
     /// The commit-time recheck reads local files first. It downloads only if the user opted in to
     /// iCloud checking (same budget), because a group that was verified through a download must stay deletable.
-    init(library: PhotoLibraryClient, networkPolicy: NetworkPolicy? = nil) {
+    init(library: PhotoLibraryClient, networkPolicy: NetworkPolicy? = nil, protection: ProtectionGate) {
         self.library = library
         self.networkPolicy = networkPolicy ?? NetworkPolicy.shared
+        self.protection = protection
     }
 
     enum DeletionError: LocalizedError, Equatable {
         case busy, revoked, vanished, unsafe(String), changedResource, cannotVerify, noSelection, confirmationFailed
+        case protectionUnavailable, protectionChanged
         var errorDescription: String? {
             switch self {
             case .busy: "Another photo deletion is still being reconciled."
@@ -27,6 +31,8 @@ final class PhotoDeletionCoordinator {
             case .cannotVerify: "Couldn't verify the original files right now. Nothing was deleted."
             case .noSelection: "No eligible photos are selected."
             case .confirmationFailed: "Photos did not confirm the deletion."
+            case .protectionUnavailable: "Protection rules couldn't be checked. Nothing was deleted."
+            case .protectionChanged: "Your protection rules changed while checking. Nothing was deleted. Tap Delete again."
             }
         }
     }
@@ -50,13 +56,15 @@ final class PhotoDeletionCoordinator {
         guard hasAccess else { throw DeletionError.revoked }
         activeCommit = true
         defer { activeCommit = false }
+        let ruleRevision = protection.revision
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionUnavailable }
 
         let keepers = keeperIDs ?? [group.keeper.id]            // the user may keep several photos
         let involved = selected.union(keepers)
         var fresh: [String: AssetRecord] = [:]
         for id in involved {
             guard let snapshot = library.snapshot(id: id, inspectAlbums: true) else { throw DeletionError.vanished }
-            fresh[id] = snapshot.record
+            fresh[id] = protection.decoratedRecord(snapshot)
         }
         let expected = Dictionary(uniqueKeysWithValues: group.all.map { ($0.id, $0.record.revision) })
         let plan = ApprovedDeletionPlan(selectedIDs: selected, keeperIDs: keepers,
@@ -84,16 +92,19 @@ final class PhotoDeletionCoordinator {
         // Revalidate after asynchronous hashes, too: favorites/edits may have changed in between.
         // The FULL policy runs again on fresh records (not just the hard flags), so a conditional
         // flag appearing late (e.g. "edited") is judged against the keeper as well.
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionChanged }
         var freshAfterHash: [String: AssetRecord] = [:]
         for id in involved {
             guard let current = library.snapshot(id: id, inspectAlbums: true),
                   current.record.revision == expected[id] else { throw DeletionError.vanished }
-            freshAfterHash[id] = current.record
+            freshAfterHash[id] = protection.decoratedRecord(current)
         }
         if let invalid = SafetyPolicy.validateCommit(plan, currentByID: freshAfterHash) {
             throw DeletionError.unsafe(invalid.rawValue)
         }
         guard hasAccess else { throw DeletionError.revoked }
+        // N05: last look at the rules. No `await` between this check and `library.delete`.
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionChanged }
 
         do {
             try await library.delete(ids: Array(selected), expectedRevisions: expected)
@@ -138,12 +149,14 @@ final class PhotoDeletionCoordinator {
         guard hasAccess else { throw DeletionError.revoked }
         activeCommit = true
         defer { activeCommit = false }
+        let ruleRevision = protection.revision
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionUnavailable }
 
         let ids = Set(items.map(\.id))
         var fresh: [String: AssetRecord] = [:]
         for id in ids {
             guard let snapshot = library.snapshot(id: id, inspectAlbums: true) else { throw DeletionError.vanished }
-            fresh[id] = snapshot.record
+            fresh[id] = protection.decoratedRecord(snapshot)
         }
         let expected = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.snapshot.record.revision) })
         // The user selected each item in the list (or chose "select all" and saw the count); the tray holds only those.
@@ -153,6 +166,8 @@ final class PhotoDeletionCoordinator {
             throw DeletionError.unsafe(invalid.rawValue)
         }
         guard hasAccess else { throw DeletionError.revoked }
+        // N05: last look at the rules. No `await` between this check and `library.delete`.
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionChanged }
         do {
             try await library.delete(ids: Array(ids), expectedRevisions: expected)
         } catch LibraryResourceError.notAccessible {
@@ -199,6 +214,8 @@ extension PhotoDeletionCoordinator {
         guard [.authorized, .limited].contains(library.authorization) else { throw DeletionError.revoked }
         activeCommit = true
         defer { activeCommit = false }
+        let ruleRevision = protection.revision
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionUnavailable }
 
         // 1. + 2. Fresh state, then the whole-batch policy.
         if let blocked = evaluate(groups: groups, standalone: standalone) { return .blocked(blocked) }
@@ -224,7 +241,8 @@ extension PhotoDeletionCoordinator {
         progress?(exact.count, exact.count)
         try Task.checkCancellation()
 
-        // 4. Again, after the slow part: nothing may have changed meanwhile.
+        // 4. Again, after the slow part: nothing may have changed meanwhile (including the protection rules).
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionChanged }
         if let blocked = evaluate(groups: groups, standalone: standalone) { return .blocked(blocked) }
         guard [.authorized, .limited].contains(library.authorization) else { throw DeletionError.revoked }
 
@@ -238,6 +256,8 @@ extension PhotoDeletionCoordinator {
         for entry in standalone {
             for item in entry.items { targets.insert(item.id); expected[item.id] = item.snapshot.record.revision }
         }
+        // N05: last look at the rules. No `await` between this check and `library.delete`.
+        if protection.commitBlock(since: ruleRevision) != nil { throw DeletionError.protectionChanged }
         do {
             try await library.delete(ids: Array(targets), expectedRevisions: expected)
         } catch LibraryResourceError.notAccessible {
@@ -274,7 +294,7 @@ extension PhotoDeletionCoordinator {
         var blocked: [String: String] = [:]
         func load(_ ids: Set<String>, entryID: String) {
             for id in ids where fresh[id] == nil {
-                if let snapshot = library.snapshot(id: id, inspectAlbums: true) { fresh[id] = snapshot.record }
+                if let snapshot = library.snapshot(id: id, inspectAlbums: true) { fresh[id] = protection.decoratedRecord(snapshot) }
                 else { blocked[entryID] = "A photo is no longer in your library" }
             }
         }
@@ -299,6 +319,13 @@ extension PhotoDeletionCoordinator {
                 selectedIDs: ids, expectedRevisions: Dictionary(uniqueKeysWithValues: entry.items.map { ($0.id, $0.snapshot.record.revision) }),
                 individuallyConfirmedIDs: ids, wasExplicitlyConfirmedByUser: true)
             if let reason = SafetyPolicy.validateStandalone(plan, currentByID: fresh) { blocked[entry.id] = TrayChecker.words(reason) }
+        }
+        // A selected photo that a rule protects gets the rule's own plain-words reason, not the generic one.
+        for entry in groups where entry.selectedIDs.contains(where: { fresh[$0]?.flags.contains(.userProtected) == true }) {
+            blocked[entry.id] = TrayChecker.protectedByRuleReason
+        }
+        for entry in standalone where entry.items.contains(where: { fresh[$0.id]?.flags.contains(.userProtected) == true }) {
+            blocked[entry.id] = TrayChecker.protectedByRuleReason
         }
         return blocked.isEmpty ? nil : blocked
     }

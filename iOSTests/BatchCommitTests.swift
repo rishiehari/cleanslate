@@ -12,7 +12,7 @@ final class BatchCommitTests: XCTestCase {
     override func setUp() async throws {
         library = FakePhotoLibrary()
         coordinator = PhotoDeletionCoordinator(library: library,
-            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }))
+            networkPolicy: NetworkPolicy(defaults: UserDefaults(suiteName: "t.\(UUID().uuidString)")!, pathCheck: { false }), protection: StaticProtectionGate())
         tray = DeletionTray(fileURL: nil)
     }
 

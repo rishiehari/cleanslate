@@ -10,6 +10,12 @@ struct ReviewGroupView: View {
     @ScaledMetric(relativeTo: .body) private var barClearance = Spacing.barClearance
     @State private var explaining: Evidence?
     @State private var comparing: PhotoSnapshot?
+    @State private var protecting: ProtectRequest?
+
+    private struct ProtectRequest: Identifiable {
+        let id = UUID()
+        let preselected: Set<String>
+    }
 
     /// Called after Approve or Skip so the next group can open (or the session can end).
     private let onFinished: () -> Void
@@ -38,6 +44,8 @@ struct ReviewGroupView: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Keep, suggested photo, photo 1 of \(review.group.all.count)")
                     .accessibilityAddTraits(.isButton)
+                    .contextMenu { protectMenu(for: review.group.keeper.id) }
+                    .accessibilityAction(named: "Never suggest") { protecting = ProtectRequest(preselected: [review.group.keeper.id]) }
                     .accessibilityIdentifier("tile.\(review.group.keeper.id)")
                 HStack {
                     Text(review.isExact ? "Copies" : "Other shots")
@@ -83,6 +91,10 @@ struct ReviewGroupView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if FeatureFlags.protectionRulesUI {
+                        Button("Never suggest a photo…", systemImage: "lock.shield") { protecting = ProtectRequest(preselected: []) }
+                            .accessibilityIdentifier("review.protect")
+                    }
                     Button("This suggestion was wrong", systemImage: "hand.thumbsdown") { labels.recordCorrection() }
                         .accessibilityIdentifier("review.wrong")
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -97,6 +109,9 @@ struct ReviewGroupView: View {
         }
         .sheet(item: $explaining) { evidence in
             EvidenceExplanation(evidence: evidence)
+        }
+        .sheet(item: $protecting) { request in
+            ProtectSheet(assetIDs: review.group.all.map(\.id), preselected: request.preselected)
         }
         .sheet(item: Binding(get: { review.warningPromptFor.map(WarningPrompt.init) }, set: { review.warningPromptFor = $0?.id })) { prompt in
             WarningSheet(warnings: review.warnings[prompt.id] ?? [], couldntCompare: review.couldntCompare.contains(prompt.id),
@@ -179,6 +194,7 @@ struct ReviewGroupView: View {
             .onTapGesture { review.tap(photo.id) }
             .contextMenu {
                 Button("Compare with the Keep photo", systemImage: "square.split.2x1") { comparing = photo }
+                protectMenu(for: photo.id)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel(for: decision, index: index))
@@ -186,7 +202,16 @@ struct ReviewGroupView: View {
             .accessibilityAction(named: "Keep") { review.set(photo.id, to: .keep) }
             .accessibilityAction(named: "Delete") { review.set(photo.id, to: .delete) }
             .accessibilityAction(named: "Compare") { comparing = photo }
+            .accessibilityAction(named: "Never suggest") { protecting = ProtectRequest(preselected: [photo.id]) }
             .accessibilityIdentifier("tile.\(photo.id)")
+    }
+
+    /// "Never suggest this photo" in a tile's context menu (hidden when the feature is off).
+    @ViewBuilder private func protectMenu(for id: String) -> some View {
+        if FeatureFlags.protectionRulesUI {
+            Button("Never suggest this photo", systemImage: "lock.shield") { protecting = ProtectRequest(preselected: [id]) }
+                .accessibilityIdentifier("protect.action.\(id)")
+        }
     }
 
     private func accessibilityLabel(for decision: Decision, index: Int) -> String {

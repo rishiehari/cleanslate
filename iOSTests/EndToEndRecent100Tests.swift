@@ -31,7 +31,7 @@ final class EndToEndRecent100Tests: XCTestCase {
             XCTAssertTrue(members(similar).contains(Set(run)), "overlap run \(run.first ?? "") appears as one review set")
         }
         for group in similar {
-            let review = GroupReviewModel(group: group, tray: tray)
+            let review = GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate())
             XCTAssertTrue(review.draft.deleteIDs.isEmpty, "similar group \(group.id) opens with nothing marked")
             XCTAssertFalse(review.canApprove, "and cannot be approved until the person marks something")
         }
@@ -42,7 +42,7 @@ final class EndToEndRecent100Tests: XCTestCase {
 
         // Approve every exact group (U1: approving deletes nothing).
         for group in exact {
-            let review = GroupReviewModel(group: group, tray: tray)
+            let review = GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate())
             XCTAssertEqual(review.draft.deleteIDs.count, 1, "one copy pre-marked per exact pair")
             XCTAssertTrue(review.approve())
         }
@@ -107,7 +107,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         await model.runScan()
         XCTAssertFalse(model.groups.isEmpty, "the loop below must have groups to check")
         for group in model.groups {
-            let review = GroupReviewModel(group: group, tray: tray)
+            let review = GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate())
             XCTAssertTrue(review.draft.deleteIDs.isEmpty, "nothing in a fully protected library is pre-marked")
             XCTAssertFalse(review.canApprove)
             for candidate in group.candidates { review.tap(candidate.id); XCTAssertTrue(review.draft.deleteIDs.isEmpty, "and tapping cannot mark a favorite") }
@@ -126,7 +126,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         XCTAssertEqual(model.groups.filter { $0.kind == .exact }.count, 5, "exact copies are found from file bytes, not pictures")
         let similar = model.groups.filter { $0.kind == .similar }
         XCTAssertEqual(Set(members(similar)), Set(expected.bursts.map(Set.init)), "native bursts need no pictures; time-based runs do")
-        for group in similar { XCTAssertTrue(GroupReviewModel(group: group, tray: tray).draft.deleteIDs.isEmpty) }
+        for group in similar { XCTAssertTrue(GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate()).draft.deleteIDs.isEmpty) }
         XCTAssertEqual(model.statistics.cloudOnlyOrUnavailable, 100)
         XCTAssertFalse(model.isScanning)
     }
@@ -142,7 +142,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         XCTAssertTrue(model.statistics.visionUnavailable)
         XCTAssertGreaterThan(model.statistics.reviewSetsFound, 0)
         for group in model.groups where group.kind == .similar {
-            XCTAssertTrue(GroupReviewModel(group: group, tray: tray).draft.deleteIDs.isEmpty)
+            XCTAssertTrue(GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate()).draft.deleteIDs.isEmpty)
         }
         XCTAssertEqual(library.assets.count, 100)
         _ = expected
@@ -158,7 +158,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         let model = try ScanTestRig.model(library: library, tray: tray)
         await model.runScan()
         let group = try XCTUnwrap(model.groups.first { Set($0.all.map(\.id)) == Set(burst) })
-        let review = GroupReviewModel(group: group, tray: tray)
+        let review = GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate())
         review.markEverythingElseForDeletion()
         XCTAssertFalse(review.draft.deleteIDs.contains(burst[3]), "the favorite is not marked by the helper")
         review.tap(burst[3])
@@ -180,7 +180,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         await model.runScan()
         let group = try XCTUnwrap(model.groups.first)
         XCTAssertEqual(group.kind, .similar)
-        let review = GroupReviewModel(group: group, tray: tray)
+        let review = GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate())
         XCTAssertTrue(review.draft.deleteIDs.isEmpty, "a frame with a person entering is never pre-marked")
         XCTAssertEqual(Set(group.all.map(\.id)), Set(ids))
         XCTAssertFalse(model.groups.isEmpty)
@@ -188,7 +188,7 @@ final class EndToEndRecent100Tests: XCTestCase {
         // The warning path: the frame with the extra person shows a different face count, so it needs a look before it can be marked.
         let analyzer = FakePhotoAnalyzer()
         for id in ids { analyzer.descriptions[id] = .init(faceCount: id == "f4" ? 2 : 1, text: []) }
-        let checked = GroupReviewModel(group: group, tray: tray, haptics: HapticsService(), analyzer: analyzer)
+        let checked = GroupReviewModel(group: group, tray: tray, haptics: HapticsService(), analyzer: analyzer, protection: StaticProtectionGate())
         await checked.loadWarnings()
         if group.keeper.id == "f4" {
             XCTAssertTrue(group.candidates.allSatisfy { checked.isAwaitingAcknowledgement($0.id) }, "every other frame differs from a keeper with an extra person")

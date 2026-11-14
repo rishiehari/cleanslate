@@ -12,6 +12,7 @@ struct DashboardView: View {
     @State private var showVerifySheet = false
     @State private var showHistory = false
     @State private var showDiagnostics = false
+    @State private var showProtection = false
 
     var body: some View {
         NavigationStack {
@@ -46,6 +47,7 @@ struct DashboardView: View {
             .task(id: model.authorization.rawValue) { await model.loadActivityOverview() }
             .navigationTitle("CleanSlate")
             .navigationDestination(isPresented: $showDiagnostics) { DiagnosticsView() }
+            .navigationDestination(isPresented: $showProtection) { ProtectionRulesView() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     TrayButton(count: tray.photoCount) { showTray = true }
@@ -75,6 +77,10 @@ struct DashboardView: View {
         Menu {
             Toggle("Haptics", systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
             Button("History", systemImage: "clock.arrow.circlepath") { showHistory = true }
+            if model.showsProtectionEntry {
+                Button("Protected photos", systemImage: "lock.shield") { showProtection = true }
+                    .accessibilityIdentifier("menu.protection")
+            }
             Button("Diagnostics", systemImage: "stethoscope") { showDiagnostics = true }
                 .accessibilityIdentifier("menu.diagnostics")
             Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }

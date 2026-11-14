@@ -10,7 +10,7 @@ final class SwipePairTests: XCTestCase {
 
     override func setUp() async throws {
         library = FakePhotoLibrary()
-        cleaning = CleaningViewModel(library: library, tray: DeletionTray(fileURL: nil), store: try LibraryStore(path: nil))
+        cleaning = CleaningViewModel(library: library, tray: DeletionTray(fileURL: nil), store: try LibraryStore(path: nil), protection: StaticProtectionGate())
         analyzer = FakePhotoAnalyzer()
         cleaning.analyzer = analyzer
         for id in ["a", "b", "c", "d"] {
@@ -202,7 +202,7 @@ final class SwipePairTests: XCTestCase {
         XCTAssertTrue(pair.approve())
         let entry = try XCTUnwrap(cleaning.tray.entries.first)
         library.update("a", revision: "changed")
-        let coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: cleaning.networkPolicy)
+        let coordinator = PhotoDeletionCoordinator(library: library, networkPolicy: cleaning.networkPolicy, protection: StaticProtectionGate())
         do {
             _ = try await coordinator.commit(group: entry.group, selected: entry.selectedIDs,
                                              manuallyReviewed: entry.manuallyReviewedIDs, keeperIDs: entry.effectiveKeeperIDs)

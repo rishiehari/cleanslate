@@ -6,11 +6,11 @@ Status: implementation branch; owner safety review and physical-device gates rem
 
 ## Scope and branch
 
-Continue `feature/N05-protection-rules` (find its checkout with `git worktree list`). Claude implemented C1–C9 through 410b924, based on main 9037790. Continuation commits ba80f92 and 5196133 validate that work and fix calendar/time-zone, presentation-metadata performance and adaptive-presentation defects. Both are published to origin on the feature branch. No subsequent premium-parity feature has started.
+Continue `feature/N05-protection-rules` (find its checkout with `git worktree list`). Claude implemented C1–C9 through 410b924, based on main 9037790. Continuation commits ba80f92 and 5196133 validate that work and fix calendar/time-zone, presentation-metadata performance and adaptive-presentation defects. Both are published to origin on the feature branch. No subsequent premium-parity feature has started. A permission-free first-onboarding-page sample demo is now added as an isolated local-state increment; it cannot create real rules or access Photos.
 
 In scope: per-photo and inclusive date-range rules; durable SQLite rule state/revision; fail-closed loading/loss/write handling; suggestion filtering; approval/commit protection; sticky tray invalidation; phone and iPad rule UI; Swipe entry points. Existing rules remain enforced when creation UI is disabled. Release creation UI remains OFF, Debug ON unless explicitly disabled.
 
-Not implemented: album-rule creation/full-access membership UI, permission-free feature demo, feature impact counters, category/media-type exclusion rules. Album rule data is represented by the evaluator but unknown membership fails closed. Existing blanket curated-album protections are not weakened. Physical keyboard/pointer and Photos behavior are not established by simulator results.
+Not implemented: album-rule creation/full-access membership UI, feature impact counters, category/media-type exclusion rules. Album rule data is represented by the evaluator but unknown membership fails closed. Existing blanket curated-album protections are not weakened. Physical keyboard/pointer and Photos behavior are not established by simulator results.
 
 ## Safety diff requiring owner review
 
