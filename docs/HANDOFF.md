@@ -1,5 +1,14 @@
 # Engineering handoff — 2026-11-12
 
+## Coder shift 2026-11-14 — read this first (supersedes the 2026-11-13 list below)
+
+Night shift 2026-11-13 result: nothing pushed; uncommitted out-of-scope work (F06 preview gate mixed into F05) preserved on branch `nightshift/2026-11-13-uncommitted` — do not merge. The N05 VoiceOver follow-up is DONE on main.
+
+**Your task:** `docs/next-features/N04_CORE_PLANNER_TASK.md` — N04 Storage Goal Planner, pure Core logic only, on a new branch `feature/N04-core-planner` from main. Two new files only; test with `swift test --package-path Core`. No simulator, no App code, no UI.
+
+The F05 / F06A branches are paused for the orchestrator to finish (they need UI debugging); do not touch them.
+
+
 ## Night shift 2026-11-13 — read this first
 
 N05 is MERGED to main (9bbbead, PR #2). Main is green: Core 171, unit 452/0 failures, UI 75/0 failures (iPhone 17 sim). Work tonight on these branches, one at a time, in this order. Each already contains main and builds.
