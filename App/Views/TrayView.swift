@@ -8,6 +8,21 @@ struct TrayView: View {
     @State private var confirming = false
     @State private var confirmClear = false
     @State private var deleteTask: Task<Void, Never>?
+    @State private var showRules = false
+
+    /// Deleting is blocked until the protection rules can be read (N05). Loading is transient; the others need the user.
+    private var rulesBlocked: Bool {
+        switch model.protection.availability {
+        case .ready: false
+        case .loading, .unavailable, .lost: true
+        }
+    }
+    private var rulesNeedAttention: Bool {
+        switch model.protection.availability {
+        case .unavailable, .lost: true
+        case .ready, .loading: false
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -51,6 +66,24 @@ struct TrayView: View {
                     }
                 }
             }
+            .safeAreaInset(edge: .top) {
+                if rulesNeedAttention {
+                    HStack(spacing: Spacing.m) {
+                        Label("Protection rules couldn't be checked. Nothing will be deleted until they can.", systemImage: "exclamationmark.shield")
+                            .appText(.secondary).foregroundStyle(Color.textPrimary)
+                        Spacer(minLength: Spacing.s)
+                        Button("Fix") { showRules = true }
+                            .appText(.groupTitle).frame(minWidth: 44, minHeight: 44)
+                            .accessibilityIdentifier("tray.protectionFix")
+                    }
+                    .padding(Spacing.m)
+                    .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.m))
+                    .padding(.horizontal, Spacing.m)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("tray.protectionBlocked")
+                }
+            }
+            .navigationDestination(isPresented: $showRules) { ProtectionRulesView() }
             .safeAreaInset(edge: .bottom) {
                 if tray.hasReadyItems {
                     Button { confirming = true } label: {
@@ -59,6 +92,7 @@ struct TrayView: View {
                     }
                     .buttonStyle(.glassProminent)
                     .tint(Color.deleteAccent)
+                    .disabled(rulesBlocked)
                     .padding(.horizontal, Spacing.m).padding(.bottom, Spacing.s)
                     .accessibilityIdentifier("tray.delete")
                 }

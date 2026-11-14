@@ -79,7 +79,19 @@ struct ReviewSessionView: View {
         let position = groups.count > 1 ? "\(index + 1) of \(groups.count)" : nil
         if let current = model.groups.first(where: { $0.id == original.id }) {
             ReviewGroupView(group: current, tray: tray, analyzer: model.analyzer, position: position, onFinished: advance)
-                .id(Self.token(current))      // a changed group starts a fresh review
+                .id(Self.token(current) + "|rules\(model.protection.revision)")      // a changed group, or changed rules, start a fresh review
+        } else if model.hiddenByRulesGroupIDs.contains(original.id) {
+            ContentStateView<Int, EmptyView>(state: .empty(
+                title: "Kept safe by your rule",
+                message: "Kept safe by your rule. Nothing was deleted.")) { _ in EmptyView() }
+                .overlay(alignment: .bottom) {
+                    Button("Next group", action: advance).buttonStyle(.glassProminent).tint(Color.actionPrimary)
+                        .padding(Spacing.l).accessibilityIdentifier("review.protected.next")
+                }
+                .background(Color.surfaceBackground)
+                .navigationTitle(position ?? "Review")
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("review.protected")
         } else {
             ContentStateView<Int, EmptyView>(state: .empty(
                 title: "This group changed",

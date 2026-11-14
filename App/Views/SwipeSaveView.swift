@@ -12,7 +12,7 @@ struct SwipeSaveView: View {
         NavigationStack {
             ContentStateView(state: state) { group in
                 SwipePairCard(group: group, cleaning: model)
-                    .id(SwipePairFeed.token(group))
+                    .id(SwipePairFeed.token(group) + "|rules\(model.protection.revision)")      // new rules start a fresh pair
             }
             .background(Color.surfaceBackground)
             .navigationTitle("Swipe n Save")
@@ -79,6 +79,7 @@ private struct SwipePairContent: View {
     @GestureState private var dragOffset: CGSize = .zero
     @State private var comparing = false
     @State private var explaining = false
+    @State private var protecting = false
 
     private var layout: AnyLayout {
         typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: Spacing.m)) : AnyLayout(HStackLayout(spacing: Spacing.s))
@@ -123,6 +124,7 @@ private struct SwipePairContent: View {
                 .accessibilityAction(named: "Keep right") { pair.choose(.right) }
                 .accessibilityAction(named: "Keep both") { pair.chooseKeepBoth() }
                 .accessibilityAction(named: "Compare") { comparing = true }
+                .accessibilityAction(named: "Never suggest") { if FeatureFlags.protectionRulesUI { protecting = true } }
                 choices
                 if let notice = pair.notice ?? review.notice {
                     Text(notice).appText(.secondary).foregroundStyle(Color.textSecondary)
@@ -136,6 +138,12 @@ private struct SwipePairContent: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Compare", systemImage: "square.split.2x1") { comparing = true }
                     .accessibilityIdentifier("swipe.compare")
+            }
+            if FeatureFlags.protectionRulesUI {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Never suggest", systemImage: "lock.shield") { protecting = true }
+                        .accessibilityIdentifier("swipe.protect")
+                }
             }
             if pair.choiceType != nil {
                 ToolbarItem(placement: .topBarLeading) {
@@ -165,6 +173,9 @@ private struct SwipePairContent: View {
         }
         .fullScreenCover(isPresented: $comparing) {
             CompareView(keeperID: pair.original.keeper.id, otherID: pair.original.candidates[0].id, otherChoices: [])
+        }
+        .sheet(isPresented: $protecting) {
+            ProtectSheet(assetIDs: pair.original.all.map(\.id), preselected: [])
         }
         .sheet(isPresented: $explaining) {
             Text(Evidence.looksSimilar.explanation).appText(.body).padding(Spacing.l)

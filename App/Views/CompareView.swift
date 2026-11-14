@@ -13,6 +13,7 @@ struct CompareView: View {
     @State private var baseScale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var baseOffset: CGSize = .zero
+    @State private var protecting = false
 
     var body: some View {
         NavigationStack {
@@ -36,6 +37,12 @@ struct CompareView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }.accessibilityIdentifier("compare.done")
                 }
+                if FeatureFlags.protectionRulesUI {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Never suggest", systemImage: "lock.shield") { protecting = true }
+                            .accessibilityIdentifier("compare.protect")
+                    }
+                }
                 if otherChoices.count > 1 {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Next photo", systemImage: "arrow.right.circle") { advance() }
@@ -44,6 +51,7 @@ struct CompareView: View {
             }
             .navigationTitle("Compare")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $protecting) { ProtectSheet(assetIDs: [keeperID, otherID], preselected: [otherID]) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("compare.screen")

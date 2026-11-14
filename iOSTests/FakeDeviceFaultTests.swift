@@ -53,7 +53,7 @@ final class FakeDeviceFaultTests: XCTestCase {
         XCTAssertFalse(model.isScanning)
         XCTAssertEqual(model.statistics.cloudOnlyOrUnavailable, 100)
         XCTAssertEqual(model.groups.filter { $0.kind == .exact }.count, 5, "exact copies come from file bytes")
-        for group in model.groups where group.kind == .similar { XCTAssertTrue(GroupReviewModel(group: group, tray: tray).draft.deleteIDs.isEmpty) }
+        for group in model.groups where group.kind == .similar { XCTAssertTrue(GroupReviewModel(group: group, tray: tray, protection: StaticProtectionGate()).draft.deleteIDs.isEmpty) }
         XCTAssertEqual(l.assets.count, 100)
         _ = expected
     }

@@ -12,7 +12,7 @@ final class StandaloneTests: XCTestCase {
 
     override func setUp() async throws {
         library = FakePhotoLibrary()
-        coordinator = PhotoDeletionCoordinator(library: library)
+        coordinator = PhotoDeletionCoordinator(library: library, protection: StaticProtectionGate())
     }
 
     private func item(_ id: String) -> StandaloneItem {

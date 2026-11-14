@@ -187,3 +187,25 @@ final class SafetyPolicyTests: XCTestCase {
         XCTAssertNil(SafetyStatistics.oneSidedUpperBound(failures: 0, trials: 0))
     }
 }
+
+// N05 (append-only): the user-protection overlay flag is a hard block like any other.
+extension SafetyPolicyTests {
+    func testUserProtectedIsHard() {
+        XCTAssertTrue(PreservationFlag.hard.contains(.userProtected))
+        XCTAssertFalse(PreservationFlag.conditional.contains(.userProtected))
+        let result = SafetyPolicy.evaluate(cluster(photo("b", flags: [.userProtected])))
+        XCTAssertEqual(result.blocked["b"], .protected)
+        XCTAssertTrue(result.preselected.isEmpty)
+    }
+    func testUserProtectedKeeperRemainsValidKeeper() {
+        let result = SafetyPolicy.evaluate(cluster(keeper: photo("a", flags: [.userProtected])))
+        XCTAssertEqual(result.preselected, ["b"])
+        XCTAssertNil(result.blocked["a"])
+    }
+    func testUserProtectedTargetFailsCommit() {
+        let plan = ApprovedDeletionPlan(selectedIDs: ["b"], keeperIDs: ["a"], expectedRevisions: ["a": "v1", "b": "v1"],
+                                        wasExplicitlyConfirmedByUser: true, evidence: [exact()])
+        XCTAssertEqual(SafetyPolicy.validateCommit(plan, currentByID: ["a": photo("a"), "b": photo("b", flags: [.userProtected])]), .protected)
+        XCTAssertNil(SafetyPolicy.validateCommit(plan, currentByID: ["a": photo("a", flags: [.userProtected]), "b": photo("b")]))
+    }
+}

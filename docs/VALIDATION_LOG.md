@@ -562,3 +562,26 @@ Calendar fix **ba80f92** and presentation/performance fixes **5196133** are comm
 C10 generic documentation is current. Limited continuation diff review found no blocking correctness issue, subject to the now-passing phone rerun; no full-feature/owner/device/release approval was granted. Main merge remains gated by the owner's C1/C4/C5 review and remaining automated/device evidence. No N04 work started.
 
 Publication: [draft PR #2](https://github.com/rishiehari/cleanslate/pull/2), code5196133 / evidence5e794d1. Generic handoff/progress/review documents are synchronized to main as documentation only so any next tool finds the correct branch. This does not merge the safety feature or approve its gates.
+
+
+## 2026-11-12 evening — N05 permission-free onboarding demo
+
+Base: feature4769b7b / main documentation5a7c98c. New `ProtectionDemoView` has isolated local sample state with no Photos/library/service/store/tray dependency. First onboarding page optionally opens it behind existing protection creation-UI flag. Birthday illustration and all counts explicitly say sample; no claimed real savings. Protect/reset/dismiss/reopen cannot confer deletion authority. Existing3page flow retained and content made scrollable.
+
+Personally measured: phone SE/iOS26.5 **4 tests PASS**, iPadPro11/iOS26.5 **4 PASS**: demo protect/reset/reopen, AX5 reachability/dismiss, flagoff original completion, existing authorized-onboarding completion. Phone run used the test's initial name and redundant menu assertion; iPad run includes the final descriptive name and removal of that vacuous assertion. App behavior was unchanged by the test edit. Logs `/tmp/n05-demo-phone.log`, `/tmp/n05-demo-ipad.log`. Fake PhotoKit requestAccess returns authorization unchanged, so a visible permission card does not count zero permission requests; source isolation establishes demo nonaccess. These are behavioral AX5 checks, not accessibility-audit or VoiceOver evidence. No new audit exemption.
+
+`make core-test`: **171 PASS**; `make lint` and `git diff --check`: **PASS**. Unsigned generic iOS device compilation: **BUILD SUCCEEDED** (`/tmp/n05-demo-device-build.log`). Independent read-only limited-diff review: **APPROVE** after verifying nonzero phone/iPad results; no blocking privacy/code finding. Full `make ios-test SIM_ID=1D5EA6D9-4090-4033-8159-DED0CEA0F214` is running (`/tmp/n05-demo-full-ios.log`); no full green CI claim yet. Device, full demo accessibility, native iPad sidebar-return automation, full N05 scope and owner C1/C4/C5 review remain **PENDING**.
+
+## 2026-11-13 — N05 merged to main (orchestrator: Claude Code)
+
+Merge of origin/feature/N05-protection-rules @ 2d8773f into main @ 5a7c98c (PR #2). Docs conflicts resolved to the branch's versions; gatekeeper verified nothing main-side was lost.
+
+**Authorization (exact):** the owner wrote on 2026-11-13: "feel free to merge PRs and branches which seem to be complete. if work is already done, you merge them". This is a blanket go-ahead, NOT a line-by-line owner review of the C1/C4/C5 safety diff — that review remains PENDING and is recommended.
+
+**Evidence on the exact merge tree** (iPhone 17 simulator 1D5EA6D9, iOS 26.5): `swift test --package-path Core` 171 / 0 failures; policy separation + swiftlint PASS; full `xcodebuild test`: CleanSlateTests 452 executed, 3 skipped, 0 failures; CleanSlateUITests 75 executed, 19 skipped, 0 failures; TEST SUCCEEDED. iPad-only tests (7 ProtectionIPadUITests + IPadLayoutUITests rotation) were SKIPPED on this iPhone run; iPad evidence is from earlier per-commit branch runs only.
+
+**Gatekeeper:** APPROVE. Verified: one `deleteAssets`; each of the 3 `library.delete(` calls immediately preceded by `commitBlock(since:)` with no await between; SafetyPolicy logic unchanged except `.userProtected` in hard flags; policy script unchanged; no pre-existing assertion removed; migration append-only; enforcement independent of the UI flag. Validator round 3 (C7–C9) was interrupted by a rate limit; the gatekeeper hand-checked the C7–C9 approval paths.
+
+**Open follow-ups (non-blocking):** (1) Release builds add a "Never suggest" VoiceOver action in SwipeSaveView that does nothing when the UI flag is off — gate it on the flag; (2) unopenable on-disk DB → rules unavailable → every commit blocked with no in-app recovery in Release (fail-closed, owner awareness); (3) cleared UserDefaults + generic SQL read error can load as ready with no rules (unlikely edge); (4) plan wording on older-binary downgrade likely inaccurate; (5) ~24 h-old uncommitted changes from another tool remain in the N05 worktree, not merged.
+
+**PENDING:** owner C1/C4/C5 review; physical-device matrix (real deletion with rules, limited access, upgrade/downgrade); TestFlight/Release creation-UI flag decision; iPad Protection UI tests on the merge result; full VoiceOver/AX audit of demo and rules UI; album-rule creation and other unbuilt N05 scope.

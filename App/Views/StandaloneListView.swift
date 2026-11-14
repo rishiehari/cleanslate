@@ -12,6 +12,7 @@ struct StandaloneListView: View {
     @State private var selected: Set<String> = []
     @State private var olderThanThirtyDays = false
     @State private var notice: String?
+    @State private var protectingID: String?
 
     private var all: [StandaloneItem] { model.standalone(in: category) }
     private var items: [StandaloneItem] {
@@ -74,6 +75,9 @@ struct StandaloneListView: View {
                         onSkip: { selected = [] },
                         onApprove: approve)
         }
+        .sheet(item: Binding(get: { protectingID.map(ProtectTarget.init) }, set: { protectingID = $0?.id })) { target in
+            ProtectSheet(assetIDs: [target.id], preselected: [target.id])
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("standalone.\(category.rawValue)")
     }
@@ -104,6 +108,7 @@ struct StandaloneListView: View {
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: minimum), spacing: Spacing.xs)], spacing: Spacing.xs) {
             ForEach(items) { item in
                 SelectableTile(item: item, isSelected: selected.contains(item.id)) { toggle(item) }
+                    .modifier(ProtectEntry(id: item.id) { protectingID = item.id })
             }
         }
     }
@@ -115,6 +120,7 @@ struct StandaloneListView: View {
                     HStack(spacing: Spacing.m) {
                         SelectableTile(item: item, isSelected: selected.contains(item.id)) { toggle(item) }
                             .frame(width: 96, height: 72)
+                            .modifier(ProtectEntry(id: item.id) { protectingID = item.id })
                         VStack(alignment: .leading, spacing: Spacing.xs) {
                             Text(StandaloneFormat.size(item)).appText(.groupTitle).foregroundStyle(Color.textPrimary)
                             Text(StandaloneFormat.detail(item)).appText(.secondary).foregroundStyle(Color.textSecondary)
@@ -151,9 +157,35 @@ struct StandaloneListView: View {
     }
 
     private func approve() {
-        tray.approveStandalone(items: selectedItems)
+        guard model.approveStandalone(selectedItems) else {
+            notice = TrayChecker.protectedByRuleReason          // a rule now covers something that was selected
+            HapticsService.shared.fire(.blocked)
+            selected = []
+            return
+        }
         HapticsService.shared.fire(.approve)
         selected = []
+    }
+}
+
+private struct ProtectTarget: Identifiable { let id: String }
+
+/// "Never suggest this photo": context menu + VoiceOver action, hidden when the feature is off.
+private struct ProtectEntry: ViewModifier {
+    let id: String
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if FeatureFlags.protectionRulesUI {
+            content
+                .contextMenu {
+                    Button("Never suggest this photo", systemImage: "lock.shield", action: action)
+                        .accessibilityIdentifier("standalone.protect.\(id)")
+                }
+                .accessibilityAction(named: "Never suggest", action)
+        } else {
+            content
+        }
     }
 }
 

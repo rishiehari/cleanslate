@@ -71,11 +71,11 @@ final class SwipePairModel: ObservableObject {
     init(group: PhotoReviewGroup, cleaning: CleaningViewModel) {
         original = group
         self.cleaning = cleaning
-        keepLeft = GroupReviewModel(group: group, tray: cleaning.tray, analyzer: cleaning.analyzer)
+        keepLeft = GroupReviewModel(group: group, tray: cleaning.tray, analyzer: cleaning.analyzer, protection: cleaning.protection)
         let reversed = PhotoReviewGroup(id: group.id, kind: group.kind, keeper: group.candidates[0],
                                        candidates: [group.keeper], evidence: group.evidence,
                                        verifiedCandidateBytes: group.verifiedCandidateBytes)
-        keepRight = GroupReviewModel(group: reversed, tray: cleaning.tray, analyzer: cleaning.analyzer)
+        keepRight = GroupReviewModel(group: reversed, tray: cleaning.tray, analyzer: cleaning.analyzer, protection: cleaning.protection)
     }
 
     var review: GroupReviewModel { side == .right ? keepRight : keepLeft }
@@ -122,7 +122,13 @@ final class SwipePairModel: ObservableObject {
 
     @discardableResult
     func approve() -> Bool {
-        guard side != nil, isCurrent, freshSnapshotsMatch else {
+        guard side != nil, isCurrent else {
+            notice = "These photos changed. Scan again before approving."
+            return false
+        }
+        // A rule that arrived after the choice was made gets its own message, not "these photos changed".
+        if let rulesNotice = review.protectionNoticeForMarkedPhotos() { notice = rulesNotice; return false }
+        guard freshSnapshotsMatch else {
             notice = "These photos changed. Scan again before approving."
             return false
         }
@@ -133,8 +139,13 @@ final class SwipePairModel: ObservableObject {
 
     private var freshSnapshotsMatch: Bool {
         original.all.allSatisfy { photo in
-            guard let fresh = cleaning.library.snapshot(id: photo.id, inspectAlbums: true) else { return false }
-            return fresh.record == photo.record
+            guard let fresh = cleaning.library.snapshot(id: photo.id, inspectAlbums: true), fresh.record == photo.record else { return false }
+            // N05: a protected photo may stay (it is the keeper), but never be the one deleted. Unknown rules fail closed.
+            switch cleaning.protection.verdict(for: fresh) {
+            case .unprotected: return true
+            case .protected: return !review.draft.deleteIDs.contains(photo.id)
+            case .indeterminate: return false
+            }
         }
     }
     
