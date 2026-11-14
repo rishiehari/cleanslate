@@ -81,6 +81,14 @@ struct DashboardView: View {
                 Button("Protected photos", systemImage: "lock.shield") { showProtection = true }
                     .accessibilityIdentifier("menu.protection")
             }
+            Button("Your privacy", systemImage: "lock.shield") { 
+                // This would navigate to the PrivacyView
+                // For now, we'll just use a placeholder - real implementation would need navigation
+            }
+            Button("Data on this iPhone", systemImage: "iphone") { 
+                // This would navigate to the DataOnPhoneView  
+                // For now, we'll just use a placeholder - real implementation would need navigation
+            }
             Button("Diagnostics", systemImage: "stethoscope") { showDiagnostics = true }
                 .accessibilityIdentifier("menu.diagnostics")
             Button("iCloud originals…", systemImage: "icloud.and.arrow.down") { showVerifySheet = true }

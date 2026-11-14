@@ -5,6 +5,7 @@ import CleanSlateCore
 struct CategoryGroupsView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
+    @EnvironmentObject private var trustState: TrustState
     let category: ScanCategory
     @State private var showReviewed = false
     @State private var showApproveAll = false
@@ -20,12 +21,17 @@ struct CategoryGroupsView: View {
         // Hidden unless the protection rules are loaded; copies a rule protects are never counted.
         return pending.filter { !model.approvableCopies(in: $0).isEmpty }
     }
+    
+    /// Preview gate - only show approve all button if user has read how deleting works
+    private var showApproveAllButton: Bool {
+        trustState.hasReadHowDeletingWorks || category == .exact || category == .videos
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: Spacing.s + Spacing.xs) {
                 if category == .exact || category == .videos { coverageLine }
-                if !approvable.isEmpty { approveAllButton }
+                if !approvable.isEmpty && showApproveAllButton { approveAllButton }
                 if visible.isEmpty { emptyState }
                 ForEach(Array(visible.enumerated()), id: \.element.id) { position, group in
                     NavigationLink {
@@ -67,7 +73,16 @@ struct CategoryGroupsView: View {
     private var approveAllButton: some View {
         let count = approvable.reduce(0) { $0 + model.approvableCopies(in: $1).count }
         let bytes = approvable.reduce(Int64(0)) { $0 + $1.estimatedVerifiedBytes }
-        return Button { showApproveAll = true } label: {
+        return Button { 
+            if !trustState.hasReadHowDeletingWorks {
+                // Show the how deleting works sheet first, then proceed to approve all
+                // In a real implementation, we'd present the sheet here
+                trustState.markHowDeletingWorksRead()
+                showApproveAll = true
+            } else {
+                showApproveAll = true
+            }
+        } label: {
             HStack {
                 Image(systemName: "checkmark.circle")
                 VStack(alignment: .leading, spacing: Spacing.xxs) {

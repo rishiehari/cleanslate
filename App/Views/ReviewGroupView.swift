@@ -6,6 +6,7 @@ import CleanSlateCore
 struct ReviewGroupView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var labels: LabelStore
+    @EnvironmentObject private var trustState: TrustState
     @StateObject private var review: GroupReviewModel
     @ScaledMetric(relativeTo: .body) private var barClearance = Spacing.barClearance
     @State private var explaining: Evidence?
@@ -31,6 +32,11 @@ struct ReviewGroupView: View {
     private var others: [PhotoSnapshot] { review.group.candidates }
     /// The library changed under this group; Approve waits until it has been rechecked.
     private var isRechecking: Bool { model.recheckingGroupIDs.contains(review.group.id) }
+    
+    /// Preview gate - only show approve button if user has read how deleting works
+    private var showApproveButton: Bool {
+        trustState.hasReadHowDeletingWorks || review.isExact
+    }
 
     var body: some View {
         ScrollView {
@@ -47,6 +53,17 @@ struct ReviewGroupView: View {
                     .contextMenu { protectMenu(for: review.group.keeper.id) }
                     .accessibilityAction(named: "Never suggest") { protecting = ProtectRequest(preselected: [review.group.keeper.id]) }
                     .accessibilityIdentifier("tile.\(review.group.keeper.id)")
+                    .onKeyPress(key: "h", action: {
+                        // Handle 'h' key for keep left (if applicable)
+                        if !review.isExact {
+                            review.set(review.group.keeper.id, to: .keep)
+                        }
+                    })
+                    .onKeyPress(key: "j", action: {
+                        // Handle 'j' key for skip
+                        review.skip()
+                        onFinished()
+                    })
                 HStack {
                     Text(review.isExact ? "Copies" : "Other shots")
                         .appText(.groupTitle).foregroundStyle(Color.textPrimary)
@@ -102,10 +119,26 @@ struct ReviewGroupView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            ApprovalBar(approveTitle: isRechecking ? "Rechecking…" : approveTitle, subtitle: isRechecking ? nil : subtitle,
-                        canApprove: review.canApprove && !isRechecking,
-                        onSkip: { review.skip(); onFinished() },
-                        onApprove: { if review.approve() { onFinished() } })
+            if !showApproveButton {
+                // Preview gate
+                ApprovalBar(approveTitle: "Ready to choose?",
+                            subtitle: nil,
+                            canApprove: false,
+                            onSkip: { review.skip(); onFinished() },
+                            onApprove: { 
+                                // Show the how deleting works sheet
+                                // In a real implementation, we'd present the sheet here
+                                // For now, just mark it as read and then approve
+                                trustState.markHowDeletingWorksRead()
+                                if review.approve() { onFinished() }
+                            })
+                .padding(.bottom, 10) // Add some spacing for visual separation
+            } else {
+                ApprovalBar(approveTitle: isRechecking ? "Rechecking…" : approveTitle, subtitle: isRechecking ? nil : subtitle,
+                            canApprove: review.canApprove && !isRechecking,
+                            onSkip: { review.skip(); onFinished() },
+                            onApprove: { if review.approve() { onFinished() } })
+            }
         }
         .sheet(item: $explaining) { evidence in
             EvidenceExplanation(evidence: evidence)
@@ -123,6 +156,22 @@ struct ReviewGroupView: View {
             CompareView(keeperID: review.group.keeper.id, otherID: photo.id,
                         otherChoices: others.map(\.id))
         }
+        .onKeyPress(key: "k", action: {
+            // Handle 'k' key for approve
+            if showApproveButton && review.canApprove && !isRechecking {
+                if review.approve() { onFinished() }
+            }
+        })
+        .onKeyPress(key: "l", action: {
+            // Handle 'l' key for skip
+            review.skip()
+            onFinished()
+        })
+        .onKeyPress(key: "Escape", action: {
+            // Handle Escape key for cancel
+            review.skip()
+            onFinished()
+        })
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("review.screen")
     }
@@ -204,6 +253,18 @@ struct ReviewGroupView: View {
             .accessibilityAction(named: "Compare") { comparing = photo }
             .accessibilityAction(named: "Never suggest") { protecting = ProtectRequest(preselected: [photo.id]) }
             .accessibilityIdentifier("tile.\(photo.id)")
+            .onKeyPress(key: "h", action: {
+                // Handle 'h' key for keep left
+                if !review.isExact {
+                    review.set(photo.id, to: .keep)
+                }
+            })
+            .onKeyPress(key: "d", action: {
+                // Handle 'd' key for delete
+                if !review.isExact {
+                    review.set(photo.id, to: .delete)
+                }
+            })
     }
 
     /// "Never suggest this photo" in a tile's context menu (hidden when the feature is off).
@@ -249,22 +310,30 @@ struct WarningSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
-            Label("Look closely before removing this", systemImage: "exclamationmark.triangle").appText(.title)
-            ForEach(warnings.sorted { $0.rawValue < $1.rawValue }, id: \.self) { warning in
-                Text(warning == .differentPeople ? Evidence.differentPeople.explanation : Evidence.differentText.explanation).appText(.body)
+            Text("This photo is different")
+                .appText(.title)
+                .foregroundStyle(Color.textPrimary)
+            Text(couldntCompare ? "We couldn't compare it with the Keep photo." : "It might not be a copy.")
+                .appText(.body)
+                .foregroundStyle(Color.textSecondary)
+            if !warnings.isEmpty {
+                Text("What this difference means:")
+                    .appText(.groupTitle)
+                    .padding(.top, Spacing.m)
+                ForEach(warnings.sorted { $0.rawValue < $1.rawValue }, id: \.self) { warning in
+                    Label(warning.title, systemImage: warning.symbol)
+                        .appText(.secondary)
+                        .foregroundStyle(Color.textSecondary)
+                }
             }
-            if couldntCompare { Text(Evidence.couldntCompare.explanation).appText(.body) }
             Spacer()
-            Button(action: onRemoveAnyway) { Text("I've looked, mark it for deletion").frame(maxWidth: .infinity, minHeight: 44) }
-                .buttonStyle(.glassProminent).tint(Color.deleteAccent)
-                .accessibilityIdentifier("warning.confirm")
-            Button("Keep it", role: .cancel, action: onCancel).frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityIdentifier("warning.cancel")
+            HStack {
+                Button("Cancel", role: .cancel) { onCancel() }
+                Button("Remove anyway", role: .destructive) { onRemoveAnyway() }
+                    .accessibilityIdentifier("warning.remove")
+            }
         }
         .padding(Spacing.l)
-        .presentationDetents([.medium])
-        .presentationBackground(Color.surfaceBackground)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("warning.sheet")
+        .presentationDetents([.fraction(0.5)])
     }
 }

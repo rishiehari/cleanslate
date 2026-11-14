@@ -28,6 +28,15 @@ struct ReceiptView: View {
             }
             VStack(alignment: .leading, spacing: Spacing.s) {
                 Label("They're in Recently Deleted for 30 days. Empty it in Photos to free the space right away.", systemImage: "clock.arrow.circlepath")
+                if receipt.verifiedRemoved > 0 {
+                    // Add link to how to get photos back
+                    Text("How to get photos back")
+                        .font(.body)
+                        .foregroundColor(.blue)
+                        .underline()
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityLabel("Learn how to recover deleted photos")
+                }
                 if receipt.uncertain > 0 {
                     Label("\(receipt.uncertain) couldn't be confirmed as removed. Check Photos.", systemImage: "questionmark.circle")
                 }

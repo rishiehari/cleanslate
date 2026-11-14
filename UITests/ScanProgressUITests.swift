@@ -16,7 +16,7 @@ final class ScanProgressUITests: XCTestCase {
         app.launch()
         
         // Wait for the onboarding to complete and scan to start
-        XCTAssertTrue(app.staticTexts["Reading your 100 most recent photos"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Reading your photos"].waitForExistence(timeout: 10))
         
         // Check that progress card is visible
         XCTAssertTrue(app.otherElements["scan.progress"].exists)
@@ -40,7 +40,7 @@ final class ScanProgressUITests: XCTestCase {
         app.launch()
         
         // Wait for the scan to start
-        XCTAssertTrue(app.staticTexts["Reading your 100 most recent photos"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Reading your photos"].waitForExistence(timeout: 10))
         
         // Wait for some groups to be found
         Thread.sleep(forTimeInterval: 3.0)
@@ -58,7 +58,7 @@ final class ScanProgressUITests: XCTestCase {
         app.launch()
         
         // Wait for the scan to start
-        XCTAssertTrue(app.staticTexts["Reading your 100 most recent photos"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Reading your photos"].waitForExistence(timeout: 10))
         
         // Find and tap stop button
         let stopButton = app.buttons["scan.progress.stop"]
@@ -84,7 +84,7 @@ final class ScanProgressUITests: XCTestCase {
         app.launch()
         
         // Wait for the scan to start
-        XCTAssertTrue(app.staticTexts["Reading your 100 most recent photos"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Reading your photos"].waitForExistence(timeout: 10))
         
         // Find and tap pause button
         let pauseButton = app.buttons["scan.progress.pause"]

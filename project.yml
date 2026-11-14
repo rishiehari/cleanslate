@@ -11,7 +11,7 @@ settings:
     PRODUCT_BUNDLE_IDENTIFIER: org.cleanslate.free
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_CFBundleDisplayName: CleanSlate
-    INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 'Analyze photos privately on this device to find redundant pictures and request user-approved deletions.'
+    INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 'CleanSlate looks at your photos on this iPhone to find copies. Nothing leaves your phone, and nothing is deleted without your OK.'
     INFOPLIST_KEY_UILaunchScreen_Generation: YES
     SWIFT_STRICT_CONCURRENCY: complete
     CODE_SIGN_STYLE: Automatic

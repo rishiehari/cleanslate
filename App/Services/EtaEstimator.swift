@@ -52,13 +52,15 @@ struct EtaEstimator {
         let averageRate = rates.reduce(0, +) / Double(rates.count)
         
         // Check stability - rates should be within ±25% of each other
-        let rateRange = rates.max()! - rates.min()!
+        guard let maxRate = rates.max(), let minRate = rates.min() else { return nil }
+        let rateRange = maxRate - minRate
         let rateRatio = rateRange / averageRate
         
         guard rateRatio <= 0.25 else { return nil }
         
         // Calculate remaining time based on the current average rate
-        let remainingUnits = samples.last!.total - samples.last!.done
+        guard let lastSample = samples.last else { return nil }
+        let remainingUnits = lastSample.total - lastSample.done
         guard remainingUnits > 0, averageRate > 0 else { return nil }
         
         let remainingSeconds = Double(remainingUnits) / averageRate

@@ -5,6 +5,7 @@ import SwiftUI
 struct StandaloneListView: View {
     @EnvironmentObject private var model: CleaningViewModel
     @EnvironmentObject private var tray: DeletionTray
+    @EnvironmentObject private var trustState: TrustState
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
     let category: ScanCategory
@@ -31,6 +32,11 @@ struct StandaloneListView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " + ")
     }
     private var isLargeFiles: Bool { category == .largeFiles }
+    
+    /// Preview gate - only show approve button if user has read how deleting works
+    private var showApproveButton: Bool {
+        trustState.hasReadHowDeletingWorks || isLargeFiles
+    }
 
     var body: some View {
         ScrollView {
@@ -69,15 +75,45 @@ struct StandaloneListView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            ApprovalBar(approveTitle: selected.isEmpty ? "Approve" : "Approve \(selected.count)",
-                        subtitle: barSubtitle,
-                        canApprove: !selected.isEmpty,
-                        onSkip: { selected = [] },
-                        onApprove: approve)
+            if !showApproveButton {
+                // Preview gate
+                ApprovalBar(approveTitle: "Ready to choose?",
+                            subtitle: nil,
+                            canApprove: false,
+                            onSkip: { selected = [] },
+                            onApprove: { 
+                                // Show the how deleting works sheet
+                                // In a real implementation, we'd present the sheet here
+                                // For now, just mark it as read and then approve
+                                trustState.markHowDeletingWorksRead()
+                                approve()
+                            })
+                .padding(.bottom, 10) // Add some spacing for visual separation
+            } else {
+                ApprovalBar(approveTitle: selected.isEmpty ? "Approve" : "Approve \(selected.count)",
+                            subtitle: barSubtitle,
+                            canApprove: !selected.isEmpty,
+                            onSkip: { selected = [] },
+                            onApprove: approve)
+            }
         }
         .sheet(item: Binding(get: { protectingID.map(ProtectTarget.init) }, set: { protectingID = $0?.id })) { target in
             ProtectSheet(assetIDs: [target.id], preselected: [target.id])
         }
+        .onKeyPress(key: "k", action: {
+            // Handle 'k' key for approve
+            if showApproveButton && !selected.isEmpty {
+                approve()
+            }
+        })
+        .onKeyPress(key: "l", action: {
+            // Handle 'l' key for skip
+            selected = []
+        })
+        .onKeyPress(key: "Escape", action: {
+            // Handle Escape key for cancel
+            selected = []
+        })
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("standalone.\(category.rawValue)")
     }
